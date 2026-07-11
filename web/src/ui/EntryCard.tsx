@@ -1,7 +1,6 @@
 import { useState } from 'react';
 import type { JournalEntry, JournalItem } from '../store/store';
-import { useStore } from '../store/store';
-import { FOODS } from '../nutrition/foods';
+import { useStore, useEffectiveFoods, todayStr } from '../store/store';
 import { matchFood } from '../nutrition/match';
 import { UNITS } from '../nutrition/types';
 import { fmt, UNIT_LABELS } from './format';
@@ -10,18 +9,54 @@ import { fmt, UNIT_LABELS } from './format';
 export function EntryCard({ entry }: { entry: JournalEntry }) {
   const [editing, setEditing] = useState(false);
   const removeEntry = useStore((s) => s.removeEntry);
+  const moveEntry = useStore((s) => s.moveEntry);
+  const duplicateEntry = useStore((s) => s.duplicateEntry);
+  const saveFavoriteMeal = useStore((s) => s.saveFavoriteMeal);
+  const [saved, setSaved] = useState('');
 
   const kcal = entry.items.reduce((a, it) => a + it.nutrients.kcal, 0);
   const time = new Date(entry.createdAt).toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' });
+  const isPast = entry.date !== todayStr();
+
+  function saveAsFavorite() {
+    const suggestion = entry.transcript.replace(/^⭐\s*/, '') || entry.items.map((it) => it.nomAffiche).join(', ');
+    const nom = window.prompt('Nom du repas favori (ex. « petit-déj habituel ») :', suggestion);
+    if (!nom || !nom.trim()) return;
+    saveFavoriteMeal(nom, entry.items);
+    setSaved(`⭐ Enregistré comme favori : « ${nom.trim()} » (visible sur l'onglet Aujourd'hui).`);
+  }
 
   return (
     <div className="panel entry-card">
       <div className="entry-meta">
         <span>
           {time} · {fmt(kcal)} kcal ·{' '}
-          {entry.source === 'llm' ? 'IA' : entry.source === 'rules' ? 'auto' : 'manuel'}
+          {entry.source === 'llm'
+            ? 'IA'
+            : entry.source === 'anthropic'
+              ? 'Claude'
+              : entry.source === 'claudecode'
+                ? 'Claude Code'
+                : entry.source === 'rules'
+                  ? 'auto'
+                  : 'manuel'}
         </span>
         <div className="row">
+          {isPast && (
+            <button
+              className="ghost small"
+              title="Recopie ce repas tel quel sur aujourd'hui"
+              onClick={() => {
+                duplicateEntry(entry.id);
+                setSaved("Repas dupliqué sur aujourd'hui.");
+              }}
+            >
+              ⧉ Auj.
+            </button>
+          )}
+          <button className="ghost small" title="Enregistrer comme repas favori réutilisable" onClick={saveAsFavorite}>
+            ☆ Favori
+          </button>
           <button className="ghost small" onClick={() => setEditing((e) => !e)}>
             {editing ? 'Terminer' : 'Modifier'}
           </button>
@@ -30,10 +65,27 @@ export function EntryCard({ entry }: { entry: JournalEntry }) {
           </button>
         </div>
       </div>
+      {saved && <div className="status">{saved}</div>}
       {entry.transcript && <div className="entry-transcript">« {entry.transcript} »</div>}
       {entry.items.map((it) => (
         <ItemRow key={it.id} entryId={entry.id} item={it} editing={editing} />
       ))}
+      {editing && (
+        <div className="row" style={{ marginTop: 10, alignItems: 'flex-end' }}>
+          <label className="field">
+            Jour de l'entrée
+            <input
+              type="date"
+              value={entry.date}
+              max={todayStr()}
+              onChange={(e) => e.target.value && moveEntry(entry.id, e.target.value)}
+            />
+          </label>
+          <span className="small" style={{ flex: 1 }}>
+            Changez la date si ce repas concerne un autre jour (oubli d'hier, saisie le lendemain…).
+          </span>
+        </div>
+      )}
       {editing && <AddItemInline entryId={entry.id} />}
     </div>
   );
@@ -42,7 +94,7 @@ export function EntryCard({ entry }: { entry: JournalEntry }) {
 function ItemRow({ entryId, item, editing }: { entryId: string; item: JournalItem; editing: boolean }) {
   const updateItem = useStore((s) => s.updateItem);
   const removeItem = useStore((s) => s.removeItem);
-  const customFoods = useStore((s) => s.customFoods);
+  const foods = useEffectiveFoods();
 
   if (!editing) {
     return (
@@ -65,12 +117,11 @@ function ItemRow({ entryId, item, editing }: { entryId: string; item: JournalIte
   }
 
   // Alternatives proposées par le matching pour corriger l'aliment.
-  const alts = matchFood(item.nomAffiche, customFoods).alternatives;
+  const alts = matchFood(item.nomAffiche, foods).alternatives;
   const options = dedupeFoods([
-    ...(item.foodId ? FOODS.filter((f) => f.id === item.foodId) : []),
-    ...customFoods,
+    ...(item.foodId ? foods.filter((f) => f.id === item.foodId) : []),
     ...alts,
-    ...FOODS,
+    ...foods,
   ]);
 
   return (

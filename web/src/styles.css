@@ -1,15 +1,17 @@
 :root {
-  --bg: #0f1115;
-  --panel: #181b22;
-  --panel-2: #1f232c;
-  --border: #2a2f3a;
-  --text: #e6e8ec;
-  --muted: #9aa2b1;
-  --accent: #5b8cff;
-  --accent-2: #3ecf8e;
+  --bg: #12100e;
+  --panel: #1b1815;
+  --panel-2: #242019;
+  --border: #35302a;
+  --text: #f0ece4;
+  --muted: #a89f8f;
+  --accent: #ff9f43;
+  --accent-deep: #e8574f;
+  --accent-2: #7bc96f;
   --warn: #f5a623;
   --danger: #ef5d5d;
   --radius: 14px;
+  --grad: linear-gradient(120deg, #ffb347, #ff6b6b 55%, #d94f8a);
   font-family: system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
 }
 
@@ -20,6 +22,19 @@ body {
   background: var(--bg);
   color: var(--text);
   -webkit-font-smoothing: antialiased;
+}
+
+/* Lueurs d'ambiance « cuisine au feu » — fixes, discrètes, zéro impact sur la lisibilité. */
+body::before {
+  content: '';
+  position: fixed;
+  inset: 0;
+  z-index: -1;
+  pointer-events: none;
+  background:
+    radial-gradient(600px 380px at 85% -10%, rgba(255, 140, 60, 0.13), transparent 65%),
+    radial-gradient(500px 340px at -10% 30%, rgba(217, 79, 138, 0.09), transparent 65%),
+    radial-gradient(700px 500px at 50% 110%, rgba(123, 201, 111, 0.06), transparent 70%);
 }
 
 button {
@@ -35,8 +50,13 @@ button {
 button:hover { background: #262b36; }
 button:disabled { opacity: 0.5; cursor: not-allowed; }
 
-button.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
-button.primary:hover { background: #4a7cf0; }
+button.primary {
+  background: var(--grad);
+  border-color: transparent;
+  color: #1a0f08;
+  font-weight: 600;
+}
+button.primary:hover { filter: brightness(1.08); }
 button.ghost { background: transparent; }
 button.danger { color: var(--danger); border-color: transparent; background: transparent; }
 
@@ -59,12 +79,26 @@ header.app-head {
   gap: 12px;
   margin-bottom: 18px;
 }
-header.app-head h1 { font-size: 20px; margin: 0; letter-spacing: -0.02em; }
+header.app-head h1 {
+  font-size: 22px;
+  margin: 0;
+  letter-spacing: -0.02em;
+  background: var(--grad);
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+}
 header.app-head .sub { color: var(--muted); font-size: 13px; }
 
-.tabs { display: flex; gap: 6px; margin-bottom: 18px; }
+.tabs { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 18px; }
 .tabs button { border-radius: 999px; padding: 6px 16px; }
-.tabs button.active { background: var(--accent); border-color: var(--accent); color: #fff; }
+.tabs button.active {
+  background: var(--grad);
+  border-color: transparent;
+  color: #1a0f08;
+  font-weight: 600;
+  box-shadow: 0 2px 12px rgba(255, 120, 70, 0.35);
+}
 
 .panel {
   background: var(--panel);
@@ -113,20 +147,303 @@ header.app-head .sub { color: var(--muted); font-size: 13px; }
 .stat .label { font-size: 11px; color: var(--muted); text-transform: uppercase; letter-spacing: 0.04em; }
 .stat .value { font-size: 18px; font-weight: 600; margin-top: 2px; }
 .stat .value small { font-size: 11px; color: var(--muted); font-weight: 400; }
-.bar { height: 4px; border-radius: 2px; background: var(--border); margin-top: 8px; overflow: hidden; }
-.bar > span { display: block; height: 100%; background: var(--accent); }
+.bar { position: relative; height: 6px; border-radius: 3px; background: var(--border); margin-top: 8px; overflow: hidden; }
+.bar > span { display: block; height: 100%; background: var(--grad); transition: width 0.4s ease; }
 .bar.over > span { background: var(--danger); }
 .bar.good > span { background: var(--accent-2); }
+/* Repère AJR : trait vertical sur l'échelle 0 → optimal. */
+.bar > .mark { position: absolute; top: -1px; bottom: -1px; width: 2px; background: var(--text); opacity: 0.55; transform: translateX(-1px); }
+.bar > .mark.ajr { background: var(--text); opacity: 0.6; }
+.bar > .mark.opti { background: var(--accent-2); opacity: 0.95; }
+/* Pastilles de légende (petits traits verticaux). */
+.ref-legend { display: inline-block; width: 2px; height: 12px; vertical-align: middle; margin-right: 5px; }
+.ref-legend.ajr { background: var(--text); opacity: 0.6; }
+.ref-legend.opti { background: var(--accent-2); }
+
+/* Onglet Guide : listes de rôles et de rapports. */
+.guide-list { margin: 8px 0 0; padding-left: 18px; }
+.guide-list li { margin-bottom: 6px; }
+.guide-item { padding: 10px 0; border-top: 1px solid var(--border); }
+.guide-item:first-of-type { border-top: none; }
 
 .macro-summary { display: flex; gap: 18px; flex-wrap: wrap; margin-bottom: 4px; }
 .macro-summary .m { display: flex; flex-direction: column; }
 .macro-summary .m .v { font-size: 22px; font-weight: 700; }
 .macro-summary .m .l { font-size: 11px; color: var(--muted); }
 
+/* Infobulle « principaux apports » : survol (desktop) ou focus/tap (mobile). */
+.has-breakdown { position: relative; cursor: help; outline: none; }
+.has-breakdown .breakdown {
+  position: absolute; top: 100%; left: 50%; z-index: 20;
+  margin-top: 6px; min-width: 200px; width: max-content; max-width: min(280px, 86vw);
+  background: var(--panel); border: 1px solid var(--border); border-radius: 10px;
+  padding: 8px 10px; box-shadow: 0 8px 24px rgba(0, 0, 0, 0.45);
+  opacity: 0; visibility: hidden; transform: translate(-50%, -4px);
+  transition: opacity 0.14s ease, transform 0.14s ease, visibility 0.14s;
+  pointer-events: none;
+}
+.has-breakdown:hover .breakdown,
+.has-breakdown:focus-within .breakdown,
+.has-breakdown:focus .breakdown {
+  opacity: 1; visibility: visible; transform: translate(-50%, 0);
+}
+.breakdown .bd-title {
+  font-size: 10px; text-transform: uppercase; letter-spacing: 0.05em;
+  color: var(--muted); margin-bottom: 6px;
+}
+.breakdown .bd-empty { font-size: 12px; color: var(--muted); }
+.breakdown ul { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 4px; }
+.breakdown li { display: flex; justify-content: space-between; gap: 10px; font-size: 12px; align-items: baseline; }
+.breakdown .bd-nom { color: var(--text); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.breakdown .bd-val { color: var(--accent); white-space: nowrap; font-size: 11px; }
+.breakdown .bd-pct { color: var(--muted); }
+
 .row { display: flex; gap: 10px; flex-wrap: wrap; align-items: center; }
 .row.wrap-form > * { flex: 1 1 140px; }
 label.field { display: flex; flex-direction: column; gap: 4px; font-size: 12px; color: var(--muted); }
 
+button.chip-active { background: var(--grad); border-color: transparent; color: #1a0f08; font-weight: 600; }
+button.chip-active:hover { filter: brightness(1.08); }
+
+/* Historique : lignes « moyenne vs objectif » cliquables. */
+.cov-row {
+  display: grid;
+  grid-template-columns: 150px 1fr 128px;
+  gap: 10px;
+  align-items: center;
+  padding: 5px 6px;
+  border-radius: 8px;
+  cursor: pointer;
+}
+.cov-row:hover { background: var(--panel-2); }
+.cov-row.sel { background: var(--panel-2); box-shadow: inset 2px 0 0 var(--accent); }
+.cov-row .bar { margin-top: 0; }
+.cov-row .cov-label { font-size: 13px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+@media (max-width: 560px) {
+  .cov-row { grid-template-columns: 108px 1fr 108px; }
+  .cov-row .cov-label { font-size: 12px; }
+}
+
 .empty { color: var(--muted); text-align: center; padding: 30px 0; }
 .small { font-size: 12px; color: var(--muted); }
 .mono { font-variant-numeric: tabular-nums; }
+
+/* ---- Calendrier (Historique) ---- */
+.cal-grid { display: grid; grid-template-columns: repeat(7, 1fr); gap: 5px; margin-top: 12px; }
+.cal-head { margin-bottom: 2px; }
+.cal-weekday { text-align: center; font-size: 11px; color: var(--muted); padding: 2px 0; }
+.cal-cell {
+  position: relative;
+  min-height: 52px;
+  padding: 4px 5px;
+  border: 1px solid var(--border);
+  border-radius: 9px;
+  background: var(--panel-2);
+  color: var(--text);
+  text-align: left;
+  cursor: pointer;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  transition: border-color 0.15s, transform 0.1s;
+}
+.cal-cell:hover:not(:disabled) { border-color: var(--accent); }
+.cal-cell.empty { background: transparent; border: none; cursor: default; min-height: 0; }
+.cal-cell.future { opacity: 0.35; cursor: default; }
+.cal-cell:not(.filled):not(.future) { background: transparent; }
+.cal-cell.today { border-color: var(--accent); box-shadow: inset 0 0 0 1px var(--accent); }
+.cal-cell.selected { border-color: var(--accent); box-shadow: 0 0 0 2px rgba(255,159,67,0.35); }
+.cal-day { font-size: 12px; font-weight: 600; color: var(--muted); }
+.cal-cell.filled .cal-day { color: var(--text); }
+.cal-kcal { font-size: 12px; font-variant-numeric: tabular-nums; font-weight: 600; }
+.cal-bar { display: block; height: 4px; border-radius: 2px; background: var(--border); overflow: hidden; margin-top: auto; }
+.cal-bar > span { display: block; height: 100%; }
+.cal-bar.under > span { background: var(--warn); }
+.cal-bar.ok > span { background: var(--accent-2); }
+.cal-bar.over > span { background: var(--danger); }
+.cal-legend { display: inline-block; width: 12px; height: 6px; border-radius: 3px; vertical-align: middle; margin-right: 5px; }
+.cal-legend.under { background: var(--warn); }
+.cal-legend.ok { background: var(--accent-2); }
+.cal-legend.over { background: var(--danger); }
+@media (max-width: 560px) {
+  .cal-cell { min-height: 46px; padding: 3px; }
+  .cal-kcal { font-size: 11px; }
+}
+
+/* ---- Puces de séries (tendance multi-nutriments, Stats) ---- */
+.chip-series {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 3px 9px;
+  font-size: 12px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: var(--panel-2);
+  color: var(--text);
+  cursor: pointer;
+}
+.chip-series > i { width: 9px; height: 9px; border-radius: 50%; display: inline-block; }
+
+/* ---- Formulaire d'édition d'aliment (Aliments) ---- */
+.food-form {
+  padding: 12px;
+  margin: 6px 0;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--panel-2);
+}
+
+/* ---- Section Soleil (vitamine D) ---- */
+.sun-field { margin: 10px 0; display: flex; flex-direction: column; gap: 6px; }
+.sun-label { font-size: 12px; color: var(--muted); }
+.sun-label strong { color: var(--text); }
+.sun-field input[type='range'] { accent-color: var(--accent); }
+
+.sun-formula {
+  margin-top: 12px;
+  padding: 12px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--panel-2);
+}
+.sun-formula-line {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: stretch;
+  gap: 4px;
+  margin-top: 8px;
+}
+.sun-term-wrap { display: inline-flex; align-items: center; gap: 4px; }
+.sun-op { color: var(--muted); font-size: 12px; }
+.sun-term {
+  display: inline-flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  padding: 4px 9px;
+  border-radius: 9px;
+  background: var(--panel);
+  border: 1px solid var(--border);
+  cursor: pointer;
+  line-height: 1.25;
+  outline: none;
+  transition: border-color 0.15s, background 0.15s, transform 0.1s;
+}
+.sun-term:hover, .sun-term:focus-visible { border-color: var(--accent); background: var(--panel-2); }
+.sun-term.active { border-color: var(--accent); background: rgba(255, 159, 67, 0.12); transform: translateY(-1px); }
+.sun-term.weak .sun-val { color: var(--warn); }
+.sun-term.is-base { background: rgba(255, 159, 67, 0.08); }
+.sun-sym { font-size: 11px; color: var(--muted); white-space: nowrap; }
+.sun-val { font-size: 12.5px; font-variant-numeric: tabular-nums; color: var(--text); font-weight: 600; }
+
+.sun-detail {
+  margin-top: 10px;
+  padding: 10px 12px;
+  min-height: 58px;
+  border-radius: 9px;
+  background: var(--panel);
+  border: 1px solid var(--border);
+}
+.sun-gauge { height: 7px; border-radius: 4px; background: var(--border); overflow: hidden; margin-top: 8px; }
+.sun-gauge > i { display: block; height: 100%; border-radius: 4px; background: var(--grad); transition: width 0.2s; }
+
+/* ---- Info-bulle riche réutilisable (HoverCard) ---- */
+.hovercard { position: relative; display: inline-flex; align-items: center; outline: none; cursor: help; }
+.cov-cell.hovercard { min-width: 0; cursor: pointer; }
+.hovercard-pop {
+  position: absolute;
+  bottom: calc(100% + 9px);
+  width: max-content;
+  max-width: 260px;
+  background: var(--panel-2);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 10px 12px;
+  font-size: 12.5px;
+  color: var(--text);
+  line-height: 1.4;
+  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.45);
+  opacity: 0;
+  visibility: hidden;
+  transform: translateY(5px);
+  transition: opacity 0.15s, transform 0.15s;
+  z-index: 30;
+  white-space: normal;
+  text-align: left;
+}
+.hovercard-pop.hc-center { left: 50%; transform: translate(-50%, 5px); }
+.hovercard-pop.hc-left { left: 0; }
+.hovercard-pop.hc-right { right: 0; }
+.hovercard:hover .hovercard-pop,
+.hovercard:focus .hovercard-pop,
+.hovercard:focus-within .hovercard-pop { opacity: 1; visibility: visible; }
+.hovercard:hover .hovercard-pop.hc-center,
+.hovercard:focus .hovercard-pop.hc-center,
+.hovercard:focus-within .hovercard-pop.hc-center { transform: translate(-50%, 0); }
+.hovercard:hover .hovercard-pop.hc-left,
+.hovercard:hover .hovercard-pop.hc-right,
+.hovercard:focus .hovercard-pop.hc-left,
+.hovercard:focus .hovercard-pop.hc-right,
+.hovercard:focus-within .hovercard-pop.hc-left,
+.hovercard:focus-within .hovercard-pop.hc-right { transform: translateY(0); }
+.hovercard-pop::after {
+  content: '';
+  position: absolute;
+  top: 100%;
+  border: 6px solid transparent;
+  border-top-color: var(--border);
+}
+.hovercard-pop.hc-center::after { left: 50%; transform: translateX(-50%); }
+.hovercard-pop.hc-left::after { left: 18px; }
+.hovercard-pop.hc-right::after { right: 18px; }
+.hc-badge { padding: 1px 8px; border-radius: 999px; font-size: 12px; font-weight: 700; font-variant-numeric: tabular-nums; }
+.hc-rows { display: flex; flex-direction: column; gap: 3px; }
+.hc-rows > div { display: flex; justify-content: space-between; gap: 14px; font-size: 12px; }
+.hc-rows > div > span:first-child { color: var(--muted); }
+.hc-zones { display: flex; flex-direction: column; gap: 4px; margin-top: 6px; }
+.hc-zones > div { display: flex; align-items: center; gap: 7px; font-size: 12px; color: var(--muted); padding: 2px 4px; border-radius: 6px; }
+.hc-zones > div.on { color: var(--text); background: var(--panel); font-weight: 600; }
+.hc-zones i.z { width: 9px; height: 9px; border-radius: 50%; flex: none; }
+.hc-zones i.z.low { background: var(--danger); }
+.hc-zones i.z.mid { background: var(--warn); }
+.hc-zones i.z.ok { background: var(--accent-2); }
+
+/* Info-bulle flottante qui suit le curseur (liste de couverture, Stats). */
+.follow-tip {
+  position: fixed;
+  transform: translate(-50%, -100%);
+  background: var(--panel-2);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 10px 12px;
+  font-size: 12.5px;
+  color: var(--text);
+  line-height: 1.4;
+  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.45);
+  pointer-events: none;
+  z-index: 60;
+  white-space: normal;
+  text-align: left;
+}
+
+/* ---- Carence vitamine D (Stats) ---- */
+.vitd-card {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 16px;
+  align-items: center;
+  padding: 14px;
+  border-radius: 12px;
+  border: 1px solid var(--border);
+  background: var(--panel-2);
+}
+.vitd-big { font-size: 30px; font-weight: 700; font-variant-numeric: tabular-nums; }
+.vitd-status { padding: 4px 12px; border-radius: 999px; font-size: 13px; font-weight: 600; }
+.vitd-status.ok { background: rgba(123, 201, 111, 0.16); color: var(--accent-2); }
+.vitd-status.mid { background: rgba(245, 166, 35, 0.16); color: var(--warn); }
+.vitd-status.low { background: rgba(239, 93, 93, 0.16); color: var(--danger); }
+.vitd-scale { position: relative; height: 8px; border-radius: 4px; margin: 6px 0 2px;
+  background: linear-gradient(90deg, var(--danger) 0%, var(--warn) 45%, var(--accent-2) 75%); }
+.vitd-scale > i { position: absolute; top: -4px; width: 3px; height: 16px; border-radius: 2px; background: var(--text);
+  box-shadow: 0 0 0 2px var(--panel-2); }

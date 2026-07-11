@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { toGrams, scaleNutrients, computeItems, totalNutrients } from '../src/nutrition/compute';
-import { FOOD_BY_ID } from '../src/nutrition/foods';
+import { FOODS, FOOD_BY_ID } from '../src/nutrition/foods';
 
 describe('conversions et calculs', () => {
   it('convertit les pièces via le poids moyen de l\'aliment', () => {
@@ -31,7 +31,7 @@ describe('conversions et calculs', () => {
     const computed = computeItems([
       { aliment: 'banane', quantite: 1, unite: 'piece', estimation: false },
       { aliment: 'oeuf', quantite: 2, unite: 'piece', estimation: false },
-    ]);
+    ], FOODS);
     const totals = totalNutrients(computed);
     const banane = scaleNutrients(FOOD_BY_ID.get('banane')!.n, 120);
     const oeufs = scaleNutrients(FOOD_BY_ID.get('oeuf')!.n, 110);
@@ -39,13 +39,13 @@ describe('conversions et calculs', () => {
   });
 
   it('inclut les micros ajoutés manuellement (créatine, K2, iode, sélénium)', () => {
-    const computed = computeItems([{ aliment: 'saumon', quantite: 100, unite: 'g', estimation: false }]);
+    const computed = computeItems([{ aliment: 'saumon', quantite: 100, unite: 'g', estimation: false }], FOODS);
     const t = totalNutrients(computed);
     expect(t.creatine).toBeGreaterThan(0);
     expect(t.selenium).toBeGreaterThan(0);
     expect(t.iode).toBeGreaterThan(0);
     expect(t.vitD).toBeGreaterThan(0);
-    const oeuf = computeItems([{ aliment: 'oeuf', quantite: 100, unite: 'g', estimation: false }]);
+    const oeuf = computeItems([{ aliment: 'oeuf', quantite: 100, unite: 'g', estimation: false }], FOODS);
     expect(totalNutrients(oeuf).vitK2).toBeGreaterThan(0);
   });
 });

@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { parseTranscript } from '../src/extraction/ruleParser';
 import { computeItems, totalNutrients } from '../src/nutrition/compute';
+import { FOODS } from '../src/nutrition/foods';
 
 interface ParseCase {
   phrase: string;
@@ -81,7 +82,7 @@ describe('parseTranscript', () => {
 
   it('extrait, matche et calcule un repas complet de bout en bout', () => {
     const items = parseTranscript('un bol de riz avec 150 g de filet de poulet et un yaourt nature');
-    const computed = computeItems(items);
+    const computed = computeItems(items, FOODS);
     expect(computed).toHaveLength(3);
     expect(computed.every((c) => c.match.food !== null)).toBe(true);
     const totals = totalNutrients(computed);

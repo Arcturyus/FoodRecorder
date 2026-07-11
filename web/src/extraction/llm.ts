@@ -25,7 +25,7 @@ export const DEFAULT_LLM_MODEL = LLM_MODELS[1].id;
 
 const SYSTEM_PROMPT = `Tu extrais les aliments d'une phrase en français décrivant un repas.
 Réponds UNIQUEMENT avec un JSON {"items":[{"aliment","quantite","unite","estimation"}]}.
-- "unite" ∈ ["g","ml","piece","portion","cas","cac","bol","verre","assiette","tranche","poignee","carre","pot"].
+- "unite" ∈ ["g","ml","piece","portion","cas","cac","bol","verre","assiette","tranche","poignee","carre","pot","pincee","dose"].
 - "aliment" : le nom de l'aliment, en français, sans quantité ni adjectifs superflus.
 - Si la quantité n'est pas donnée, choisis une quantité plausible et mets "estimation": true, sinon false.
 - N'invente JAMAIS de valeurs nutritionnelles. N'ajoute aucun aliment non mentionné.
@@ -68,6 +68,30 @@ export async function loadLlm(modelId: string, onProgress?: ProgressCallback): P
 
 export function isLlmLoaded(): boolean {
   return engine !== null;
+}
+
+/**
+ * Appel générique du LLM local chargé (réutilisé par d'autres extracteurs, ex.
+ * les pesées). Renvoie le contenu texte brut, ou `null` si aucun modèle chargé.
+ */
+export async function chatWithLlm(
+  system: string,
+  user: string,
+  opts?: { schema?: object; maxTokens?: number },
+): Promise<string | null> {
+  if (!engine) return null;
+  const resp = await engine.chat.completions.create({
+    messages: [
+      { role: 'system', content: system },
+      { role: 'user', content: user },
+    ],
+    temperature: 0,
+    max_tokens: opts?.maxTokens ?? 700,
+    response_format: opts?.schema
+      ? { type: 'json_object', schema: JSON.stringify(opts.schema) }
+      : { type: 'json_object' },
+  });
+  return resp.choices[0]?.message?.content ?? null;
 }
 
 export function loadedModel(): string | null {

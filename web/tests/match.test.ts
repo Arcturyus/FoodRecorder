@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { matchFood } from '../src/nutrition/match';
+import { FOODS } from '../src/nutrition/foods';
 
 /**
  * ≥ 40 aliments FR courants (dont pièges). Critère plan §Phase 1 : ≥ 90 % top-1.
@@ -72,7 +73,7 @@ describe('matchFood', () => {
   it(`matche ≥ 90% des ${CASES.length} aliments courants en top-1`, () => {
     const misses: string[] = [];
     for (const [input, expected] of CASES) {
-      const res = matchFood(input);
+      const res = matchFood(input, FOODS);
       if (res.food?.id !== expected) {
         misses.push(`"${input}" → ${res.food?.id ?? 'null'} (attendu ${expected})`);
       }
@@ -85,12 +86,50 @@ describe('matchFood', () => {
   });
 
   it('signale les aliments inconnus comme douteux', () => {
-    const res = matchFood('xyzzy blorptron');
+    const res = matchFood('xyzzy blorptron', FOODS);
     expect(res.douteux).toBe(true);
   });
 
   it('propose des alternatives', () => {
-    const res = matchFood('poulet');
+    const res = matchFood('poulet', FOODS);
     expect(res.alternatives.length).toBeGreaterThan(0);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Départage des hésitations par la consommation récente
+// ---------------------------------------------------------------------------
+
+import { EMPTY_NUTRIENTS } from '../src/nutrition/types';
+import type { Food } from '../src/nutrition/types';
+
+function mkFood(id: string, nom: string, aliases: string[] = []): Food {
+  return { id, nom, categorie: 'oeuf-laitier', aliases, n: { ...EMPTY_NUTRIENTS } };
+}
+
+describe('départage par consommation récente (recentCounts)', () => {
+  const fb0 = mkFood('fb0', 'fromage blanc 0%', ['fromage blanc']);
+  const fb3 = mkFood('fb3', 'fromage blanc 3%', ['fromage blanc']);
+  const skyr = mkFood('skyr', 'skyr', []);
+  const bank = [fb0, fb3, skyr];
+
+  it('sans historique, garde le meilleur score (ordre de la banque)', () => {
+    const res = matchFood('fromage blanc', bank);
+    expect(res.food?.id).toBe('fb0');
+  });
+
+  it('à scores équivalents, choisit le plus mangé les derniers jours', () => {
+    const res = matchFood('fromage blanc', bank, new Map([['fb3', 5]]));
+    expect(res.food?.id).toBe('fb3');
+  });
+
+  it("ne détourne pas une demande explicite vers l'habitude", () => {
+    const res = matchFood('fromage blanc 0%', bank, new Map([['fb3', 12]]));
+    expect(res.food?.id).toBe('fb0');
+  });
+
+  it("l'aliment écarté reste proposé en alternative", () => {
+    const res = matchFood('fromage blanc', bank, new Map([['fb3', 5]]));
+    expect(res.alternatives.map((f) => f.id)).toContain('fb0');
   });
 });

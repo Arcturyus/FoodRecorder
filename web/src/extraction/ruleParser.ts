@@ -37,19 +37,25 @@ interface UnitPattern {
 // Ordre important : les motifs les plus spécifiques d'abord.
 const UNIT_WORDS: UnitPattern[] = [
   { regex: /^(?:kilos?|kilogrammes?|kg)$/, unit: 'g', factor: 1000 },
+  { regex: /^(?:milligrammes?|mg)$/, unit: 'mg' },
+  // « µg » : le µ est retiré par la normalisation → on cible microgramme / mcg / ug.
+  { regex: /^(?:microgrammes?|mcg|ug)$/, unit: 'µg' },
   { regex: /^(?:grammes?|gr?)$/, unit: 'g' },
   { regex: /^(?:millilitres?|ml)$/, unit: 'ml' },
   { regex: /^(?:centilitres?|cl)$/, unit: 'ml', factor: 10 },
   { regex: /^(?:litres?|l)$/, unit: 'ml', factor: 1000 },
+  { regex: /^(?:pintes?)$/, unit: 'ml', factor: 500 },
   { regex: /^(?:bols?)$/, unit: 'bol' },
   { regex: /^(?:verres?)$/, unit: 'verre' },
   { regex: /^(?:assiettes?)$/, unit: 'assiette' },
   { regex: /^(?:tranches?)$/, unit: 'tranche' },
   { regex: /^(?:poignees?)$/, unit: 'poignee' },
+  { regex: /^(?:pincees?)$/, unit: 'pincee' },
+  { regex: /^(?:doses?|dosettes?|scoops?|mesures?)$/, unit: 'dose' },
   { regex: /^(?:carres?|carreaux?)$/, unit: 'carre' },
   { regex: /^(?:pots?)$/, unit: 'pot' },
   { regex: /^(?:portions?|parts?)$/, unit: 'portion' },
-  { regex: /^(?:morceaux?|pieces?|boites?|canettes?|boules?)$/, unit: 'piece' },
+  { regex: /^(?:morceaux?|pieces?|boites?|canettes?|boules?|gelules?|comprimes?|capsules?|cachets?|gouttes?)$/, unit: 'piece' },
 ];
 
 /** "cuillere(s) a soupe/cafe" (2-3 mots) → cas/cac */

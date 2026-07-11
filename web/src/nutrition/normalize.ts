@@ -29,6 +29,19 @@ export function normalizeForMatch(text: string): string {
     .join(' ');
 }
 
+/**
+ * Termes génériques qui, tapés dans la recherche, doivent faire remonter TOUTE
+ * la catégorie « compléments/suppléments » (sinon ces mots ne matchent aucun
+ * nom d'aliment précis). Utilisé par les recherches de la liste et de l'ajout manuel.
+ */
+const SUPPLEMENT_SEARCH_TERMS = ['supplement', 'complement', 'complement alimentaire'];
+
+/** Vrai si la requête (déjà normalisée) désigne la catégorie compléments/suppléments. */
+export function isSupplementQuery(q: string): boolean {
+  if (q.length < 3) return false;
+  return SUPPLEMENT_SEARCH_TERMS.some((t) => t.startsWith(q) || q.startsWith(t));
+}
+
 /** Trigrammes de caractères pour similarité fuzzy. */
 export function trigrams(s: string): Set<string> {
   const padded = `  ${s} `;

@@ -36,7 +36,9 @@ export async function loadStt(modelId: string, onProgress?: SttProgressCallback)
   const { pipeline } = await import('@huggingface/transformers');
   transcriber = (await pipeline('automatic-speech-recognition', modelId, {
     progress_callback: (p: { status: string; progress?: number }) => {
-      onProgress?.(p.status, p.progress ?? 0);
+      // transformers.js exprime `progress` en pourcentage (0–100) ; on renvoie une
+      // fraction 0–1, cohérente avec le contrat SttProgressCallback (cf. llm.ts).
+      onProgress?.(p.status, Math.min(1, (p.progress ?? 0) / 100));
     },
   })) as unknown as Transcriber;
   loadedModelId = modelId;

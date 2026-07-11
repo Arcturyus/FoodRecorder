@@ -11,6 +11,8 @@ export function fmt(n: number, d = 0): string {
 
 export const UNIT_LABELS: Record<Unit, string> = {
   g: 'g',
+  mg: 'mg',
+  µg: 'µg',
   ml: 'ml',
   piece: 'pièce(s)',
   portion: 'portion(s)',
@@ -23,4 +25,6 @@ export const UNIT_LABELS: Record<Unit, string> = {
   poignee: 'poignée(s)',
   carre: 'carré(s)',
   pot: 'pot(s)',
+  pincee: 'pincée(s)',
+  dose: 'dose(s)',
 };

@@ -1,8 +1,9 @@
 import { defineConfig } from 'vitest/config';
 import react from '@vitejs/plugin-react';
+import { claudeCodeBridge } from './vite-plugin-claude-code';
 
 export default defineConfig({
-  plugins: [react()],
+  plugins: [react(), claudeCodeBridge()],
   server: {
     headers: {
       // Requis par web-llm / transformers.js (SharedArrayBuffer, threads WASM)
