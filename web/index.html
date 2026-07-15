@@ -7,6 +7,12 @@
   </head>
   <body>
     <div id="root"></div>
+    <!--
+      GitHub Pages ne permet pas de définir des en-têtes HTTP custom (COOP/COEP),
+      requis pour SharedArrayBuffer (web-llm / transformers.js). Ce service worker
+      les injecte côté client. Sans effet si le serveur les envoie déjà (dev local).
+    -->
+    <script src="./coi-serviceworker.js"></script>
     <script type="module" src="/src/main.tsx"></script>
   </body>
 </html>
