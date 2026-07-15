@@ -7,7 +7,7 @@ import { extractWithLlm } from '../extraction/llm';
 import { extractWithAnthropic, extractImageWithAnthropic } from '../extraction/anthropic';
 import { extractWithClaudeCode, extractImageWithClaudeCode } from '../extraction/claudeCode';
 import { parseTranscript } from '../extraction/ruleParser';
-import { isSyncConfigured, pushTranscript } from '../sync/supabase';
+import { isSyncConfigured, pushTranscript, pushImage } from '../sync/supabase';
 import { normalizeForMatch, trigramSimilarity } from '../nutrition/normalize';
 import type { ExtractedItem } from '../nutrition/types';
 import type { FavoriteMeal } from '../store/store';
@@ -59,6 +59,41 @@ function fileToBase64(file: File): Promise<{ data: string; mediaType: string }> 
     };
     reader.onerror = () => reject(new Error('Lecture de l’image impossible.'));
     reader.readAsDataURL(file);
+  });
+}
+
+/**
+ * Réduit une image via un canvas (max `maxDim` px sur le grand côté, JPEG) pour
+ * un envoi léger en file d'attente Supabase. Une photo de repas reste largement
+ * exploitable à 1024 px, pour un poids ~10× moindre qu'un original de smartphone.
+ */
+function downscaleImage(file: File, maxDim = 1024, quality = 0.72): Promise<{ data: string; mediaType: string }> {
+  return new Promise((resolve, reject) => {
+    const url = URL.createObjectURL(file);
+    const img = new Image();
+    img.onload = () => {
+      URL.revokeObjectURL(url);
+      const scale = Math.min(1, maxDim / Math.max(img.width, img.height));
+      const w = Math.max(1, Math.round(img.width * scale));
+      const h = Math.max(1, Math.round(img.height * scale));
+      const canvas = document.createElement('canvas');
+      canvas.width = w;
+      canvas.height = h;
+      const ctx = canvas.getContext('2d');
+      if (!ctx) {
+        reject(new Error('Canvas indisponible.'));
+        return;
+      }
+      ctx.drawImage(img, 0, 0, w, h);
+      const dataUrl = canvas.toDataURL('image/jpeg', quality);
+      const comma = dataUrl.indexOf(',');
+      resolve({ data: dataUrl.slice(comma + 1), mediaType: 'image/jpeg' });
+    };
+    img.onerror = () => {
+      URL.revokeObjectURL(url);
+      reject(new Error('Lecture de l’image impossible.'));
+    };
+    img.src = url;
   });
 }
 
@@ -248,13 +283,35 @@ export function Capture({ date, title }: { date?: string; title?: string } = {})
     e.target.value = ''; // permet de re-sélectionner la même photo
     if (!file) return;
     setBusy(true);
-    setStatus(`Analyse de la photo (${extractionMode === 'claudecode' ? 'Claude Code' : 'API Claude'})…`);
     try {
+      if (extractionMode === 'claudecode') {
+        setStatus('Analyse de la photo (Claude Code)…');
+        try {
+          const { data, mediaType } = await fileToBase64(file);
+          const res = await extractImageWithClaudeCode(data, mediaType);
+          if (res.items.length === 0) {
+            setStatus('Aucun aliment détecté sur la photo. Reprenez la photo ou ajoutez à la main.');
+            return;
+          }
+          addEntry('📷 Photo', res.items, res.source, date);
+          setStatus(`✓ Compris (photo, ${res.items.length}) : ${summarize(res.items)}`);
+        } catch (bridgeErr) {
+          // Pont indisponible ici (tel, ou site déployé) : mise en file d'attente
+          // de la photo réduite, pour analyse différée par l'ordinateur.
+          if (isSyncConfigured()) {
+            const { data, mediaType } = await downscaleImage(file);
+            await pushImage(deviceId, data, mediaType, date);
+            setStatus('Pont Claude Code indisponible ici : photo mise en file d’attente, sera analysée dès que l’ordinateur sera disponible.');
+          } else {
+            setStatus(`Erreur photo : ${(bridgeErr as Error).message}`);
+          }
+        }
+        return;
+      }
+      // Mode « API Claude » : analyse directe sur cet appareil.
+      setStatus('Analyse de la photo (API Claude)…');
       const { data, mediaType } = await fileToBase64(file);
-      const res =
-        extractionMode === 'claudecode'
-          ? await extractImageWithClaudeCode(data, mediaType)
-          : await extractImageWithAnthropic(data, mediaType, cloudApiKey, cloudModel);
+      const res = await extractImageWithAnthropic(data, mediaType, cloudApiKey, cloudModel);
       if (res.items.length === 0) {
         setStatus('Aucun aliment détecté sur la photo. Reprenez la photo ou ajoutez à la main.');
         return;

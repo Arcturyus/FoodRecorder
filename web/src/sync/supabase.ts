@@ -24,6 +24,13 @@ export interface TranscriptPayload {
   date?: string;
 }
 
+export interface ImagePayload {
+  /** Image réduite, en base64 nu (sans préfixe data:…). */
+  imageBase64: string;
+  mediaType: string;
+  date?: string;
+}
+
 export interface EntryPayload {
   transcript: string;
   items: ExtractedItem[];
@@ -34,7 +41,7 @@ export interface EntryPayload {
 interface SyncRow<T> {
   id: string;
   device: string;
-  kind: 'transcript' | 'entry';
+  kind: 'transcript' | 'image' | 'entry';
   payload: T;
   processed: boolean;
   created_at: string;
@@ -47,6 +54,16 @@ export async function pushTranscript(device: string, transcript: string, date?: 
   const { error } = await supabase
     .from('sync_queue')
     .insert({ device, kind: 'transcript', payload, processed: false });
+  if (error) throw new Error(error.message);
+}
+
+/** Dépose une photo (réduite) en attente d'analyse par un autre appareil. */
+export async function pushImage(device: string, imageBase64: string, mediaType: string, date?: string): Promise<void> {
+  if (!supabase) return;
+  const payload: ImagePayload = { imageBase64, mediaType, ...(date ? { date } : {}) };
+  const { error } = await supabase
+    .from('sync_queue')
+    .insert({ device, kind: 'image', payload, processed: false });
   if (error) throw new Error(error.message);
 }
 
@@ -63,8 +80,21 @@ export async function fetchPendingTranscripts(): Promise<SyncRow<TranscriptPaylo
   return (data ?? []) as SyncRow<TranscriptPayload>[];
 }
 
-/** Marque une transcription comme traitée (succès ou échec, pour ne pas boucler dessus). */
-export async function markTranscriptProcessed(id: string): Promise<void> {
+/** Récupère les photos en attente (tous appareils confondus). */
+export async function fetchPendingImages(): Promise<SyncRow<ImagePayload>[]> {
+  if (!supabase) return [];
+  const { data, error } = await supabase
+    .from('sync_queue')
+    .select('*')
+    .eq('kind', 'image')
+    .eq('processed', false)
+    .order('created_at', { ascending: true });
+  if (error) throw new Error(error.message);
+  return (data ?? []) as SyncRow<ImagePayload>[];
+}
+
+/** Marque une ligne en attente (transcription ou photo) comme traitée, pour ne pas boucler dessus. */
+export async function markProcessed(id: string): Promise<void> {
   if (!supabase) return;
   await supabase.from('sync_queue').update({ processed: true }).eq('id', id);
 }

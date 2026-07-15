@@ -1,6 +1,13 @@
 import { useStore } from '../store/store';
-import { checkClaudeCode, extractWithClaudeCode } from '../extraction/claudeCode';
-import { fetchPendingTranscripts, markTranscriptProcessed, pushEntry, fetchNewEntries, isSyncConfigured } from './supabase';
+import { checkClaudeCode, extractWithClaudeCode, extractImageWithClaudeCode } from '../extraction/claudeCode';
+import {
+  fetchPendingTranscripts,
+  fetchPendingImages,
+  markProcessed,
+  pushEntry,
+  fetchNewEntries,
+  isSyncConfigured,
+} from './supabase';
 
 let running = false;
 
@@ -21,6 +28,7 @@ export async function runSyncTick(): Promise<void> {
     if (extractionMode === 'claudecode') {
       const status = await checkClaudeCode();
       if (status.available) {
+        // Transcriptions vocales en attente.
         const pending = await fetchPendingTranscripts();
         for (const row of pending) {
           try {
@@ -39,7 +47,27 @@ export async function runSyncTick(): Promise<void> {
           } catch {
             // Échec ponctuel : on marque quand même la ligne traitée pour ne pas boucler dessus.
           }
-          await markTranscriptProcessed(row.id);
+          await markProcessed(row.id);
+        }
+
+        // Photos en attente (analysées par le CLI multimodal).
+        const pendingImages = await fetchPendingImages();
+        for (const row of pendingImages) {
+          try {
+            const res = await extractImageWithClaudeCode(row.payload.imageBase64, row.payload.mediaType);
+            if (res.items.length > 0) {
+              addEntry('📷 Photo', res.items, res.source, row.payload.date);
+              await pushEntry(deviceId, {
+                transcript: '📷 Photo',
+                items: res.items,
+                source: 'claudecode',
+                ...(row.payload.date ? { date: row.payload.date } : {}),
+              });
+            }
+          } catch {
+            // Échec ponctuel : on marque quand même la ligne traitée pour ne pas boucler dessus.
+          }
+          await markProcessed(row.id);
         }
       }
     }
