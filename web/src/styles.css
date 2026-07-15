@@ -350,6 +350,17 @@ header.app-head .sub { color: var(--muted); font-size: 13px; }
   border-top: 1px solid var(--border);
 }
 .item-row:first-of-type { border-top: none; }
+/* Mode édition d'une ligne (aliment / quantité / unité / suppr). */
+.item-row-edit { grid-template-columns: 1fr 108px 120px auto; }
+
+@media (max-width: 640px) {
+  /* Lecture : colonnes resserrées pour laisser de la place au nom de l'aliment. */
+  .item-row { grid-template-columns: 1fr 52px 30px auto; gap: 6px; }
+  /* Édition : le sélecteur d'aliment prend toute la largeur, sur sa propre ligne ;
+     quantité / unité / suppression se répartissent en dessous. */
+  .item-row-edit { grid-template-columns: 1fr 88px auto; }
+  .item-row-edit .item-row-edit-food { grid-column: 1 / -1; }
+}
 .item-name { display: flex; flex-direction: column; gap: 2px; }
 .item-name .kcal { color: var(--muted); font-size: 12px; }
 .badge {
@@ -772,3 +783,20 @@ button.chip-active:hover { filter: brightness(1.08); }
   background: linear-gradient(90deg, var(--danger) 0%, var(--warn) 45%, var(--accent-2) 75%); }
 .vitd-scale > i { position: absolute; top: -4px; width: 3px; height: 16px; border-radius: 2px; background: var(--text);
   box-shadow: 0 0 0 2px var(--panel-2); }
+
+/* ---- Appareils tactiles : neutraliser les survols purement cosmétiques ----
+   Sur un écran tactile (hover: none), un :hover se déclenche au tap et « colle »
+   jusqu'au tap suivant, sans rien apporter. On rétablit ici l'apparence de base
+   pour ces effets. Les info-bulles restent accessibles (elles s'ouvrent au tap,
+   et gardent leurs replis :focus/:focus-within — non touchés ici). */
+@media (hover: none) {
+  button:hover { background: var(--panel-2); }
+  button.primary:hover, button.chip-active:hover { filter: none; }
+  .tabbar-btn:hover { background: none; }
+  .number-field button:hover { background: var(--panel); color: var(--muted); }
+  input[type="checkbox"]:hover { border-color: var(--border); }
+  .cov-row:hover { background: transparent; }
+  .cal-cell:hover:not(:disabled) { border-color: var(--border); }
+  .series-chip:hover { border-color: var(--border); color: var(--muted); }
+  .sun-term:hover { border-color: var(--border); background: var(--panel); }
+}

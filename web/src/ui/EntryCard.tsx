@@ -151,8 +151,9 @@ function ItemRow({ entryId, item, editing }: { entryId: string; item: JournalIte
   ]);
 
   return (
-    <div className="item-row" style={{ gridTemplateColumns: '1fr 108px 120px auto' }}>
+    <div className="item-row item-row-edit">
       <select
+        className="item-row-edit-food"
         value={item.foodId ?? ''}
         onChange={(e) => updateItem(entryId, item.id, { foodId: e.target.value || null })}
       >
