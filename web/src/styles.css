@@ -185,6 +185,104 @@ header.app-head .sub { color: var(--muted); font-size: 13px; }
   box-shadow: 0 2px 12px rgba(255, 120, 70, 0.35);
 }
 
+/* ---- Navigation mobile : barre d'onglets fixée en bas (façon appli) ---- */
+/* Masquée par défaut (ordinateur) ; révélée sous le point de rupture mobile. */
+.tabbar { display: none; }
+.more-backdrop, .more-sheet { display: none; }
+
+@media (max-width: 640px) {
+  /* Barre du haut masquée : la navigation passe en bas. */
+  .tabs { display: none; }
+  /* Espace pour ne pas masquer le contenu derrière la barre fixe. */
+  .app { padding-bottom: calc(76px + env(safe-area-inset-bottom, 0px)); }
+
+  .tabbar {
+    display: flex;
+    position: fixed;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    z-index: 40;
+    gap: 2px;
+    padding: 6px 4px calc(6px + env(safe-area-inset-bottom, 0px));
+    background: rgba(20, 17, 15, 0.92);
+    backdrop-filter: blur(12px);
+    -webkit-backdrop-filter: blur(12px);
+    border-top: 1px solid var(--border);
+  }
+  .tabbar-btn {
+    flex: 1 1 0;
+    min-width: 0;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 3px;
+    min-height: 52px;
+    padding: 6px 2px;
+    background: none;
+    border: none;
+    border-radius: 12px;
+    color: var(--muted);
+    font-size: 10px;
+    font-weight: 600;
+  }
+  .tabbar-btn .tabbar-icon { font-size: 21px; line-height: 1; }
+  .tabbar-btn .tabbar-label {
+    max-width: 100%;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .tabbar-btn.active { color: var(--accent); }
+  .tabbar-btn.active .tabbar-icon { transform: translateY(-1px); }
+
+  /* Feuille « Plus » : onglets secondaires au-dessus de la barre du bas. */
+  .more-backdrop {
+    display: block;
+    position: fixed;
+    inset: 0;
+    z-index: 45;
+    background: rgba(0, 0, 0, 0.45);
+    animation: more-fade 0.15s ease;
+  }
+  .more-sheet {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    position: fixed;
+    left: 0;
+    right: 0;
+    bottom: calc(64px + env(safe-area-inset-bottom, 0px));
+    z-index: 46;
+    padding: 10px 10px 6px;
+    background: var(--panel);
+    border-top: 1px solid var(--border);
+    border-radius: 18px 18px 0 0;
+    box-shadow: 0 -10px 34px rgba(0, 0, 0, 0.5);
+    animation: more-slide 0.2s ease;
+  }
+  .more-item {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    padding: 14px 16px;
+    background: none;
+    border: none;
+    border-radius: 12px;
+    color: var(--text);
+    font-size: 15px;
+    text-align: left;
+  }
+  .more-item .more-icon { font-size: 20px; }
+  .more-item.active { background: var(--panel-2); color: var(--accent); font-weight: 600; }
+}
+
+@keyframes more-fade { from { opacity: 0; } to { opacity: 1; } }
+@keyframes more-slide {
+  from { opacity: 0; transform: translateY(12px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
 .panel {
   background: var(--panel);
   border: 1px solid var(--border);
@@ -199,6 +297,46 @@ header.app-head .sub { color: var(--muted); font-size: 13px; }
 .record-btn { min-width: 130px; font-weight: 600; }
 .record-btn.rec { background: var(--danger); border-color: var(--danger); color: #fff; animation: pulse 1.2s infinite; }
 @keyframes pulse { 0%,100% { opacity: 1; } 50% { opacity: 0.6; } }
+
+/* ---- Bloc de capture (« Qu'avez-vous mangé ? »), pensé mobile d'abord ---- */
+.capture-input {
+  display: block;
+  width: 100%;
+  min-height: 80px;
+  resize: vertical;
+  line-height: 1.4;
+}
+.capture-actions {
+  display: flex;
+  gap: 8px;
+  margin-top: 10px;
+}
+/* Trois actions à parts égales, cibles tactiles confortables. */
+.capture-actions > button {
+  flex: 1 1 0;
+  min-width: 0;
+  min-height: 46px;
+  font-weight: 600;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  white-space: nowrap;
+}
+/* « Dicter » au repos : accent chaud (gère déjà .primary) ; en cours : rouge pulsé. */
+.capture-actions .photo-btn { border-color: var(--accent); color: var(--accent); background: transparent; }
+/* « Ajouter » = valider : vert, distinct de la dictée. */
+.capture-actions .capture-add {
+  background: var(--accent-2);
+  border-color: transparent;
+  color: #12100e;
+}
+.capture-actions .capture-add:disabled { background: var(--panel-2); color: var(--muted); }
+
+@media (max-width: 640px) {
+  .capture-input { min-height: 96px; font-size: 16px; } /* 16px : évite le zoom auto iOS au focus */
+  .capture-actions > button { min-height: 50px; font-size: 14px; }
+}
 
 .hint { color: var(--muted); font-size: 12px; margin-top: 8px; }
 .status { color: var(--accent-2); font-size: 12px; margin-top: 8px; }

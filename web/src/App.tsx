@@ -24,8 +24,35 @@ import { Settings } from './ui/Settings';
 
 type Tab = 'jour' | 'historique' | 'stats' | 'poids' | 'aliments' | 'guide' | 'reglages';
 
+interface TabMeta {
+  id: Tab;
+  /** Libellé complet (barre du haut, ordinateur). */
+  label: string;
+  /** Libellé court (barre du bas, mobile). */
+  short: string;
+  icon: string;
+}
+
+/** Onglets principaux : accessibles directement dans la barre du bas (mobile). */
+const PRIMARY_TABS: TabMeta[] = [
+  { id: 'jour', label: "Aujourd'hui", short: 'Jour', icon: '🍽' },
+  { id: 'historique', label: 'Historique', short: 'Historique', icon: '📅' },
+  { id: 'stats', label: 'Stats', short: 'Stats', icon: '📊' },
+  { id: 'poids', label: 'Poids', short: 'Poids', icon: '⚖️' },
+];
+
+/** Onglets secondaires : regroupés derrière « Plus » sur mobile. */
+const SECONDARY_TABS: TabMeta[] = [
+  { id: 'aliments', label: 'Aliments', short: 'Aliments', icon: '🥗' },
+  { id: 'guide', label: 'Guide', short: 'Guide', icon: '📖' },
+  { id: 'reglages', label: 'Réglages', short: 'Réglages', icon: '⚙️' },
+];
+
+const ALL_TABS: TabMeta[] = [...PRIMARY_TABS, ...SECONDARY_TABS];
+
 export function App() {
   const [tab, setTab] = useState<Tab>('jour');
+  const [showMore, setShowMore] = useState(false);
   const entries = useStore((s) => s.entries);
   const today = todayStr();
 
@@ -67,35 +94,17 @@ export function App() {
   return (
     <div className="app">
       <header className="app-head">
-        <div>
-          <h1>🍽️ FoodRecorder</h1>
-          <div className="sub">Journal nutritionnel vocal, 100 % sur votre appareil</div>
-        </div>
+        <h1>🍽️ FoodRecorder</h1>
       </header>
 
-      <div className="tabs">
-        <button className={tab === 'jour' ? 'active' : ''} onClick={() => setTab('jour')}>
-          Aujourd'hui
-        </button>
-        <button className={tab === 'historique' ? 'active' : ''} onClick={() => setTab('historique')}>
-          Historique
-        </button>
-        <button className={tab === 'stats' ? 'active' : ''} onClick={() => setTab('stats')}>
-          Stats
-        </button>
-        <button className={tab === 'poids' ? 'active' : ''} onClick={() => setTab('poids')}>
-          Poids
-        </button>
-        <button className={tab === 'aliments' ? 'active' : ''} onClick={() => setTab('aliments')}>
-          Aliments
-        </button>
-        <button className={tab === 'guide' ? 'active' : ''} onClick={() => setTab('guide')}>
-          Guide
-        </button>
-        <button className={tab === 'reglages' ? 'active' : ''} onClick={() => setTab('reglages')}>
-          Réglages
-        </button>
-      </div>
+      {/* Barre d'onglets du haut : ordinateur (masquée sur mobile via CSS). */}
+      <nav className="tabs">
+        {ALL_TABS.map((t) => (
+          <button key={t.id} className={tab === t.id ? 'active' : ''} onClick={() => setTab(t.id)}>
+            {t.label}
+          </button>
+        ))}
+      </nav>
 
       {tab === 'jour' && (
         <>
@@ -120,6 +129,52 @@ export function App() {
       {tab === 'aliments' && <Foods />}
       {tab === 'guide' && <Guide />}
       {tab === 'reglages' && <Settings />}
+
+      {/* Feuille « Plus » (mobile) : onglets secondaires. */}
+      {showMore && (
+        <>
+          <div className="more-backdrop" onClick={() => setShowMore(false)} />
+          <div className="more-sheet" role="menu">
+            {SECONDARY_TABS.map((t) => (
+              <button
+                key={t.id}
+                className={`more-item ${tab === t.id ? 'active' : ''}`}
+                onClick={() => {
+                  setTab(t.id);
+                  setShowMore(false);
+                }}
+              >
+                <span className="more-icon">{t.icon}</span> {t.label}
+              </button>
+            ))}
+          </div>
+        </>
+      )}
+
+      {/* Barre d'onglets du bas : mobile (masquée sur ordinateur via CSS). */}
+      <nav className="tabbar">
+        {PRIMARY_TABS.map((t) => (
+          <button
+            key={t.id}
+            className={`tabbar-btn ${tab === t.id ? 'active' : ''}`}
+            onClick={() => {
+              setTab(t.id);
+              setShowMore(false);
+            }}
+          >
+            <span className="tabbar-icon">{t.icon}</span>
+            <span className="tabbar-label">{t.short}</span>
+          </button>
+        ))}
+        <button
+          className={`tabbar-btn ${showMore || SECONDARY_TABS.some((t) => t.id === tab) ? 'active' : ''}`}
+          onClick={() => setShowMore((v) => !v)}
+          aria-expanded={showMore}
+        >
+          <span className="tabbar-icon">⋯</span>
+          <span className="tabbar-label">Plus</span>
+        </button>
+      </nav>
     </div>
   );
 }

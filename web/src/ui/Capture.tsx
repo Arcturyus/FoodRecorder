@@ -268,10 +268,21 @@ export function Capture({ date, title }: { date?: string; title?: string } = {})
     }
   }
 
+  const photoSupported = extractionMode === 'cloud' || extractionMode === 'claudecode';
+
   return (
-    <div className="panel">
+    <div className="panel capture">
       <h2>{title ?? "Qu'avez-vous mangé ?"}</h2>
-      <div className="mic-row">
+      <textarea
+        className="capture-input"
+        placeholder="Dictez ou tapez : « un bol de riz, 150 g de poulet et un yaourt nature »"
+        value={text}
+        onChange={(e) => setText(e.target.value)}
+        onKeyDown={(e) => {
+          if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) handleTextSubmit();
+        }}
+      />
+      <div className="capture-actions">
         <button
           className={`record-btn ${recording ? 'rec' : 'primary'}`}
           onClick={handleRecord}
@@ -279,45 +290,33 @@ export function Capture({ date, title }: { date?: string; title?: string } = {})
         >
           {recording ? '⏹ Arrêter' : '🎙 Dicter'}
         </button>
-        <textarea
-          placeholder="…ou tapez : « un bol de riz, 150 g de poulet et un yaourt nature »"
-          value={text}
-          onChange={(e) => setText(e.target.value)}
-          onKeyDown={(e) => {
-            if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) handleTextSubmit();
-          }}
-        />
-        <button onClick={handleTextSubmit} disabled={busy || !text.trim()}>
+        {photoSupported && (
+          <button className="photo-btn" onClick={() => photoInputRef.current?.click()} disabled={busy}>
+            📷 Photo
+          </button>
+        )}
+        <button className="capture-add" onClick={handleTextSubmit} disabled={busy || !text.trim()}>
           Ajouter
         </button>
       </div>
-      {(extractionMode === 'cloud' || extractionMode === 'claudecode') && (
-        <div className="mic-row" style={{ marginTop: 8 }}>
-          <button className="primary" onClick={() => photoInputRef.current?.click()} disabled={busy}>
-            📷 Photo d'un repas
-          </button>
-          <input
-            ref={photoInputRef}
-            type="file"
-            accept="image/*"
-            capture="environment"
-            onChange={handlePhoto}
-            style={{ display: 'none' }}
-          />
-          <span className="small">Prenez ou choisissez une photo : Claude identifie les aliments et estime les quantités.</span>
-        </div>
-      )}
+      <input
+        ref={photoInputRef}
+        type="file"
+        accept="image/*"
+        capture="environment"
+        onChange={handlePhoto}
+        style={{ display: 'none' }}
+      />
       {status && <div className="status">{status}</div>}
       <div className="hint">
-        La dictée remplit le champ : relisez / corrigez, puis cliquez « Ajouter » pour l'analyser. Ctrl/⌘ + Entrée
-        pour valider le texte.
+        La dictée remplit le champ : relisez, corrigez, puis « Ajouter ».
         {extractionMode === 'cloud'
-          ? ' Extraction par API Claude (texte ou photo, clé requise).'
+          ? ' Analyse par API Claude.'
           : extractionMode === 'claudecode'
-            ? ' Extraction par le CLI Claude Code (texte ou photo, ordinateur uniquement, sans clé).'
+            ? ' Analyse par Claude Code (ordinateur).'
             : extractionMode === 'local'
-              ? ' Extraction par IA locale. Photo disponible en mode API Claude ou Pont Claude Code.'
-              : ' Extraction par règles (rapide, hors-ligne). Photo disponible en mode API Claude ou Pont Claude Code.'}
+              ? ' Analyse par IA locale.'
+              : ' Analyse par règles (hors-ligne).'}
       </div>
     </div>
   );
