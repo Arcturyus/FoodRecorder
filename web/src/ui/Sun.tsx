@@ -1,4 +1,5 @@
 import { useMemo, useRef, useState } from 'react';
+import type { FocusEvent } from 'react';
 import { useStore, todayStr, nowTime } from '../store/store';
 import { MicRecorder } from '../stt/recorder';
 import { isSttLoaded, loadStt, transcribe } from '../stt/whisper';
@@ -9,14 +10,16 @@ import {
   SKY_OPTIONS,
   SKIN_OPTIONS,
   PHENOTYPE_OPTIONS,
+  CREME_OPTIONS,
   TIME_PRESETS,
   SUN_DAY_CAP,
   estimateVitaminD,
   vitaminDBreakdown,
   sunVitDForDate,
+  normalizeCreme,
   seasonHint,
 } from '../sun/vitaminD';
-import type { SkyCondition, SkinExposure, Phenotype } from '../sun/vitaminD';
+import type { SkyCondition, SkinExposure, Phenotype, Creme } from '../sun/vitaminD';
 import { fmt } from './format';
 
 /** Durée lisible : « 45 min », « 1 h », « 1 h 30 ». */
@@ -36,7 +39,9 @@ function summarizeSun(p: SunPatch): string {
   if (p.ciel) parts.push(SKY_OPTIONS.find((o) => o.value === p.ciel)?.label ?? p.ciel);
   if (p.peau) parts.push(SKIN_OPTIONS.find((o) => o.value === p.peau)?.short ?? p.peau);
   if (p.phenotype) parts.push(PHENOTYPE_OPTIONS.find((o) => o.value === p.phenotype)?.label ?? p.phenotype);
-  if (p.creme) parts.push('crème solaire');
+  if (p.creme && normalizeCreme(p.creme) !== 'aucune') {
+    parts.push(CREME_OPTIONS.find((o) => o.value === normalizeCreme(p.creme))?.label ?? 'crème solaire');
+  }
   return parts.join(' · ');
 }
 
@@ -59,7 +64,7 @@ export function Sun({ date }: { date?: string } = {}) {
   const [ciel, setCiel] = useState<SkyCondition>('ensoleille');
   const [peau, setPeau] = useState<SkinExposure>('visage-bras');
   const [phenotype, setPhenotype] = useState<Phenotype>('blanc');
-  const [creme, setCreme] = useState(false);
+  const [creme, setCreme] = useState<Creme>('aucune');
   const [heure, setHeure] = useState(fixedDate ? '13:00' : nowTime());
   const [duree, setDuree] = useState(30);
 
@@ -81,7 +86,7 @@ export function Sun({ date }: { date?: string } = {}) {
     if (p.ciel) setCiel(p.ciel);
     if (p.peau) setPeau(p.peau);
     if (p.phenotype) setPhenotype(p.phenotype);
-    if (p.creme != null) setCreme(p.creme);
+    if (p.creme != null) setCreme(normalizeCreme(p.creme));
   }
 
   function add() {
@@ -99,9 +104,9 @@ export function Sun({ date }: { date?: string } = {}) {
 
       <SunDictation onPatch={applyPatch} />
 
-      {/* Heure : créneaux pratiques en un clic + heure précise */}
+      {/* Heure + jour sur une même ligne : créneaux pratiques en un clic + heure/date précises */}
       <div className="sun-field">
-        <span className="sun-label">Heure de sortie</span>
+        <span className="sun-label">Début de la sortie</span>
         <div className="row" style={{ gap: 6, flexWrap: 'wrap', alignItems: 'center' }}>
           {TIME_PRESETS.map((p) => (
             <button key={p.heure} className={`small ${heure === p.heure ? 'chip-active' : 'ghost'}`} onClick={() => setHeure(p.heure)}>
@@ -109,6 +114,9 @@ export function Sun({ date }: { date?: string } = {}) {
             </button>
           ))}
           <input type="time" value={heure} onChange={(e) => setHeure(e.target.value)} style={{ width: 104 }} />
+          {!fixedDate && (
+            <input type="date" value={dateState} max={todayStr()} onChange={(e) => e.target.value && setDateState(e.target.value)} style={{ width: 140 }} />
+          )}
         </div>
       </div>
 
@@ -128,67 +136,71 @@ export function Sun({ date }: { date?: string } = {}) {
         />
       </div>
 
-      {/* Ciel */}
-      <div className="sun-field">
-        <span className="sun-label">Ciel</span>
-        <div className="row" style={{ gap: 6, flexWrap: 'wrap' }}>
-          {SKY_OPTIONS.map((o) => (
-            <button key={o.value} className={`small ${ciel === o.value ? 'chip-active' : 'ghost'}`} onClick={() => setCiel(o.value)}>
-              {o.short}
-            </button>
-          ))}
+      {/* Ciel + crème solaire : deux critères courts, une seule ligne */}
+      <div className="sun-field-row">
+        <div className="sun-subfield" style={{ flex: '1 1 auto' }}>
+          <span className="sun-label">Ciel</span>
+          <div className="row" style={{ gap: 6, flexWrap: 'wrap' }}>
+            {SKY_OPTIONS.map((o) => (
+              <button key={o.value} className={`small ${ciel === o.value ? 'chip-active' : 'ghost'}`} onClick={() => setCiel(o.value)}>
+                {o.short}
+              </button>
+            ))}
+          </div>
+        </div>
+        <div className="sun-subfield">
+          <span className="sun-label">Crème solaire</span>
+          <div className="row" style={{ gap: 6, flexWrap: 'wrap' }}>
+            {CREME_OPTIONS.map((o) => (
+              <button
+                key={o.value}
+                className={`small ${creme === o.value ? 'chip-active' : 'ghost'}`}
+                onClick={() => setCreme(o.value)}
+                title={
+                  o.value === 'visage'
+                    ? 'SPF 50 sur le visage seulement : le reste de la peau découverte synthétise normalement'
+                    : o.value === 'complete'
+                      ? 'SPF 50 sur tout le corps, posé une fois au début, moyennement bien appliqué'
+                      : 'Aucune protection solaire'
+                }
+              >
+                {o.short}
+              </button>
+            ))}
+          </div>
         </div>
       </div>
 
-      {/* Peau découverte */}
-      <div className="sun-field">
-        <span className="sun-label">Peau découverte</span>
-        <div className="row" style={{ gap: 6, flexWrap: 'wrap' }}>
-          {SKIN_OPTIONS.map((o) => (
-            <button key={o.value} className={`small ${peau === o.value ? 'chip-active' : 'ghost'}`} onClick={() => setPeau(o.value)} title={o.label}>
-              {o.short}
-            </button>
-          ))}
+      {/* Peau découverte + phototype : deux critères "peau", une seule ligne */}
+      <div className="sun-field-row">
+        <div className="sun-subfield" style={{ flex: '1 1 auto' }}>
+          <span className="sun-label">Peau découverte</span>
+          <div className="row" style={{ gap: 6, flexWrap: 'wrap' }}>
+            {SKIN_OPTIONS.map((o) => (
+              <button key={o.value} className={`small ${peau === o.value ? 'chip-active' : 'ghost'}`} onClick={() => setPeau(o.value)} title={o.label}>
+                {o.short}
+              </button>
+            ))}
+          </div>
+        </div>
+        <div className="sun-subfield" style={{ flex: '1 1 auto' }}>
+          <span className="sun-label">Phototype de peau</span>
+          <div className="row" style={{ gap: 6, flexWrap: 'wrap' }}>
+            {PHENOTYPE_OPTIONS.map((o) => (
+              <button key={o.value} className={`small ${phenotype === o.value ? 'chip-active' : 'ghost'}`} onClick={() => setPhenotype(o.value)}>
+                {o.label}
+              </button>
+            ))}
+          </div>
         </div>
       </div>
 
-      {/* Phototype */}
-      <div className="sun-field">
-        <span className="sun-label">Phototype de peau</span>
-        <div className="row" style={{ gap: 6, flexWrap: 'wrap' }}>
-          {PHENOTYPE_OPTIONS.map((o) => (
-            <button key={o.value} className={`small ${phenotype === o.value ? 'chip-active' : 'ghost'}`} onClick={() => setPhenotype(o.value)}>
-              {o.label}
-            </button>
-          ))}
-        </div>
-      </div>
-
-      {/* Crème solaire */}
-      <div className="sun-field">
-        <span className="sun-label">Crème solaire</span>
-        <button
-          className={`small ${creme ? 'chip-active' : 'ghost'}`}
-          onClick={() => setCreme((v) => !v)}
-          title="SPF 50 posé une fois au début, moyennement bien appliqué"
-        >
-          {creme ? '🧴 SPF 50 (oui)' : 'Aucune'}
-        </button>
-      </div>
-
-      {!fixedDate && (
-        <div className="sun-field">
-          <span className="sun-label">Jour</span>
-          <input type="date" value={dateState} max={todayStr()} onChange={(e) => e.target.value && setDateState(e.target.value)} />
-        </div>
-      )}
+      <button className="primary" onClick={add} disabled={duree <= 0} style={{ marginTop: 8, width: '100%' }}>
+        + Ajouter cette sortie (~{fmt(breakdown.gain, 1)} µg)
+      </button>
 
       {/* Gain estimé + formule détaillée */}
       <FormulaBreakdown breakdown={breakdown} />
-
-      <button className="primary" onClick={add} disabled={duree <= 0} style={{ marginTop: 10 }}>
-        + Ajouter cette sortie (~{fmt(breakdown.gain, 1)} µg)
-      </button>
 
       {hint && <div className="hint">{hint}</div>}
 
@@ -204,7 +216,9 @@ export function Sun({ date }: { date?: string } = {}) {
                 {e.heure} · {fmtDuree(e.dureeMin)} · {SKY_OPTIONS.find((o) => o.value === e.ciel)?.short ?? e.ciel}
                 {' · '}
                 {SKIN_OPTIONS.find((o) => o.value === e.peau)?.short ?? e.peau}
-                {e.creme ? ' · 🧴' : ''}
+                {normalizeCreme(e.creme) !== 'aucune'
+                  ? ` · 🧴${normalizeCreme(e.creme) === 'visage' ? ' visage' : ''}`
+                  : ''}
                 {' → '}
                 <strong className="mono">{fmt(estimateVitaminD(e), 1)} µg</strong>
               </span>
@@ -232,6 +246,14 @@ export function Sun({ date }: { date?: string } = {}) {
 function FormulaBreakdown({ breakdown }: { breakdown: ReturnType<typeof vitaminDBreakdown> }) {
   const [active, setActive] = useState<string | null>(null);
   const factor = breakdown.factors.find((f) => f.key === active) ?? null;
+  const lineRef = useRef<HTMLDivElement>(null);
+
+  // Le survol / focus ne se relâche qu'en quittant tout le groupe : passer d'un
+  // terme à l'autre (ou par l'interstice entre eux) ne fait donc pas clignoter
+  // le détail sur l'état par défaut entre deux survols.
+  const clearIfLeavingGroup = (e: FocusEvent) => {
+    if (!lineRef.current?.contains(e.relatedTarget as Node)) setActive(null);
+  };
 
   return (
     <div className="sun-formula">
@@ -243,14 +265,12 @@ function FormulaBreakdown({ breakdown }: { breakdown: ReturnType<typeof vitaminD
         </span>
       </div>
 
-      <div className="sun-formula-line">
+      <div className="sun-formula-line" ref={lineRef} onMouseLeave={() => setActive(null)} onBlur={clearIfLeavingGroup}>
         <span
           className={`sun-term is-base ${active === 'base' ? 'active' : ''}`}
           tabIndex={0}
           onMouseEnter={() => setActive('base')}
-          onMouseLeave={() => setActive(null)}
           onFocus={() => setActive('base')}
-          onBlur={() => setActive(null)}
         >
           <span className="sun-sym">base</span>
           <span className="sun-val">{fmt(breakdown.base, 1)}</span>
@@ -262,9 +282,7 @@ function FormulaBreakdown({ breakdown }: { breakdown: ReturnType<typeof vitaminD
               className={`sun-term ${active === f.key ? 'active' : ''} ${f.gauge < 0.34 ? 'weak' : ''}`}
               tabIndex={0}
               onMouseEnter={() => setActive(f.key)}
-              onMouseLeave={() => setActive(null)}
               onFocus={() => setActive(f.key)}
-              onBlur={() => setActive(null)}
             >
               <span className="sun-sym">{f.icon} {f.symbol}</span>
               <span className="sun-val">{f.display}</span>
@@ -274,30 +292,32 @@ function FormulaBreakdown({ breakdown }: { breakdown: ReturnType<typeof vitaminD
       </div>
 
       <div className="sun-detail">
-        {factor ? (
-          <>
-            <div className="row" style={{ justifyContent: 'space-between', alignItems: 'baseline', gap: 8 }}>
-              <span style={{ fontWeight: 600 }}>{factor.icon} {factor.label}</span>
-              <span className="mono" style={{ color: 'var(--accent)', fontWeight: 700 }}>{factor.display}</span>
+        <div key={active ?? 'default'} className="sun-detail-inner">
+          {factor ? (
+            <>
+              <div className="row" style={{ justifyContent: 'space-between', alignItems: 'baseline', gap: 8 }}>
+                <span style={{ fontWeight: 600 }}>{factor.icon} {factor.label}</span>
+                <span className="mono" style={{ color: 'var(--accent)', fontWeight: 700 }}>{factor.display}</span>
+              </div>
+              <div className="sun-gauge"><i style={{ width: `${Math.round(factor.gauge * 100)}%` }} /></div>
+              <div className="small" style={{ marginTop: 6 }}>{factor.detail}</div>
+            </>
+          ) : active === 'base' ? (
+            <>
+              <div style={{ fontWeight: 600 }}>Débit de base</div>
+              <div className="small" style={{ marginTop: 6 }}>
+                {fmt(breakdown.base, 1)} µg synthétisés par minute efficace en conditions optimales (plein été,
+                midi solaire, ciel dégagé, visage + bras, peau claire, sans crème). Chaque facteur ci-dessus le
+                module de 0 à 1.
+              </div>
+            </>
+          ) : (
+            <div className="small">
+              Survolez un facteur pour comprendre son effet. Résultat = <strong>base × tous les facteurs</strong>,
+              plafonné à {fmt(SUN_DAY_CAP)} µg/j.
             </div>
-            <div className="sun-gauge"><i style={{ width: `${Math.round(factor.gauge * 100)}%` }} /></div>
-            <div className="small" style={{ marginTop: 6 }}>{factor.detail}</div>
-          </>
-        ) : active === 'base' ? (
-          <>
-            <div style={{ fontWeight: 600 }}>Débit de base</div>
-            <div className="small" style={{ marginTop: 6 }}>
-              {fmt(breakdown.base, 1)} µg synthétisés par minute efficace en conditions optimales (plein été,
-              midi solaire, ciel dégagé, visage + bras, peau claire, sans crème). Chaque facteur ci-dessus le
-              module de 0 à 1.
-            </div>
-          </>
-        ) : (
-          <div className="small">
-            Survolez un facteur pour comprendre son effet. Résultat = <strong>base × tous les facteurs</strong>,
-            plafonné à {fmt(SUN_DAY_CAP)} µg/j.
-          </div>
-        )}
+          )}
+        </div>
       </div>
     </div>
   );

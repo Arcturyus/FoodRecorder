@@ -53,10 +53,51 @@ export function addNutrients(a: Nutrients, b: Nutrients): Nutrients {
   return out;
 }
 
+/**
+ * Au-dessus de ce score de match, l'aliment de la base est réputé désigner LE
+ * MÊME aliment que celui estimé par l'IA (correspondance quasi exacte) : la base
+ * prime alors. En-dessous (simple recoupement de mots), c'est l'estimation IA qui
+ * prime — un plat (« gâteau au chocolat noir ») ne doit pas être écrasé par un de
+ * ses ingrédients présents en base (« chocolat noir »).
+ */
+const STRONG_DB_MATCH = 0.9;
+
+/** Construit un aliment synthétique à partir d'une estimation IA (hors base). */
+export function iaEstimatedFood(extracted: ExtractedItem): Food | null {
+  if (!extracted.nutriments) return null;
+  const g = extracted.grammesParPiece;
+  return {
+    id: 'ia-estime',
+    nom: extracted.aliment,
+    categorie: extracted.categorie ?? 'autre',
+    aliases: [],
+    pieceGrams: g,
+    // grammesParPiece vaut pour une pièce OU une portion (cf. ESTIMATION_PROMPT).
+    ...(g ? { unitGrams: { portion: g } } : {}),
+    n: extracted.nutriments,
+  };
+}
+
 /** Matche + convertit + calcule chaque item extrait contre les aliments effectifs. */
 export function computeItems(items: ExtractedItem[], foods: Food[], recentCounts?: RecentCounts): ComputedItem[] {
   return items.map((extracted) => {
     const match = matchFood(extracted.aliment, foods, recentCounts);
+    // Estimation IA (aliment hors base) : le modèle n'attache des nutriments que
+    // pour un aliment spécifique/composé qu'il juge hors base générique — on honore
+    // alors SON estimation. La base ne l'emporte que sur un match QUASI EXACT ;
+    // un simple recoupement de mots ne doit pas écraser l'estimation.
+    const iaFood = iaEstimatedFood(extracted);
+    const strongDbMatch = !!match.food && !match.douteux && match.score >= STRONG_DB_MATCH;
+    if (iaFood && !strongDbMatch) {
+      const grams = toGrams(extracted, iaFood);
+      return {
+        extracted,
+        match: { food: null, score: 0, douteux: false, alternatives: match.alternatives },
+        grams,
+        nutrients: scaleNutrients(iaFood.n, grams),
+        aiEstime: true,
+      };
+    }
     const grams = toGrams(extracted, match.food);
     return {
       extracted,

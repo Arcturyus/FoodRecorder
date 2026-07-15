@@ -1,10 +1,11 @@
 import { useMemo, useRef, useState } from 'react';
-import { scaleLinear } from 'd3-scale';
+import { scaleLinear, scaleLog } from 'd3-scale';
 import { line as d3line, arc as d3arc, pie as d3pie } from 'd3-shape';
 import { max as d3max } from 'd3-array';
 import { useStore, todayStr } from '../store/store';
 import { computeTargets } from '../nutrition/targets';
 import type { Target } from '../nutrition/targets';
+import { RATIOS, computeRatio } from '../nutrition/ratios';
 import type { NutrientKey, Nutrients } from '../nutrition/types';
 import { EMPTY_NUTRIENTS } from '../nutrition/types';
 import { sunVitDForDate } from '../sun/vitaminD';
@@ -37,6 +38,29 @@ const SERIES_COLORS = ['#5b8cff', '#3ecf8e', '#f5a623', '#ef5d5d', '#a58bff', '#
 
 const KEYS = Object.keys(EMPTY_NUTRIENTS) as NutrientKey[];
 
+/** Fenêtres proposées pour la moyenne mobile (en jours). */
+const MA_WINDOWS = [3, 7, 14, 30];
+
+/**
+ * Moyenne mobile glissante (trailing) sur `window` points, en ignorant les trous
+ * (jours sans donnée = null) : chaque point moyenne les valeurs définies des
+ * `window` derniers jours enregistrés. Renvoie null si aucune valeur dans la fenêtre.
+ */
+export function movingAverage(values: (number | null)[], window: number): (number | null)[] {
+  return values.map((_, i) => {
+    let sum = 0;
+    let n = 0;
+    for (let j = Math.max(0, i - window + 1); j <= i; j++) {
+      const v = values[j];
+      if (v != null) {
+        sum += v;
+        n++;
+      }
+    }
+    return n > 0 ? sum / n : null;
+  });
+}
+
 function dayLabel(date: string): string {
   return new Date(`${date}T00:00:00`).toLocaleDateString('fr-FR', { weekday: 'short', day: 'numeric', month: 'short' });
 }
@@ -64,7 +88,24 @@ export function Stats() {
   const targetByKey = useMemo(() => new Map(targets.map((t) => [t.key, t])), [targets]);
 
   const [period, setPeriod] = useState<PeriodState>(defaultPeriodState);
-  const [selected, setSelected] = useState<NutrientKey[]>(['kcal', 'proteines']);
+  // Sélection unifiée : ids de nutriments (NutrientKey) ET de rapports (clé RatioDef,
+  // sans collision avec les nutriments). Une seule tendance, une seule moyenne mobile.
+  const [selected, setSelected] = useState<string[]>(['kcal', 'proteines']);
+  const [maOn, setMaOn] = useState(false);
+  const [maWindow, setMaWindow] = useState(7);
+  /**
+   * Échelle Y logarithmique : les séries étant exprimées en % de cible, elles
+   * peuvent couvrir plusieurs ordres de grandeur (ex. vitamine D à 10 % vs
+   * sodium à 300 %). Le log rend leurs variations relatives comparables.
+   */
+  const [logY, setLogY] = useState(false);
+  /**
+   * Par défaut, les moyennes ignorent la journée en cours (non terminée) : sinon
+   * un total encore partiel (ex. peu de repas saisis, vitamine D pas encore
+   * reçue) tire artificiellement les moyennes vers le bas en début de journée.
+   */
+  const [includeToday, setIncludeToday] = useState(false);
+  const today = todayStr();
 
   /** Totaux par jour (tous nutriments) pour tout l'historique. */
   const byDate = useMemo(() => {
@@ -80,6 +121,21 @@ export function Stats() {
     return map;
   }, [entries]);
 
+  /**
+   * Totaux par jour avec la vitamine D du SOLEIL intégrée (mêmes jours que `byDate`).
+   * La couverture moyenne et la tendance doivent refléter l'apport TOTAL de vitamine D
+   * (alimentation + soleil), comme la carte « carence ? » — sinon la vitamine D paraît
+   * artificiellement basse et fausse l'interprétation. Seule la clé `vitD` change.
+   */
+  const byDateVitD = useMemo(() => {
+    const map = new Map<string, Nutrients>();
+    for (const [d, t] of byDate) {
+      const sun = sunVitDForDate(sunExposures, d);
+      map.set(d, sun > 0 ? { ...t, vitD: t.vitD + sun } : t);
+    }
+    return map;
+  }, [byDate, sunExposures]);
+
   /** 1re date enregistrée (borne « Tout »). */
   const earliest = useMemo(() => {
     let min: string | undefined;
@@ -89,7 +145,10 @@ export function Stats() {
 
   const range = useMemo(() => resolveRange(period, earliest), [period, earliest]);
   const days = rangeDays(range);
-  const windowDates = useMemo(() => datesInRange(range), [range]);
+  const windowDates = useMemo(() => {
+    const all = datesInRange(range);
+    return includeToday ? all : all.filter((d) => d !== today);
+  }, [range, includeToday, today]);
   const recorded = useMemo(() => windowDates.filter((d) => byDate.has(d)), [windowDates, byDate]);
 
   /** Moyenne journalière de chaque nutriment sur les jours enregistrés de la fenêtre. */
@@ -97,12 +156,12 @@ export function Stats() {
     const a = { ...EMPTY_NUTRIENTS };
     if (recorded.length === 0) return a;
     for (const d of recorded) {
-      const t = byDate.get(d)!;
+      const t = byDateVitD.get(d)!;
       for (const k of KEYS) a[k] += t[k];
     }
     for (const k of KEYS) a[k] /= recorded.length;
     return a;
-  }, [recorded, byDate]);
+  }, [recorded, byDateVitD]);
 
   /** Apport vitamine D total par jour (alimentation + soleil), tous jours « connus ». */
   const vitDByDate = useMemo(() => {
@@ -114,32 +173,75 @@ export function Stats() {
     return m;
   }, [byDate, sunExposures]);
 
-  const vitDStatus = useMemo(() => vitaminDFlux(vitDByDate, todayStr()), [vitDByDate]);
+  /** Ancre du flux vitamine D : hier par défaut (journée en cours non terminée), sinon aujourd'hui. */
+  const vitDAnchor = includeToday ? today : todayStr(new Date(Date.now() - 86_400_000));
+  const vitDStatus = useMemo(() => vitaminDFlux(vitDByDate, vitDAnchor), [vitDByDate, vitDAnchor]);
 
-  const toggle = (k: NutrientKey) =>
-    setSelected((prev) => (prev.includes(k) ? prev.filter((x) => x !== k) : [...prev, k]));
+  const toggle = (id: string) =>
+    setSelected((prev) => (prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id]));
 
-  /** Séries de la tendance : une par nutriment sélectionné, valeurs en % de l'objectif. */
-  const series = useMemo(
+  /**
+   * Séries de la tendance unique : un tracé par élément sélectionné (nutriment OU
+   * rapport), tout exprimé en % de sa cible pour être comparable sur un seul axe.
+   * Chaque point porte le % brut et, si activée, le % lissé (moyenne mobile).
+   */
+  const series = useMemo<TrendSeries[]>(
     () =>
-      selected.map((key, i) => {
-        const t = targetByKey.get(key)!;
+      selected.map((id, i) => {
+        const color = SERIES_COLORS[i % SERIES_COLORS.length];
+        const ratioDef = RATIOS.find((r) => r.key === id);
+
+        if (ratioDef) {
+          // Rapport : valeur = num/den du jour ; % = valeur / rapport idéal.
+          const objective = ratioDef.optimal;
+          const raws = recorded.map((d) => {
+            const v = computeRatio(ratioDef, byDateVitD.get(d)!).value;
+            return v == null ? null : (v / objective) * 100;
+          });
+          const ma = movingAverage(raws, maWindow);
+          return {
+            id,
+            kind: 'ratio' as const,
+            label: ratioDef.label,
+            suffix: ratioDef.suffix,
+            color,
+            objective,
+            points: recorded.map((d, k) => ({
+              date: d,
+              t: dayMs(d),
+              value: raws[k] == null ? null : (raws[k]! / 100) * objective,
+              pct: raws[k],
+              maPct: ma[k],
+            })),
+          };
+        }
+
+        // Nutriment : % = apport / objectif (plafond pour les « limites »).
+        const t = targetByKey.get(id as NutrientKey)!;
         const objective = t.goal === 'limit' ? t.ajr : t.optimal;
+        const raws = recorded.map((d) => (objective > 0 ? (byDateVitD.get(d)![id as NutrientKey] / objective) * 100 : 0));
+        const ma = movingAverage(raws, maWindow);
         return {
-          key,
+          id,
+          kind: 'nutrient' as const,
           label: t.label,
           unit: t.unit,
           goal: t.goal,
-          color: SERIES_COLORS[i % SERIES_COLORS.length],
+          color,
           objective,
-          points: recorded.map((d) => {
-            const value = byDate.get(d)![key];
-            return { date: d, t: dayMs(d), value, pct: objective > 0 ? (value / objective) * 100 : 0 };
-          }),
+          points: recorded.map((d, k) => ({
+            date: d,
+            t: dayMs(d),
+            value: byDateVitD.get(d)![id as NutrientKey],
+            pct: raws[k],
+            maPct: ma[k],
+          })),
         };
       }),
-    [selected, targetByKey, recorded, byDate],
+    [selected, targetByKey, recorded, byDateVitD, maWindow],
   );
+
+  const colorById = useMemo(() => new Map(series.map((s) => [s.id, s.color])), [series]);
 
   return (
     <>
@@ -148,28 +250,62 @@ export function Stats() {
           <h2 style={{ margin: 0 }}>Analyse sur {days} jours</h2>
           <PeriodSelector value={period} onChange={setPeriod} />
         </div>
+        <div className="row" style={{ alignItems: 'center', marginTop: 4 }}>
+          <label
+            className="row small"
+            style={{ gap: 6, alignItems: 'center', cursor: 'pointer' }}
+            title="Par défaut, la journée en cours (pas encore terminée) est exclue de toutes les moyennes ci-dessous, pour ne pas les tirer artificiellement vers le bas."
+          >
+            <input type="checkbox" checked={includeToday} onChange={(e) => setIncludeToday(e.target.checked)} />
+            Inclure la journée en cours dans les moyennes
+          </label>
+        </div>
         <div className="hint">
-          {recorded.length} jour(s) enregistré(s) sur cette période ({days} j) — tout est recalculé sur la période.
+          {recorded.length} jour(s) enregistré(s) sur cette période ({days} j
+          {!includeToday && ", aujourd'hui exclu"}) — tout est recalculé sur la période.
         </div>
       </div>
 
       <div className="panel">
-        <h2>Tendance comparée</h2>
-        <p className="small" style={{ marginTop: -6 }}>
-          Chaque courbe = un nutriment en <strong>% de son objectif</strong> (ligne 100 %), pour comparer des unités
-          différentes. Survolez pour les valeurs réelles. Cliquez des nutriments ci-dessous (ou les puces) pour les
-          ajouter/retirer.
-        </p>
-        <div className="row" style={{ gap: 6, flexWrap: 'wrap', marginBottom: 8 }}>
-          {series.length === 0 && <span className="small">Aucun nutriment sélectionné.</span>}
-          {series.map((s) => (
-            <button key={s.key} className="chip-series" onClick={() => toggle(s.key)} style={{ borderColor: s.color }}>
-              <i style={{ background: s.color }} />
-              {s.label} ✕
-            </button>
-          ))}
+        <div className="row" style={{ justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: 8 }}>
+          <h2 style={{ margin: 0 }}>Tendance comparée</h2>
+          <div className="row" style={{ gap: 10, alignItems: 'center', flexWrap: 'wrap' }}>
+            <label
+              className="row small"
+              style={{ gap: 6, alignItems: 'center', cursor: 'pointer' }}
+              title="Axe des % en échelle logarithmique : compare mieux des séries d'ordres de grandeur très différents (ne peut pas représenter 0)."
+            >
+              <input type="checkbox" checked={logY} onChange={(e) => setLogY(e.target.checked)} />
+              Échelle log (Y)
+            </label>
+            <label className="row small" style={{ gap: 6, alignItems: 'center', cursor: 'pointer' }}>
+              <input type="checkbox" checked={maOn} onChange={(e) => setMaOn(e.target.checked)} />
+              Moyenne mobile
+            </label>
+            <select
+              value={maWindow}
+              onChange={(e) => setMaWindow(Number(e.target.value))}
+              disabled={!maOn}
+              style={{ opacity: maOn ? 1 : 0.5 }}
+              aria-label="Fenêtre de la moyenne mobile"
+            >
+              {MA_WINDOWS.map((w) => (
+                <option key={w} value={w}>
+                  {w} j
+                </option>
+              ))}
+            </select>
+          </div>
         </div>
-        <MultiTrend series={series} windowDates={windowDates} />
+        <p className="small" style={{ marginTop: 2 }}>
+          Chaque courbe = un élément (nutriment <em>ou</em> rapport) en <strong>% de sa cible</strong> (ligne 100 %),
+          pour comparer sur un seul axe. Survolez pour les valeurs réelles.
+          {selected.includes('vitD') && ' La vitamine D inclut l\'apport du soleil ☀️.'}
+          {maOn && ' La moyenne mobile lisse le bruit ; la courbe brute reste en trait fin.'}
+          {logY && ' Axe log : les valeurs à 0 % (aucun apport) ne sont pas représentables et laissent un trou.'}
+        </p>
+        <MultiTrend series={series} windowDates={windowDates} maOn={maOn} maWindow={maWindow} logY={logY} />
+        <SeriesPicker targets={targets} selected={selected} colorById={colorById} onToggle={toggle} />
       </div>
 
       <div className="panel">
@@ -177,7 +313,7 @@ export function Stats() {
         <p className="small" style={{ marginTop: -6 }}>
           Barres triées du moins couvert au mieux couvert (moyenne/jour sur la période).{' '}
           <span className="ref-legend ajr" /> AJR · <span className="ref-legend opti" /> objectif optimal (100 %).
-          Cliquez un nutriment pour l'ajouter à la tendance.
+          Cliquez un nutriment pour l'ajouter à la tendance. La vitamine D inclut l'apport du soleil ☀️.
         </p>
         <CoverageList averages={averages} targets={targets} selected={selected} onToggle={toggle} />
       </div>
@@ -290,17 +426,46 @@ function toViewBox(e: React.PointerEvent | React.MouseEvent, svg: SVGSVGElement,
 // Tendance multi-nutriments (courbes en % d'objectif)
 // ---------------------------------------------------------------------------
 
-type Series = {
-  key: NutrientKey;
+/**
+ * Série de la tendance unifiée. `pct` = % de la cible (comparable entre unités) ;
+ * `maPct` = idem lissé par moyenne mobile. `value` = valeur réelle (apport ou
+ * rapport) pour l'info-bulle (null les jours sans donnée, cas des rapports).
+ */
+type TrendSeries = {
+  id: string;
+  kind: 'nutrient' | 'ratio';
   label: string;
-  unit: string;
-  goal: Target['goal'];
   color: string;
   objective: number;
-  points: { date: string; t: number; value: number; pct: number }[];
+  unit?: string; // nutriment
+  goal?: Target['goal']; // nutriment
+  suffix?: string; // rapport (ex. « :1 »)
+  points: { date: string; t: number; value: number | null; pct: number | null; maPct: number | null }[];
 };
 
-function MultiTrend({ series, windowDates }: { series: Series[]; windowDates: string[] }) {
+/** Formate une valeur de rapport (« 3,2:1 »). */
+function fmtRatio(v: number, suffix: string): string {
+  return `${fmt(v, v < 10 ? 1 : 0)}${suffix}`;
+}
+
+/** Valeur réelle d'un point selon le type de série (apport ou rapport formaté). */
+function formatSeriesValue(s: TrendSeries, value: number): string {
+  return s.kind === 'ratio' ? fmtRatio(value, s.suffix ?? '') : `${fmtVal(value)} ${s.unit ?? ''}`.trim();
+}
+
+function MultiTrend({
+  series,
+  windowDates,
+  maOn,
+  maWindow,
+  logY,
+}: {
+  series: TrendSeries[];
+  windowDates: string[];
+  maOn: boolean;
+  maWindow: number;
+  logY: boolean;
+}) {
   const W = 680;
   const H = 300;
   const m = { top: 16, right: 16, bottom: 30, left: 44 };
@@ -311,23 +476,43 @@ function MultiTrend({ series, windowDates }: { series: Series[]; windowDates: st
   const recorded = series[0]?.points.map((p) => p.date) ?? [];
 
   if (series.length === 0 || recorded.length === 0) {
-    return <div className="empty">Sélectionnez au moins un nutriment et enregistrez des jours sur la période.</div>;
+    return <div className="empty">Sélectionnez au moins un élément ci-dessous et enregistrez des jours sur la période.</div>;
   }
 
   const xs = scaleLinear()
     .domain([dayMs(windowDates[0]), dayMs(windowDates[windowDates.length - 1])])
     .range([m.left, W - m.right]);
-  const maxPct = d3max(series.flatMap((s) => s.points.map((p) => p.pct))) ?? 100;
+  // Échelle Y en % de la cible : couvre la courbe affichée (brute ou lissée selon le mode).
+  const shownPct = series.flatMap((s) =>
+    s.points.map((p) => (maOn ? p.maPct : p.pct)).filter((v): v is number => v != null),
+  );
+  const maxPct = d3max(shownPct) ?? 100;
   const yMax = Math.max(150, maxPct * 1.1);
-  const ys = scaleLinear().domain([0, yMax]).nice().range([H - m.bottom, m.top]);
+  // Log Y : domaine strictement positif (log(0) indéfini). Plancher un cran sous
+  // la plus petite valeur affichée, mais jamais au-dessus de 100 % pour garder la
+  // ligne cible visible. Les points ≤ 0 % sont laissés en trou (cf. defined()).
+  const positivePct = shownPct.filter((v) => v > 0);
+  const minPct = positivePct.length ? Math.min(...positivePct) : 1;
+  const ys = logY
+    ? scaleLog()
+        .domain([Math.min(minPct * 0.85, 100), yMax])
+        .range([H - m.bottom, m.top])
+    : scaleLinear().domain([0, yMax]).nice().range([H - m.bottom, m.top]);
 
-  const yTicks = ys.ticks(4);
+  const yTicks = logY ? ys.ticks(5) : ys.ticks(4);
   const xTicks = xs.ticks(Math.min(6, recorded.length));
   const fmtDate = (t: number) => new Date(t).toLocaleDateString('fr-FR', { day: 'numeric', month: 'short' });
 
-  const lineGen = d3line<Series['points'][number]>()
-    .x((d) => xs(d.t))
-    .y((d) => ys(d.pct));
+  // En log, une valeur ≤ 0 n'est pas plaçable : on la traite comme absente (trou).
+  const plottable = (v: number | null): v is number => v != null && (!logY || v > 0);
+  const mkLine = (accessor: (p: TrendSeries['points'][number]) => number | null) =>
+    d3line<TrendSeries['points'][number]>()
+      .defined((p) => plottable(accessor(p)))
+      .x((p) => xs(p.t))
+      .y((p) => ys(accessor(p) as number));
+
+  const rawLine = mkLine((p) => p.pct);
+  const maLine = mkLine((p) => p.maPct);
 
   function onMove(e: React.MouseEvent) {
     if (!svgRef.current) return;
@@ -358,23 +543,36 @@ function MultiTrend({ series, windowDates }: { series: Series[]; windowDates: st
           <g key={tk}>
             <line x1={m.left} x2={W - m.right} y1={ys(tk)} y2={ys(tk)} stroke={C.border} strokeWidth={1} />
             <text x={m.left - 8} y={ys(tk)} fill={C.muted} fontSize={10} textAnchor="end" dominantBaseline="middle">
-              {fmt(tk)}%
+              {fmt(tk, logY && tk < 10 ? 1 : 0)}%
             </text>
           </g>
         ))}
 
-        {/* ligne objectif 100 % */}
+        {/* ligne cible 100 % */}
         <line x1={m.left} x2={W - m.right} y1={ys(100)} y2={ys(100)} stroke={C.accent2} strokeWidth={1.5} strokeDasharray="5 4" />
         <text x={W - m.right} y={ys(100) - 5} fill={C.accent2} fontSize={10} textAnchor="end">
-          objectif 100 %
+          cible 100 %
         </text>
 
         {series.map((s) => (
-          <g key={s.key}>
-            <path d={lineGen(s.points)!} fill="none" stroke={s.color} strokeWidth={2} strokeLinejoin="round" strokeLinecap="round" />
-            {s.points.map((p, i) => (
-              <circle key={p.date} cx={xs(p.t)} cy={ys(p.pct)} r={hover === i ? 4.5 : 3} fill={s.color} stroke={C.panel2} strokeWidth={1.5} />
-            ))}
+          <g key={s.id}>
+            {/* Courbe brute : trait plein seul, ou fin/estompé quand la moyenne mobile est active. */}
+            <path
+              d={rawLine(s.points) ?? ''}
+              fill="none"
+              stroke={s.color}
+              strokeWidth={maOn ? 1 : 2}
+              opacity={maOn ? 0.3 : 1}
+              strokeLinejoin="round"
+              strokeLinecap="round"
+            />
+            {!maOn &&
+              s.points.map((p, i) =>
+                !plottable(p.pct) ? null : (
+                  <circle key={p.date} cx={xs(p.t)} cy={ys(p.pct)} r={hover === i ? 4.5 : 3} fill={s.color} stroke={C.panel2} strokeWidth={1.5} />
+                ),
+              )}
+            {maOn && <path d={maLine(s.points) ?? ''} fill="none" stroke={s.color} strokeWidth={2.5} strokeLinejoin="round" strokeLinecap="round" />}
           </g>
         ))}
 
@@ -395,14 +593,120 @@ function MultiTrend({ series, windowDates }: { series: Series[]; windowDates: st
           {series.map((s) => {
             const p = s.points[hover];
             return (
-              <div key={s.key} style={{ marginTop: 2 }}>
+              <div key={s.id} style={{ marginTop: 2 }}>
                 <i style={{ display: 'inline-block', width: 8, height: 8, borderRadius: 2, background: s.color, marginRight: 5 }} />
-                {s.label} : <strong>{fmtVal(p.value)}</strong> {s.unit} · <span style={{ color: p.pct >= 100 ? C.accent2 : C.warn }}>{fmt(p.pct)} %</span>
+                {s.label} : <strong>{p.value == null ? '—' : formatSeriesValue(s, p.value)}</strong>
+                {p.pct != null && <span style={{ color: p.pct >= 100 ? C.accent2 : C.warn }}> · {fmt(p.pct)} %</span>}
+                {maOn && p.maPct != null && <span style={{ color: C.muted }}> · lissé {fmt(p.maPct)} %</span>}
               </div>
             );
           })}
+          {maOn && <div className="small" style={{ marginTop: 4, color: C.muted }}>moyenne mobile {maWindow} j</div>}
         </Tooltip>
       )}
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Sélecteur unique d'éléments (nutriments + rapports), compact multi-colonnes
+// ---------------------------------------------------------------------------
+
+/** Groupes du sélecteur : rapports en tête, puis nutriments par famille. */
+const PICKER_GROUPS: { title: string; keys: NutrientKey[] }[] = [
+  { title: 'Macros', keys: ['kcal', 'proteines', 'glucides', 'lipides', 'fibres'] },
+  { title: 'Lipides & oméga', keys: ['agSatures', 'agMonoInsatures', 'agPolyInsatures', 'omega3', 'omega6', 'omega9'] },
+  { title: 'Minéraux', keys: ['fer', 'magnesium', 'potassium', 'calcium', 'zinc', 'sodium', 'selenium', 'iode'] },
+  { title: 'Vitamines', keys: ['vitA', 'vitC', 'vitD', 'vitE', 'vitK1', 'vitK2', 'vitB1', 'vitB2', 'vitB3', 'vitB5', 'vitB6', 'vitB9', 'vitB12'] },
+  { title: 'Autres', keys: ['creatine'] },
+];
+
+function Chip({
+  id,
+  label,
+  title,
+  selected,
+  color,
+  onToggle,
+}: {
+  id: string;
+  label: string;
+  title?: string;
+  selected: boolean;
+  color?: string;
+  onToggle: (id: string) => void;
+}) {
+  return (
+    <button
+      type="button"
+      className={`series-chip${selected ? ' on' : ''}`}
+      title={title}
+      onClick={() => onToggle(id)}
+      style={selected && color ? { borderColor: color } : undefined}
+    >
+      <i style={{ background: selected && color ? color : undefined }} />
+      <span>{label}</span>
+    </button>
+  );
+}
+
+function SeriesPicker({
+  targets,
+  selected,
+  colorById,
+  onToggle,
+}: {
+  targets: Target[];
+  selected: string[];
+  colorById: Map<string, string>;
+  onToggle: (id: string) => void;
+}) {
+  const targetByKey = new Map(targets.map((t) => [t.key, t]));
+  return (
+    <div className="series-picker">
+      <div className="hint" style={{ marginTop: 0, marginBottom: 4 }}>
+        Cliquez un élément pour l'ajouter/retirer de la tendance ({selected.length} sélectionné{selected.length > 1 ? 's' : ''}).
+      </div>
+
+      <div className="series-group">
+        <div className="gh">Rapports</div>
+        <div className="series-grid">
+          {RATIOS.map((def) => (
+            <Chip
+              key={def.key}
+              id={def.key}
+              label={def.label}
+              title={def.note}
+              selected={selected.includes(def.key)}
+              color={colorById.get(def.key)}
+              onToggle={onToggle}
+            />
+          ))}
+        </div>
+      </div>
+
+      {PICKER_GROUPS.map((g) => (
+        <div className="series-group" key={g.title}>
+          <div className="gh">{g.title}</div>
+          <div className="series-grid">
+            {g.keys.map((k) => {
+              const t = targetByKey.get(k);
+              if (!t) return null;
+              return (
+                <Chip
+                  key={k}
+                  id={k}
+                  label={t.label}
+                  title={t.role}
+                  selected={selected.includes(k)}
+                  color={colorById.get(k)}
+                  onToggle={onToggle}
+                />
+              );
+            })}
+          </div>
+        </div>
+      ))}
     </div>
   );
 }
@@ -437,6 +741,9 @@ function CoverageCard({ t, avg, pct, isLimit }: CovRow) {
         <div><span>AJR</span><span className="mono">{fmt(t.ajr)} {t.unit}</span></div>
         <div><span>{isLimit ? 'Idéal ≤' : 'Optimal'}</span><span className="mono">{fmt(t.optimal)} {t.unit}</span></div>
       </div>
+      {t.key === 'vitD' && (
+        <div className="small" style={{ marginTop: 8, opacity: 0.9 }}>☀️ Soleil inclus (comme la carte « carence ? »)</div>
+      )}
       {t.optimalNote && <div className="small" style={{ marginTop: 8, opacity: 0.9 }}>💡 {t.optimalNote}</div>}
       <div className="small" style={{ marginTop: 8, color: 'var(--accent)' }}>Cliquez pour l'ajouter à la tendance</div>
     </div>
@@ -451,7 +758,7 @@ function CoverageList({
 }: {
   averages: Nutrients;
   targets: Target[];
-  selected: NutrientKey[];
+  selected: string[];
   onToggle: (k: NutrientKey) => void;
 }) {
   // Info-bulle unique qui suit la souris (déclenchée par la ligne entière).

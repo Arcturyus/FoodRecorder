@@ -1,8 +1,14 @@
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { useStore, dayTotals, todayStr } from './store/store';
 import type { JournalItem } from './store/store';
 import { EMPTY_NUTRIENTS } from './nutrition/types';
+import { dayKcalUncertainty } from './nutrition/uncertainty';
 import { sunVitDForDate } from './sun/vitaminD';
+import { isSyncConfigured } from './sync/supabase';
+import { runSyncTick } from './sync/poller';
+
+/** Intervalle entre deux vérifications de la file de synchro (30 s). */
+const SYNC_INTERVAL_MS = 30_000;
 import { Capture } from './ui/Capture';
 import { Sun } from './ui/Sun';
 import { ManualAdd } from './ui/ManualAdd';
@@ -49,6 +55,14 @@ export function App() {
     const t = dayTotals(entries, today);
     return sunVitD > 0 ? { ...t, vitD: t.vitD + sunVitD } : t;
   }, [entries, today, sunVitD]);
+  const kcalUnc = useMemo(() => dayKcalUncertainty(todayEntries), [todayEntries]);
+
+  useEffect(() => {
+    if (!isSyncConfigured()) return;
+    runSyncTick();
+    const id = setInterval(runSyncTick, SYNC_INTERVAL_MS);
+    return () => clearInterval(id);
+  }, []);
 
   return (
     <div className="app">
@@ -88,7 +102,7 @@ export function App() {
           <Capture />
           <FavoriteMeals />
           <ManualAdd />
-          <Totals totals={totals} items={todayItems} />
+          <Totals totals={totals} items={todayItems} incertitude={kcalUnc} />
           {todayEntries.length === 0 ? (
             <div className="panel">
               <div className="empty">Aucune entrée aujourd'hui. Dictez ou tapez votre premier repas.</div>

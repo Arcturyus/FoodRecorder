@@ -1,4 +1,4 @@
-import { createContext, useContext, useMemo, useRef, useState } from 'react';
+import { createContext, useContext, useEffect, useMemo, useRef, useState } from 'react';
 import { scaleLinear, scaleLog, scaleSqrt } from 'd3-scale';
 import { extent, max as d3max, mean as d3mean, quantile } from 'd3-array';
 import { RDA } from '../nutrition/rda';
@@ -63,6 +63,39 @@ const NUT_UNIT = new Map(NUT.map((n) => [n.key, n.unit]));
 
 const val = (f: Food, k: NutrientKey) => f.n[k];
 const axisTitle = (k: NutrientKey) => `${NUT_LABEL.get(k)} (${NUT_UNIT.get(k)}) /100 g`;
+
+export type ParetoPoint = { id: string; x: number; y: number };
+
+/**
+ * Frontière de Pareto pour des objectifs quelconques (min/max sur chaque axe).
+ * Un point est retenu s'il n'est dominé par aucun autre : « dominé » = un point
+ * au moins aussi bon sur les deux axes et strictement meilleur sur au moins un.
+ *
+ * Cas particulier : la dominance stricte élimine les ex æquo sur la valeur-plancher/
+ * plafond d'un axe (ex. « minimiser les AG saturés » → tous les aliments à 0 g sont
+ * déjà indépassables sur cet axe, mais seul celui avec le plus de protéines survivrait
+ * à la dominance classique, masquant tous les autres aliments à 0 g). On les réintègre
+ * explicitement : un point qui atteint la meilleure valeur possible d'un axe reste
+ * toujours dans la frontière, quel que soit son score sur l'autre axe.
+ */
+export function paretoFrontier<P extends ParetoPoint>(points: P[], xGoal: 'min' | 'max', yGoal: 'min' | 'max'): P[] {
+  if (points.length === 0) return [];
+  const okX = (a: number, b: number) => (xGoal === 'max' ? a >= b : a <= b);
+  const okY = (a: number, b: number) => (yGoal === 'max' ? a >= b : a <= b);
+  const gtX = (a: number, b: number) => (xGoal === 'max' ? a > b : a < b);
+  const gtY = (a: number, b: number) => (yGoal === 'max' ? a > b : a < b);
+  const standard = points.filter(
+    (p) => !points.some((q) => q !== p && okX(q.x, p.x) && okY(q.y, p.y) && (gtX(q.x, p.x) || gtY(q.y, p.y))),
+  );
+
+  const xBest = xGoal === 'max' ? Math.max(...points.map((p) => p.x)) : Math.min(...points.map((p) => p.x));
+  const yBest = yGoal === 'max' ? Math.max(...points.map((p) => p.y)) : Math.min(...points.map((p) => p.y));
+  const atBest = points.filter((p) => p.x === xBest || p.y === yBest);
+
+  const merged = new Map(standard.map((p) => [p.id, p]));
+  for (const p of atBest) merged.set(p.id, p);
+  return Array.from(merged.values()).sort((a, b) => a.x - b.x || a.y - b.y);
+}
 
 type View = 'nuage' | 'correlation' | 'paralleles';
 
@@ -164,6 +197,35 @@ function toViewBox(e: React.MouseEvent, svg: SVGSVGElement, W: number, H: number
   };
 }
 
+/** Transform de zoom/pan façon d3.zoom : k = facteur d'échelle, x/y = décalage en pixels. */
+type ZoomTransform = { k: number; x: number; y: number };
+const ZOOM_IDENTITY: ZoomTransform = { k: 1, x: 0, y: 0 };
+const ZOOM_MIN = 1;
+const ZOOM_MAX = 24;
+
+/**
+ * Rééchelonne une échelle continue (linéaire ou log) pour refléter un zoom/pan en
+ * pixels : le domaine visible change, l'intervalle de pixels (range) reste fixe —
+ * même principe que `d3.zoomTransform().rescaleX()`, réimplémenté ici pour éviter
+ * une dépendance à d3-zoom. `minPositive` évite un domaine ≤ 0 en échelle log
+ * (log(0) indéfini) si l'utilisateur dézoome/déplace au-delà de la vue d'origine.
+ */
+export function rescaleAxis<S extends { range(): number[]; invert(v: number): number; copy(): S; domain(d: Iterable<number>): S }>(
+  base: S,
+  { k, t }: { k: number; t: number },
+  minPositive?: number,
+): S {
+  const [r0, r1] = base.range();
+  const inv = (px: number) => (px - t) / k;
+  let d0 = base.invert(inv(r0));
+  let d1 = base.invert(inv(r1));
+  if (minPositive != null) {
+    d0 = Math.max(d0, minPositive);
+    d1 = Math.max(d1, minPositive * 1.0001);
+  }
+  return base.copy().domain([d0, d1]);
+}
+
 function NutSelect({ label, value, onChange, allowNone }: {
   label: string;
   value: NutrientKey | 'none';
@@ -207,58 +269,131 @@ function ScatterView() {
   const [hover, setHover] = useState<{ i: number; px: number; py: number } | null>(null);
   const explorable = useExplorable();
 
+  // Zoom / pan (molette + glisser). Transform en pixels, indépendant des échelles :
+  // on l'applique en rééchelonnant xs/ys (cf. rescaleAxis), pas en transformant le
+  // SVG (évite de déformer les libellés texte au zoom).
+  const [zoomX, setZoomX] = useState<ZoomTransform>(ZOOM_IDENTITY);
+  const [zoomY, setZoomY] = useState<ZoomTransform>(ZOOM_IDENTITY);
+  const dragRef = useRef<{ x: number; y: number } | null>(null);
+  const [dragging, setDragging] = useState(false);
+
+  // Un changement d'axes/filtre rend l'ancien cadrage obsolète.
+  useEffect(() => {
+    setZoomX(ZOOM_IDENTITY);
+    setZoomY(ZOOM_IDENTITY);
+  }, [xk, yk, sizeK, hideCats, logX, logY]);
+
+  function zoomAt(factor: number, px: number, py: number) {
+    setZoomX((z) => {
+      const k = Math.min(ZOOM_MAX, Math.max(ZOOM_MIN, z.k * factor));
+      const d = (px - z.x) / z.k;
+      return { k, x: px - d * k, y: 0 };
+    });
+    setZoomY((z) => {
+      const k = Math.min(ZOOM_MAX, Math.max(ZOOM_MIN, z.k * factor));
+      const d = (py - z.y) / z.k;
+      return { k, x: 0, y: py - d * k };
+    });
+  }
+
+  useEffect(() => {
+    const el = svgRef.current;
+    if (!el) return;
+    const onWheel = (e: WheelEvent) => {
+      e.preventDefault();
+      const rect = el.getBoundingClientRect();
+      const px = ((e.clientX - rect.left) / rect.width) * W;
+      const py = ((e.clientY - rect.top) / rect.height) * H;
+      zoomAt(Math.exp(-e.deltaY * 0.0015), px, py);
+    };
+    el.addEventListener('wheel', onWheel, { passive: false });
+    return () => el.removeEventListener('wheel', onWheel);
+  }, [W, H]);
+
+  function onPointerDown(e: React.PointerEvent<SVGSVGElement>) {
+    dragRef.current = { x: e.clientX, y: e.clientY };
+    setDragging(true);
+    e.currentTarget.setPointerCapture(e.pointerId);
+  }
+  function onPointerMove(e: React.PointerEvent<SVGSVGElement>) {
+    if (!dragRef.current || !svgRef.current) return;
+    const rect = svgRef.current.getBoundingClientRect();
+    const dx = ((e.clientX - dragRef.current.x) / rect.width) * W;
+    const dy = ((e.clientY - dragRef.current.y) / rect.height) * H;
+    dragRef.current = { x: e.clientX, y: e.clientY };
+    setZoomX((z) => ({ ...z, x: z.x + dx }));
+    setZoomY((z) => ({ ...z, y: z.y + dy }));
+  }
+  function endDrag() {
+    dragRef.current = null;
+    setDragging(false);
+  }
+  const zoomed = zoomX.k > 1.001 || zoomY.k > 1.001 || Math.abs(zoomX.x) > 0.5 || Math.abs(zoomY.y) > 0.5;
+
+  // Un aliment sans donnée mesurée équivaut à 0 (pas exclu) : voir EMPTY_NUTRIENTS.
+  // Seuls les points sans AUCUNE valeur sur les deux axes (0 partout) sont retirés,
+  // sans lien avec l'échelle log — sinon un aliment à 0 g sur un axe minimisé (ex.
+  // AG saturés des légumes) disparaîtrait alors qu'il a une vraie valeur.
   const points = useMemo(() => {
     return explorable
       .filter((f) => !hideCats.has(f.categorie))
       .map((f) => ({ f, x: val(f, xk), y: val(f, yk), s: sizeK === 'none' ? 0 : val(f, sizeK) }))
-      .filter((p) => (logX ? p.x > 0 : true) && (logY ? p.y > 0 : true) && (p.x > 0 || p.y > 0));
-  }, [explorable, xk, yk, sizeK, logX, logY, hideCats]);
+      .filter((p) => p.x > 0 || p.y > 0);
+  }, [explorable, xk, yk, sizeK, hideCats]);
 
-  // Frontière de Pareto pour des objectifs quelconques (min/max sur chaque axe).
-  // Un point est retenu s'il n'est dominé par aucun autre : « dominé » = un point
-  // au moins aussi bon sur les deux axes et strictement meilleur sur au moins un.
-  const frontier = useMemo(() => {
-    const okX = (a: number, b: number) => (xGoal === 'max' ? a >= b : a <= b);
-    const okY = (a: number, b: number) => (yGoal === 'max' ? a >= b : a <= b);
-    const gtX = (a: number, b: number) => (xGoal === 'max' ? a > b : a < b);
-    const gtY = (a: number, b: number) => (yGoal === 'max' ? a > b : a < b);
-    return points
-      .filter(
-        (p) =>
-          !points.some(
-            (q) => q !== p && okX(q.x, p.x) && okY(q.y, p.y) && (gtX(q.x, p.x) || gtY(q.y, p.y)),
-          ),
-      )
-      .sort((a, b) => a.x - b.x);
-  }, [points, xGoal, yGoal]);
+  const frontier = useMemo(
+    () => paretoFrontier(points.map((p) => ({ ...p, id: p.f.id })), xGoal, yGoal),
+    [points, xGoal, yGoal],
+  );
   const frontierSet = useMemo(() => new Set(frontier.map((p) => p.f.id)), [frontier]);
 
   if (points.length === 0) {
     return <div className="panel"><div className="empty">Aucun aliment à tracer avec ces axes.</div></div>;
   }
 
-  const [x0, x1] = extent(points, (p) => p.x) as [number, number];
-  const [y0, y1] = extent(points, (p) => p.y) as [number, number];
+  // Échelle log : indéfinie en 0 (log(0) = −∞). Plutôt que d'exclure ces aliments
+  // (ex. tous les légumes à 0 g d'AG saturés), on leur réserve une « voie zéro »
+  // séparée, à gauche/en bas du repère log, avec un séparateur pointillé + étiquette « 0 ».
+  const ZERO_LANE = 26;
+  const xPositives = points.map((p) => p.x).filter((v) => v > 0);
+  const yPositives = points.map((p) => p.y).filter((v) => v > 0);
+  const hasZeroX = logX && points.some((p) => p.x <= 0);
+  const hasZeroY = logY && points.some((p) => p.y <= 0);
+
+  const [, x1] = extent(points, (p) => p.x) as [number, number];
+  const [, y1] = extent(points, (p) => p.y) as [number, number];
+
+  const xRange: [number, number] = hasZeroX ? [m.left + ZERO_LANE, W - m.right] : [m.left, W - m.right];
+  const yRange: [number, number] = hasZeroY ? [H - m.bottom - ZERO_LANE, m.top] : [H - m.bottom, m.top];
 
   const xs = logX
-    ? scaleLog().domain([Math.max(x0, 0.01), x1 || 1]).range([m.left, W - m.right])
-    : scaleLinear().domain([0, x1 || 1]).nice().range([m.left, W - m.right]);
+    ? scaleLog().domain([xPositives.length ? Math.min(...xPositives) : 0.01, d3max(xPositives) || 1]).range(xRange)
+    : scaleLinear().domain([0, x1 || 1]).nice().range(xRange);
   const ys = logY
-    ? scaleLog().domain([Math.max(y0, 0.01), y1 || 1]).range([H - m.bottom, m.top])
-    : scaleLinear().domain([0, y1 || 1]).nice().range([H - m.bottom, m.top]);
+    ? scaleLog().domain([yPositives.length ? Math.min(...yPositives) : 0.01, d3max(yPositives) || 1]).range(yRange)
+    : scaleLinear().domain([0, y1 || 1]).nice().range(yRange);
+
+  // Échelles « vue » : mêmes pixels, domaine visible ajusté par le zoom/pan courant.
+  const vxs = rescaleAxis(xs, { k: zoomX.k, t: zoomX.x }, logX ? xs.domain()[0] : undefined);
+  const vys = rescaleAxis(ys, { k: zoomY.k, t: zoomY.y }, logY ? ys.domain()[0] : undefined);
+
+  const zeroX = m.left + ZERO_LANE / 2;
+  const zeroY = H - m.bottom - ZERO_LANE / 2;
+  const cx = (x: number) => (logX && x <= 0 ? zeroX : vxs(x));
+  const cy = (y: number) => (logY && y <= 0 ? zeroY : vys(y));
 
   const sMax = sizeK === 'none' ? 1 : d3max(points, (p) => p.s) || 1;
   const rs = scaleSqrt().domain([0, sMax]).range([3, 22]);
   const radius = (s: number) => (sizeK === 'none' ? 5 : Math.max(3, rs(s)));
 
-  const xTicks = xs.ticks(logX ? 4 : 6);
-  const yTicks = ys.ticks(6);
+  const xTicks = vxs.ticks(logX ? 4 : 6);
+  const yTicks = vys.ticks(6);
 
   // Médianes → repères de « quadrant valeur ».
   const medX = quantile(points.map((p) => p.x).sort((a, b) => a - b), 0.5) ?? 0;
   const medY = quantile(points.map((p) => p.y).sort((a, b) => a - b), 0.5) ?? 0;
 
-  const frontierPath = frontier.map((p, i) => `${i === 0 ? 'M' : 'L'} ${xs(p.x)} ${ys(p.y)}`).join(' ');
+  const frontierPath = frontier.map((p, i) => `${i === 0 ? 'M' : 'L'} ${cx(p.x)} ${cy(p.y)}`).join(' ');
 
   return (
     <>
@@ -288,6 +423,17 @@ function ScatterView() {
               </button>
             </>
           )}
+          <span style={{ flex: 1 }} />
+          <button className="ghost small" title="Zoomer" onClick={() => zoomAt(1.6, (m.left + W - m.right) / 2, (m.top + H - m.bottom) / 2)}>
+            🔍＋
+          </button>
+          <button className="ghost small" title="Dézoomer" onClick={() => zoomAt(1 / 1.6, (m.left + W - m.right) / 2, (m.top + H - m.bottom) / 2)}>
+            🔍−
+          </button>
+          <button className="ghost small" disabled={!zoomed} onClick={() => { setZoomX(ZOOM_IDENTITY); setZoomY(ZOOM_IDENTITY); }}>
+            Réinitialiser le zoom
+          </button>
+          {zoomed && <span className="small mono">×{fmt(Math.max(zoomX.k, zoomY.k), 1)}</span>}
         </div>
         <div className="row" style={{ gap: 6, marginTop: 8, flexWrap: 'wrap' }}>
           {CATS.map((c) => (
@@ -314,29 +460,53 @@ function ScatterView() {
           <svg
             ref={svgRef}
             viewBox={`0 0 ${W} ${H}`}
-            style={{ width: '100%', display: 'block' }}
+            style={{ width: '100%', display: 'block', touchAction: 'none', cursor: dragging ? 'grabbing' : 'grab' }}
             onMouseLeave={() => setHover(null)}
+            onPointerDown={onPointerDown}
+            onPointerMove={onPointerMove}
+            onPointerUp={endDrag}
+            onPointerCancel={endDrag}
           >
+            <defs>
+              <clipPath id="scatter-clip">
+                <rect x={m.left} y={m.top} width={W - m.left - m.right} height={H - m.top - m.bottom} />
+              </clipPath>
+            </defs>
+
             {/* grille */}
             {xTicks.map((t) => (
-              <line key={`gx${t}`} x1={xs(t)} x2={xs(t)} y1={m.top} y2={H - m.bottom} stroke={C.border} strokeWidth={1} opacity={0.5} />
+              <line key={`gx${t}`} x1={vxs(t)} x2={vxs(t)} y1={m.top} y2={H - m.bottom} stroke={C.border} strokeWidth={1} opacity={0.5} />
             ))}
             {yTicks.map((t) => (
-              <line key={`gy${t}`} x1={m.left} x2={W - m.right} y1={ys(t)} y2={ys(t)} stroke={C.border} strokeWidth={1} opacity={0.5} />
+              <line key={`gy${t}`} x1={m.left} x2={W - m.right} y1={vys(t)} y2={vys(t)} stroke={C.border} strokeWidth={1} opacity={0.5} />
             ))}
 
+            {/* voie zéro (échelle log) : sépare les aliments à 0, indépassable en log */}
+            {hasZeroX && (
+              <>
+                <line x1={m.left + ZERO_LANE} x2={m.left + ZERO_LANE} y1={m.top} y2={H - m.bottom} stroke={C.border} strokeWidth={1} strokeDasharray="2 3" />
+                <text x={zeroX} y={H - m.bottom + 16} fill={C.muted} fontSize={10} textAnchor="middle">0</text>
+              </>
+            )}
+            {hasZeroY && (
+              <>
+                <line x1={m.left} x2={W - m.right} y1={H - m.bottom - ZERO_LANE} y2={H - m.bottom - ZERO_LANE} stroke={C.border} strokeWidth={1} strokeDasharray="2 3" />
+                <text x={m.left - 8} y={zeroY} fill={C.muted} fontSize={10} textAnchor="end" dominantBaseline="middle">0</text>
+              </>
+            )}
+
             {/* médianes */}
-            <line x1={xs(medX)} x2={xs(medX)} y1={m.top} y2={H - m.bottom} stroke={C.muted} strokeWidth={1} strokeDasharray="2 4" opacity={0.6} />
-            <line x1={m.left} x2={W - m.right} y1={ys(medY)} y2={ys(medY)} stroke={C.muted} strokeWidth={1} strokeDasharray="2 4" opacity={0.6} />
+            <line x1={cx(medX)} x2={cx(medX)} y1={m.top} y2={H - m.bottom} stroke={C.muted} strokeWidth={1} strokeDasharray="2 4" opacity={0.6} />
+            <line x1={m.left} x2={W - m.right} y1={cy(medY)} y2={cy(medY)} stroke={C.muted} strokeWidth={1} strokeDasharray="2 4" opacity={0.6} />
 
             {/* axes ticks labels */}
             {xTicks.map((t) => (
-              <text key={`xt${t}`} x={xs(t)} y={H - m.bottom + 16} fill={C.muted} fontSize={10} textAnchor="middle">
+              <text key={`xt${t}`} x={vxs(t)} y={H - m.bottom + 16} fill={C.muted} fontSize={10} textAnchor="middle">
                 {fmt(t, t < 1 ? 1 : 0)}
               </text>
             ))}
             {yTicks.map((t) => (
-              <text key={`yt${t}`} x={m.left - 8} y={ys(t)} fill={C.muted} fontSize={10} textAnchor="end" dominantBaseline="middle">
+              <text key={`yt${t}`} x={m.left - 8} y={vys(t)} fill={C.muted} fontSize={10} textAnchor="end" dominantBaseline="middle">
                 {fmt(t, t < 1 ? 1 : 0)}
               </text>
             ))}
@@ -347,35 +517,35 @@ function ScatterView() {
               {axisTitle(yk)}{logY ? ' · log' : ''}
             </text>
 
-            {/* frontière de Pareto */}
-            {pareto && frontier.length > 1 && (
-              <path d={frontierPath} fill="none" stroke={C.accent2} strokeWidth={2} strokeDasharray="5 4" opacity={0.9} />
-            )}
-
-            {/* points */}
-            {points.map((p, i) => {
-              const onFront = pareto && frontierSet.has(p.f.id);
-              const isHover = hover?.i === i;
-              return (
-                <circle
-                  key={p.f.id}
-                  cx={xs(p.x)}
-                  cy={ys(p.y)}
-                  r={radius(p.s) * (isHover ? 1.35 : 1)}
-                  fill={COLOR_BY_CAT.get(p.f.categorie)}
-                  fillOpacity={onFront ? 0.95 : 0.72}
-                  stroke={onFront ? C.accent2 : isHover ? C.text : 'none'}
-                  strokeWidth={onFront ? 2 : isHover ? 1.5 : 0}
-                  style={{ cursor: 'pointer' }}
-                  onMouseEnter={(e) => {
-                    if (svgRef.current) {
-                      const v = toViewBox(e, svgRef.current, W, H);
-                      setHover({ i, px: v.px, py: v.py });
-                    }
-                  }}
-                />
-              );
-            })}
+            {/* frontière + points : clippés au cadre du graphique (zoom/pan peut les déplacer hors cadre) */}
+            <g clipPath="url(#scatter-clip)">
+              {pareto && frontier.length > 1 && (
+                <path d={frontierPath} fill="none" stroke={C.accent2} strokeWidth={2} strokeDasharray="5 4" opacity={0.9} />
+              )}
+              {points.map((p, i) => {
+                const onFront = pareto && frontierSet.has(p.f.id);
+                const isHover = hover?.i === i;
+                return (
+                  <circle
+                    key={p.f.id}
+                    cx={cx(p.x)}
+                    cy={cy(p.y)}
+                    r={radius(p.s) * (isHover ? 1.35 : 1)}
+                    fill={COLOR_BY_CAT.get(p.f.categorie)}
+                    fillOpacity={onFront ? 0.95 : 0.72}
+                    stroke={onFront ? C.accent2 : isHover ? C.text : 'none'}
+                    strokeWidth={onFront ? 2 : isHover ? 1.5 : 0}
+                    style={{ cursor: 'pointer' }}
+                    onMouseEnter={(e) => {
+                      if (svgRef.current) {
+                        const v = toViewBox(e, svgRef.current, W, H);
+                        setHover({ i, px: v.px, py: v.py });
+                      }
+                    }}
+                  />
+                );
+              })}
+            </g>
           </svg>
 
           {hover && (
@@ -397,11 +567,23 @@ function ScatterView() {
             </Tooltip>
           )}
         </div>
+        <p className="small" style={{ marginTop: 0 }}>
+          Molette (ou pincer) pour zoomer, glisser pour déplacer. Les zones à 0 (voie séparée) restent fixes.
+        </p>
+        {(hasZeroX || hasZeroY) && (
+          <p className="small" style={{ marginBottom: pareto ? undefined : 0 }}>
+            Repère « 0 » pointillé : une échelle log ne peut pas représenter zéro, donc les aliments à 0{' '}
+            {hasZeroX && !hasZeroY ? NUT_LABEL.get(xk) : hasZeroY && !hasZeroX ? NUT_LABEL.get(yk) : `${NUT_LABEL.get(xk)}/${NUT_LABEL.get(yk)}`}{' '}
+            sont affichés à part, plutôt que masqués.
+          </p>
+        )}
         {pareto && (
           <p className="small" style={{ marginBottom: 0 }}>
             Ligne verte = <strong>frontière de Pareto</strong> : les {frontier.length} aliments qu'aucun autre ne
             surpasse à la fois en {NUT_LABEL.get(yk)} ({yGoal === 'max' ? 'plus' : 'moins'}) et en{' '}
-            {NUT_LABEL.get(xk)} ({xGoal === 'max' ? 'plus' : 'moins'}). Pointillés gris = médianes.
+            {NUT_LABEL.get(xk)} ({xGoal === 'max' ? 'plus' : 'moins'}), plus tous ceux déjà à la valeur limite
+            (ex. 0 g) sur un axe minimisé/maximisé — indépassables sur cet axe, quel que soit l'autre. Pointillés
+            gris = médianes.
           </p>
         )}
       </div>

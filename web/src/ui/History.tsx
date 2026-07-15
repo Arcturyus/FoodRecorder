@@ -1,9 +1,12 @@
 import { useMemo, useState } from 'react';
 import { useStore, todayStr } from '../store/store';
 import { computeTargets } from '../nutrition/targets';
+import { dayKcalUncertainty } from '../nutrition/uncertainty';
+import { Capture } from './Capture';
 import { EntryCard } from './EntryCard';
 import { ManualAdd } from './ManualAdd';
 import { Sun } from './Sun';
+import { UncertaintyBadge } from './UncertaintyBadge';
 import { fmt } from './format';
 
 const WEEKDAYS = ['L', 'M', 'M', 'J', 'V', 'S', 'D'];
@@ -191,6 +194,7 @@ function DayEditor({
   const today = todayStr();
   const dayEntries = entries.filter((e) => e.date === date).sort((a, b) => b.createdAt - a.createdAt);
   const kcal = dayEntries.reduce((a, e) => a + e.items.reduce((b, it) => b + it.nutrients.kcal, 0), 0);
+  const kcalUnc = dayKcalUncertainty(dayEntries);
 
   return (
     <div className="panel" style={{ borderLeft: '3px solid var(--accent)' }}>
@@ -226,6 +230,7 @@ function DayEditor({
         )}
         <span className="small mono" style={{ marginLeft: 'auto' }}>
           {fmt(kcal)} kcal ce jour
+          <UncertaintyBadge kcal={kcal} unc={kcalUnc} />
         </span>
       </div>
       <div className="hint">
@@ -241,6 +246,7 @@ function DayEditor({
         dayEntries.map((e) => <EntryCard key={e.id} entry={e} />)
       )}
 
+      <Capture date={date} title={`Dicter, taper ou photographier un repas du ${dayLabel(date, true)}`} />
       <ManualAdd date={date} title={`Ajouter un aliment au ${dayLabel(date, true)}`} />
       <Sun date={date} />
     </div>

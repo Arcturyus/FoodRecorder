@@ -7,32 +7,54 @@
  * Modèle volontairement simple, calibré pour la France métropolitaine
  * (latitude ~44–50° N) sur les ordres de grandeur usuels de la littérature :
  * ~15 min de soleil d'été à la mi-journée, visage + avant-bras découverts, peau
- * claire ≈ 25 µg (1000 UI). La synthèse plafonne (la pré-vitamine D se dégrade
- * sous UV), d'où des rendements décroissants sur la durée et un plafond
- * journalier. De novembre à février, les UVB sont trop rasants : gain quasi nul.
+ * claire ≈ 25 µg (1000 UI). De novembre à février, les UVB sont trop rasants :
+ * gain quasi nul.
+ *
+ * Les facteurs ne sont PAS indépendants, le modèle les interconnecte :
+ *  - heure × durée : l'intensité UVB est INTÉGRÉE sur toute la sortie (3 h
+ *    démarrées à 9 h traversent le pic de midi ; 3 h démarrées à 16 h finissent
+ *    hors fenêtre) ;
+ *  - saison × heure : la fenêtre horaire utile se referme hors été (±5,5 h
+ *    autour du midi solaire en juillet, ±~2,6 h en janvier) ;
+ *  - saturation × dose : la pré-vitamine D se dégrade avec la DOSE d'UV reçue,
+ *    pas avec l'horloge — un soleil faible (hiver, nuages, peau foncée, crème)
+ *    sature plus lentement, donc une peau foncée synthétise moins vite mais
+ *    tend vers le même plateau si l'exposition dure ;
+ *  - crème « visage » × peau découverte : seule la surface crémée est freinée
+ *    (et elle sature aussi plus lentement), l'effet est donc d'autant plus fort
+ *    que la peau exposée est petite.
  *
  * Formule :
- *   Gain = BASE_RATE × f_durée × f_saison × f_heure × f_ciel × f_peau
- *          × f_phénotype × f_crème
- * (f_durée est en « minutes efficaces », les autres sont des facteurs 0–~2).
+ *   dose  = ∫ f_heure(t) dt × f_saison × f_ciel × f_phénotype   (min « plein midi »)
+ *   gain  = BASE_RATE × Σ_zones surface × saturation(dose × f_crème_zone)
+ * Le détail affiché (vitaminDBreakdown) redéfinit les facteurs pour que
+ * base × produit reconstitue exactement ce gain.
  */
 
 export type SkyCondition = 'tres-ensoleille' | 'ensoleille' | 'voile' | 'nuageux' | 'couvert';
 export type SkinExposure = 'visage-mains' | 'visage-bras' | 'bras-jambes' | 'torse-nu';
 export type Phenotype = 'blanc' | 'bronze' | 'mat' | 'noir';
+/**
+ * Crème solaire posée : aucune, sur le visage seulement (cas courant du SPF
+ * quotidien « anti-âge » où le corps reste exposé), ou complète (tout le corps).
+ */
+export type Creme = 'aucune' | 'visage' | 'complete';
 
 /** Une sortie au soleil enregistrée (journée `date`). */
 export interface SunExposure {
   id: string;
   date: string; // YYYY-MM-DD
-  heure: string; // HH:MM (milieu approximatif de la sortie)
+  heure: string; // HH:MM (début de la sortie)
   dureeMin: number; // durée approximative, minutes
   ciel: SkyCondition;
   peau: SkinExposure;
   /** Phototype de peau (par défaut « blanc »). */
   phenotype: Phenotype;
-  /** Crème solaire SPF 50 (posée une fois au début, moyennement bien appliquée). */
-  creme: boolean;
+  /**
+   * Crème solaire SPF 50 (posée une fois au début, moyennement bien appliquée).
+   * Ancien format booléen encore accepté en lecture (true = « complete »).
+   */
+  creme: Creme;
   createdAt: number;
 }
 
@@ -61,11 +83,44 @@ export const PHENOTYPE_OPTIONS: { value: Phenotype; label: string; factor: numbe
 /**
  * Crème SPF 50 posée UNE fois au début et moyennement bien appliquée : bloque
  * une bonne part des UVB au départ mais s'estompe (sueur, temps, sous-dosage).
- * Facteur global sur la session (bien moins protecteur qu'un SPF 50 idéal).
+ * Facteur appliqué à la peau protégée (bien moins protecteur qu'un SPF 50 idéal).
  */
 export const SUNSCREEN_FACTOR = 0.4;
 
-/** Créneaux horaires pratiques proposés en un clic (heure ≈ milieu de sortie). */
+/**
+ * Surface relative du visage seul, dans les mêmes unités que `SKIN_OPTIONS.factor`
+ * (où « visage + bras » vaut 1). Sert à modéliser une crème posée uniquement sur
+ * le visage : seule cette petite surface est protégée, le reste de la peau
+ * découverte continue de synthétiser normalement — l'effet est donc d'autant plus
+ * faible que la peau exposée est grande (torse nu ≫ visage/mains).
+ */
+export const FACE_SURFACE = 0.25;
+
+export const CREME_OPTIONS: { value: Creme; label: string; short: string; icon: string }[] = [
+  { value: 'aucune', label: 'Aucune', short: 'Aucune', icon: '' },
+  { value: 'visage', label: 'Visage seulement', short: '🧴 Visage', icon: '🧴' },
+  { value: 'complete', label: 'Complète (tout le corps)', short: '🧴 Complète', icon: '🧴' },
+];
+
+/** Tolère l'ancien format booléen (true = crème complète) et l'absence de valeur. */
+export function normalizeCreme(c: Creme | boolean | undefined | null): Creme {
+  if (c === true) return 'complete';
+  if (c === false || c == null) return 'aucune';
+  return c;
+}
+
+/**
+ * Surface de peau crémée (dans les unités de `SKIN_OPTIONS.factor`) : toute la
+ * peau découverte en crème « complète », seulement le visage en crème « visage »
+ * (le reste continue de synthétiser normalement — interconnexion crème × peau).
+ */
+function cremedSurface(creme: Creme, fPeau: number): number {
+  if (creme === 'complete') return fPeau;
+  if (creme === 'visage') return Math.min(FACE_SURFACE, fPeau);
+  return 0;
+}
+
+/** Créneaux horaires pratiques proposés en un clic (heure = début de sortie). */
 export const TIME_PRESETS: { label: string; heure: string }[] = [
   { label: 'Matin', heure: '08:00' },
   { label: 'Fin de matinée', heure: '11:00' },
@@ -77,7 +132,10 @@ export const TIME_PRESETS: { label: string; heure: string }[] = [
 /** µg/min en conditions optimales (été, midi solaire, ciel dégagé, visage + bras, peau claire). */
 const BASE_RATE = 1.7;
 
-/** La synthèse sature : au-delà, chaque minute rapporte de moins en moins. */
+/**
+ * La synthèse sature : au-delà de ~60 min de dose « plein midi » équivalente,
+ * chaque minute rapporte de moins en moins (cf. saturate()).
+ */
 const SATURATION_MIN = 60;
 
 /** Plafond journalier (µg) toutes expositions confondues. */
@@ -89,18 +147,48 @@ export const SUN_DAY_CAP = 150;
  */
 const MONTH_FACTOR = [0.03, 0.08, 0.3, 0.6, 0.85, 1, 1, 0.9, 0.65, 0.35, 0.08, 0.03];
 
-/**
- * Facteur horaire : les UVB utiles sont concentrés autour du midi solaire
- * (~13 h 30 en heure d'été française). Fenêtre efficace ≈ 10 h – 17 h.
- */
-export function hourFactor(heure: string): number {
+/** Heure décimale depuis « HH:MM » (null si illisible). */
+function parseHour(heure: string): number | null {
   const [h, m] = heure.split(':').map(Number);
-  if (!Number.isFinite(h)) return 0;
-  const t = h + (Number.isFinite(m) ? m / 60 : 0);
+  if (!Number.isFinite(h)) return null;
+  return h + (Number.isFinite(m) ? m / 60 : 0);
+}
+
+/**
+ * Interconnexion saison × heure : demi-largeur (en heures autour du midi
+ * solaire ~13 h 30) de la fenêtre UVB utile. Été : ±5,5 h ; cœur de l'hiver :
+ * ±~2,6 h — hors été le soleil est trop rasant en dehors du milieu de journée.
+ */
+export function windowHalfWidth(fSaison: number): number {
+  return 2.5 + 3 * fSaison;
+}
+
+/** Intensité UVB relative à l'instant `t` (heure décimale), cloche en cosinus. */
+function hourFactorAt(t: number, halfWidth: number): number {
   const dist = Math.abs(t - 13.5);
-  if (dist >= 5.5) return 0;
-  // Cloche en cosinus : 1 au midi solaire, 0 à ±5,5 h.
-  return Math.pow(Math.cos((dist / 5.5) * (Math.PI / 2)), 1.5);
+  if (dist >= halfWidth) return 0;
+  return Math.pow(Math.cos((dist / halfWidth) * (Math.PI / 2)), 1.5);
+}
+
+/** Facteur horaire instantané au début de la sortie (fenêtre ajustée à la saison). */
+export function hourFactor(heure: string, fSaison = 1): number {
+  const t = parseHour(heure);
+  return t == null ? 0 : hourFactorAt(t, windowHalfWidth(fSaison));
+}
+
+/**
+ * Interconnexion heure × durée : minutes « équivalent plein midi » reçues sur
+ * TOUTE la sortie — intégrale du facteur horaire de `heure` (début) à
+ * `heure + dureeMin`. Une sortie longue traverse des heures plus ou moins
+ * efficaces au lieu d'être jugée sur son seul point de départ.
+ */
+export function hourIntegral(heure: string, dureeMin: number, fSaison: number): number {
+  const t0 = parseHour(heure);
+  if (t0 == null || dureeMin <= 0) return 0;
+  const w = windowHalfWidth(fSaison);
+  let sum = 0;
+  for (let k = 0; k < dureeMin; k++) sum += hourFactorAt(t0 + (k + 0.5) / 60, w);
+  return sum;
 }
 
 export function monthFactor(date: string): number {
@@ -108,10 +196,15 @@ export function monthFactor(date: string): number {
   return MONTH_FACTOR[(month || 1) - 1] ?? 0;
 }
 
-/** Minutes « efficaces » avec rendements décroissants (plateau de synthèse). */
-export function effectiveMinutes(dureeMin: number): number {
-  if (dureeMin <= 0) return 0;
-  return SATURATION_MIN * (1 - Math.exp(-dureeMin / SATURATION_MIN));
+/**
+ * Interconnexion saturation × dose : minutes de synthèse effectives pour une
+ * dose d'UV donnée (en minutes « optimales » équivalentes). La pré-vitamine D
+ * se dégrade avec la dose reçue, pas avec l'horloge : par soleil faible la
+ * saturation arrive plus tard, chaque minute garde sa valeur plus longtemps.
+ */
+export function saturate(dose: number): number {
+  if (dose <= 0) return 0;
+  return SATURATION_MIN * (1 - Math.exp(-dose / SATURATION_MIN));
 }
 
 function skyFactor(ciel: SkyCondition): number {
@@ -142,30 +235,72 @@ export interface VitDFactor {
   icon: string;
 }
 
+/** « 15:45 » pour l'heure décimale 15,75 (affichage de la fin de sortie). */
+function fmtHour(t: number): string {
+  const tt = ((t % 24) + 24) % 24;
+  const h = Math.floor(tt);
+  const m = Math.round((tt - h) * 60);
+  return `${String(h).padStart(2, '0')}:${String(m % 60).padStart(2, '0')}`;
+}
+
 /** Décompose le calcul en facteurs (formule affichée avec valeurs au survol). */
 export function vitaminDBreakdown(e: SunInput): { base: number; factors: VitDFactor[]; gain: number; capped: boolean } {
-  const dureeEff = effectiveMinutes(e.dureeMin);
   const fSaison = monthFactor(e.date);
-  const fHeure = hourFactor(e.heure);
   const fCiel = skyFactor(e.ciel);
   const fPeau = skinFactor(e.peau);
   const fPheno = phenotypeFactor(e.phenotype);
-  const fCreme = e.creme ? SUNSCREEN_FACTOR : 1;
+  const creme = normalizeCreme(e.creme);
 
-  const raw = BASE_RATE * dureeEff * fSaison * fHeure * fCiel * fPeau * fPheno * fCreme;
+  // Heure × durée : intensité horaire intégrée sur toute la sortie, fenêtre
+  // resserrée hors été (saison × heure). fHeure = intensité moyenne subie.
+  const hInt = hourIntegral(e.heure, e.dureeMin, fSaison);
+  const fHeure = e.dureeMin > 0 ? hInt / e.dureeMin : 0;
+
+  // Dose d'UV reçue par la peau nue (minutes « optimales » équivalentes) : c'est
+  // elle qui pilote la saturation, donc un soleil faible sature plus lentement.
+  const dose = hInt * fSaison * fCiel * fPheno;
+
+  // Zones crémée / nue : chacune sature selon sa propre dose (crème × durée).
+  const cremed = cremedSurface(creme, fPeau);
+  const bare = fPeau - cremed;
+  const satBare = saturate(dose);
+  const satCremed = saturate(dose * SUNSCREEN_FACTOR);
+  const raw = BASE_RATE * (bare * satBare + cremed * satCremed);
   const gain = Math.min(raw, SUN_DAY_CAP);
 
+  // Facteurs affichés, redéfinis pour que base × produit == gain (hors plafond) :
+  //  - f_durée = minutes « utiles » après saturation, ramenées aux conditions
+  //    (durée × sat(dose)/dose) — dépend donc AUSSI du ciel/saison/phototype ;
+  //  - f_crème = ratio réel avec/sans crème (zones + saturation comprises).
+  const dureeEff = dose > 0 ? (e.dureeMin * satBare) / dose : 0;
+  const fCreme = fPeau > 0 && satBare > 0 ? (bare * satBare + cremed * satCremed) / (fPeau * satBare) : 1;
+
+  const t0 = parseHour(e.heure);
+  const sessionStr = t0 == null ? '' : ` (${e.heure} → ${fmtHour(t0 + e.dureeMin / 60)})`;
+  const windowStr = `±${windowHalfWidth(fSaison).toLocaleString('fr-FR', { maximumFractionDigits: 1 })} h autour de ~13 h 30`;
+
   const factors: VitDFactor[] = [
-    { key: 'duree', symbol: 'f_durée', label: 'Durée', icon: '⏱️', value: dureeEff, gauge: Math.min(1, dureeEff / SATURATION_MIN), display: `${dureeEff.toFixed(0)} min eff.`, detail: `${e.dureeMin} min réelles → ${dureeEff.toFixed(0)} min efficaces. La synthèse plafonne au-delà de ~1 h : les minutes suivantes rapportent de moins en moins.` },
-    { key: 'saison', symbol: 'f_saison', label: 'Saison', icon: '📅', value: fSaison, gauge: fSaison, display: `×${fSaison.toFixed(2)}`, detail: 'Intensité UVB du mois en France métropolitaine. Quasi nulle de novembre à février (« hiver de la vitamine D »), maximale en juin-juillet.' },
-    { key: 'heure', symbol: 'f_heure', label: 'Heure', icon: '🕐', value: fHeure, gauge: fHeure, display: `×${fHeure.toFixed(2)}`, detail: 'Fenêtre UVB utile ~10 h–17 h, maximale autour du midi solaire (~13 h 30 en heure d’été). Le matin et le soir, les rayons sont trop rasants.' },
-    { key: 'ciel', symbol: 'f_ciel', label: 'Ciel', icon: '☁️', value: fCiel, gauge: fCiel, display: `×${fCiel.toFixed(2)}`, detail: `${SKY_OPTIONS.find((o) => o.value === e.ciel)?.label ?? ''}. Les nuages et la brume filtrent une part des UVB.` },
+    { key: 'duree', symbol: 'f_durée', label: 'Durée', icon: '⏱️', value: dureeEff, gauge: Math.min(1, dureeEff / SATURATION_MIN), display: `${dureeEff.toFixed(0)} min eff.`, detail: `${e.dureeMin} min réelles → ${dureeEff.toFixed(0)} min utiles. La synthèse sature avec la dose d'UV reçue (~1 h « plein midi ») : par soleil faible (hiver, nuages, peau foncée, crème), elle sature plus lentement et chaque minute garde sa valeur plus longtemps.` },
+    { key: 'saison', symbol: 'f_saison', label: 'Saison', icon: '📅', value: fSaison, gauge: fSaison, display: `×${fSaison.toFixed(2)}`, detail: 'Intensité UVB du mois en France métropolitaine. Quasi nulle de novembre à février (« hiver de la vitamine D »), maximale en juin-juillet. Elle resserre aussi la fenêtre horaire utile.' },
+    { key: 'heure', symbol: 'f_heure', label: 'Heure', icon: '🕐', value: fHeure, gauge: fHeure, display: `×${fHeure.toFixed(2)}`, detail: `Intensité moyenne sur toute la sortie${sessionStr}, pas seulement au départ : une sortie longue traverse des heures plus ou moins efficaces. Fenêtre utile de saison : ${windowStr}.` },
+    { key: 'ciel', symbol: 'f_ciel', label: 'Ciel', icon: '☁️', value: fCiel, gauge: fCiel, display: `×${fCiel.toFixed(2)}`, detail: `${SKY_OPTIONS.find((o) => o.value === e.ciel)?.label ?? ''}. Les nuages et la brume filtrent une part des UVB (et retardent d'autant la saturation).` },
     { key: 'peau', symbol: 'f_peau', label: 'Peau découverte', icon: '👕', value: fPeau, gauge: Math.min(1, fPeau / 2.2), display: `×${fPeau.toFixed(2)}`, detail: `${SKIN_OPTIONS.find((o) => o.value === e.peau)?.label ?? ''}. Plus la surface de peau exposée est grande, plus la synthèse est élevée.` },
-    { key: 'phenotype', symbol: 'f_phéno', label: 'Phototype', icon: '🧑', value: fPheno, gauge: fPheno, display: `×${fPheno.toFixed(2)}`, detail: `${PHENOTYPE_OPTIONS.find((o) => o.value === (e.phenotype ?? 'blanc'))?.label} : la mélanine protège des UV, donc plus la peau est foncée, moins elle synthétise à exposition égale.` },
-    { key: 'creme', symbol: 'f_crème', label: 'Crème solaire', icon: '🧴', value: fCreme, gauge: fCreme, display: `×${fCreme.toFixed(2)}`, detail: e.creme ? 'SPF 50 posé une seule fois et moyennement appliqué : bloque une bonne part des UVB, mais s’estompe (sueur, temps, sous-dosage).' : 'Aucune crème : rien ne filtre les UVB.' },
+    { key: 'phenotype', symbol: 'f_phéno', label: 'Phototype', icon: '🧑', value: fPheno, gauge: fPheno, display: `×${fPheno.toFixed(2)}`, detail: `${PHENOTYPE_OPTIONS.find((o) => o.value === (e.phenotype ?? 'blanc'))?.label} : la mélanine filtre les UV — synthèse plus lente à exposition égale, mais qui sature aussi plus tard (une exposition longue rattrape une partie de l'écart).` },
+    { key: 'creme', symbol: 'f_crème', label: 'Crème solaire', icon: '🧴', value: fCreme, gauge: fCreme, display: `×${fCreme.toFixed(2)}`, detail: cremeDetail(creme) },
   ];
 
   return { base: BASE_RATE, factors, gain, capped: raw > SUN_DAY_CAP };
+}
+
+/** Détail affiché (survol) du facteur crème selon la zone protégée. */
+function cremeDetail(creme: Creme): string {
+  if (creme === 'complete') {
+    return 'SPF 50 sur tout le corps, posé une seule fois et moyennement appliqué : bloque une bonne part des UVB, mais s’estompe (sueur, temps, sous-dosage). La peau crémée sature aussi plus tard : sur une sortie longue, la crème coûte un peu moins que son filtre.';
+  }
+  if (creme === 'visage') {
+    return 'Crème sur le visage seulement : seule cette petite surface est protégée, le reste de la peau découverte continue de synthétiser. L’effet est donc faible (et d’autant plus faible que la peau exposée est grande).';
+  }
+  return 'Aucune crème : rien ne filtre les UVB.';
 }
 
 /** Gain estimé (µg) d'une exposition. Ordre de grandeur, pas une mesure. */

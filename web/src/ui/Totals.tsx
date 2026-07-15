@@ -5,6 +5,8 @@ import { computeTargets } from '../nutrition/targets';
 import { computeRatios } from '../nutrition/ratios';
 import type { RatioResult } from '../nutrition/ratios';
 import { useStore } from '../store/store';
+import type { KcalUncertainty } from '../nutrition/uncertainty';
+import { UncertaintyBadge } from './UncertaintyBadge';
 import { fmt } from './format';
 
 interface Contribution {
@@ -70,7 +72,16 @@ function Breakdown({
  * Chaque tuile est survolable (ou tapable) pour voir les aliments qui apportent
  * le plus de ce nutriment.
  */
-export function Totals({ totals, items }: { totals: Nutrients; items: JournalItem[] }) {
+export function Totals({
+  totals,
+  items,
+  incertitude,
+}: {
+  totals: Nutrients;
+  items: JournalItem[];
+  /** Incertitude ± kcal du jour (badge « ~ » discret sur la barre de calories). */
+  incertitude?: KcalUncertainty;
+}) {
   const profile = useStore((s) => s.profile);
   const targets = useMemo(() => computeTargets(profile), [profile]);
 
@@ -100,6 +111,8 @@ export function Totals({ totals, items }: { totals: Nutrients; items: JournalIte
           </div>
         ))}
       </div>
+
+      <KcalBar consumed={totals.kcal} target={kcalT.optimal} incertitude={incertitude} />
 
       <div className="totals-grid" style={{ marginTop: 14 }}>
         {grid.map((t) => {
@@ -162,6 +175,40 @@ export function Totals({ totals, items }: { totals: Nutrients; items: JournalIte
   );
 }
 
+/**
+ * Barre de calories du jour : progression vers l'objectif + reste à manger
+ * (ou dépassement). Répond au besoin « savoir combien il reste pour la journée ».
+ */
+function KcalBar({
+  consumed,
+  target,
+  incertitude,
+}: {
+  consumed: number;
+  target: number;
+  incertitude?: KcalUncertainty;
+}) {
+  const pct = target > 0 ? (consumed / target) * 100 : 0;
+  const remaining = target - consumed;
+  const over = remaining < 0;
+  return (
+    <div className="kcal-bar">
+      <div className="kcal-bar-head">
+        <span className="small">
+          <strong className="mono">{fmt(consumed)}</strong> / {fmt(target)} kcal
+          {incertitude && <UncertaintyBadge kcal={consumed} unc={incertitude} />}
+        </span>
+        <span className={`small mono kcal-remaining${over ? ' over' : ''}`}>
+          {over ? `dépassé de ${fmt(-remaining)} kcal` : `reste ${fmt(remaining)} kcal`}
+        </span>
+      </div>
+      <div className={`bar${over ? ' over' : consumed >= target ? ' good' : ''}`} style={{ height: 10 }}>
+        <span style={{ width: `${Math.min(100, pct)}%` }} />
+      </div>
+    </div>
+  );
+}
+
 const RATIO_STATUS_COLOR: Record<string, string> = {
   good: 'var(--accent-2)',
   warn: 'var(--warn)',
@@ -169,29 +216,53 @@ const RATIO_STATUS_COLOR: Record<string, string> = {
   na: 'var(--muted)',
 };
 
+/** Cible idéale d'un rapport, formatée avec le bon symbole (≥ / ≤ / ≈). */
+function ratioTargetText(def: RatioResult['def']): string {
+  const val = `${fmt(def.optimal)}${def.suffix}`;
+  if (def.better === 'higher') return `idéal ≥ ${val}`;
+  if (def.better === 'lower') return `idéal ≤ ${val}`;
+  return `idéal ≈ ${val}`;
+}
+
+const RATIO_STATUS_WORD: Record<string, string> = {
+  good: 'dans la cible',
+  warn: 'à surveiller',
+  bad: 'hors cible',
+  na: 'pas encore de donnée',
+};
+
 /** Rapports optimaux du jour (oméga-6/3, potassium/sodium, calcium/magnésium). */
 function RatioRow({ ratios }: { ratios: RatioResult[] }) {
   return (
     <div className="ratio-row" style={{ marginTop: 16 }}>
       <div className="small" style={{ marginBottom: 8, opacity: 0.8 }}>
-        Rapports du jour · détail et cibles dans l'onglet Guide
+        Rapports du jour · survolez pour le détail (aussi dans l'onglet Guide)
       </div>
       <div className="totals-grid">
-        {ratios.map((r) => (
-          <div className="stat" key={r.def.key} title={r.def.note}>
-            <div className="label">{r.def.label}</div>
-            <div className="value mono" style={{ color: RATIO_STATUS_COLOR[r.status] }}>
-              {r.text}
+        {ratios.map((r) => {
+          const color = RATIO_STATUS_COLOR[r.status];
+          return (
+            <div className="stat has-breakdown" key={r.def.key} tabIndex={0}>
+              <div className="label">{r.def.label}</div>
+              <div className="value mono" style={{ color }}>
+                {r.text}
+              </div>
+              <div className="small mono">{ratioTargetText(r.def)}</div>
+              {/* Info-bulle riche (même style que les tuiles de nutriments), remplace le title natif. */}
+              <div className="breakdown" role="tooltip">
+                <div className="row" style={{ justifyContent: 'space-between', alignItems: 'baseline', gap: 8, marginBottom: 6 }}>
+                  <span className="bd-nom" style={{ fontWeight: 600, color: 'var(--text)' }}>{r.def.label}</span>
+                  <span className="mono" style={{ color, fontWeight: 700 }}>
+                    {r.text} · {RATIO_STATUS_WORD[r.status]}
+                  </span>
+                </div>
+                <div className="small" style={{ marginBottom: 6, color: 'var(--muted)' }}>{r.def.role}</div>
+                <div className="small" style={{ color: 'var(--text)' }}>{r.def.note}</div>
+                <div className="small mono" style={{ marginTop: 8, color: 'var(--accent-2)' }}>{ratioTargetText(r.def)}</div>
+              </div>
             </div>
-            <div className="small mono">
-              {r.def.better === 'higher'
-                ? `idéal ≥ ${fmt(r.def.optimal)}${r.def.suffix}`
-                : r.def.better === 'lower'
-                  ? `idéal ≤ ${fmt(r.def.optimal)}${r.def.suffix}`
-                  : `idéal ≈ ${fmt(r.def.optimal)}${r.def.suffix}`}
-            </div>
-          </div>
-        ))}
+          );
+        })}
       </div>
     </div>
   );

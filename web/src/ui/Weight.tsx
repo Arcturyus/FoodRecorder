@@ -11,13 +11,14 @@ import type { WeightPatch } from '../extraction/weight';
  */
 export function Weight() {
   const [prefill, setPrefill] = useState<{ patch: WeightPatch; nonce: number } | null>(null);
+  const [focusEntry, setFocusEntry] = useState<{ id: string; nonce: number } | null>(null);
 
   return (
     <>
       <WeightCapture onExtract={(patch) => setPrefill({ patch, nonce: Date.now() })} />
       <WeightForm prefill={prefill} />
-      <WeightChart />
-      <WeightHistory />
+      <WeightChart onEditEntry={(id) => setFocusEntry({ id, nonce: Date.now() })} />
+      <WeightHistory focusEntry={focusEntry} />
     </>
   );
 }

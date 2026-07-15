@@ -6,6 +6,7 @@ import { SUPPLEMENT_DOSE_DEFAULT } from '../nutrition/foods';
 import { normalizeForMatch, isSupplementQuery } from '../nutrition/normalize';
 import { toGrams, scaleNutrients } from '../nutrition/compute';
 import { fmt, UNIT_LABELS } from './format';
+import { NumberField } from './NumberField';
 
 /**
  * Ajout manuel « à la carte » : on cherche un aliment, on choisit la quantité
@@ -111,14 +112,13 @@ export function ManualAdd({ date, title }: { date?: string; title?: string } = {
 
       {selected && (
         <div className="row" style={{ marginTop: 12, alignItems: 'flex-end' }}>
-          <label className="field" style={{ flex: '0 0 90px' }}>
+          <label className="field" style={{ flex: '0 0 118px' }}>
             Quantité
-            <input
-              type="number"
+            <NumberField
               min={0}
-              step="any"
+              step={1}
               value={quantite}
-              onChange={(e) => setQuantite(e.target.value)}
+              onChange={setQuantite}
               autoFocus
               onKeyDown={(e) => e.key === 'Enter' && add()}
             />

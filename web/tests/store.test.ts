@@ -84,6 +84,60 @@ describe('recentFoodCounts', () => {
   });
 });
 
+describe('ajustement « pour cette fois » (setItemNutrients)', () => {
+  it('remplace les apports de l’item sans toucher à l’aliment de la base', () => {
+    const entryId = useStore.getState().addFoodEntry(banane, 1, 'piece'); // 1 pièce ≈ pieceGrams
+    const item = useStore.getState().entries.find((e) => e.id === entryId)!.items[0];
+    const grams = item.grams;
+
+    const patched = { ...item.nutrients, proteines: 12 };
+    useStore.getState().setItemNutrients(entryId, item.id, patched);
+
+    const after = useStore.getState().entries.find((e) => e.id === entryId)!.items[0];
+    expect(after.nutrients.proteines).toBeCloseTo(12, 5);
+    expect(after.customN).toBeDefined();
+    // customN est stocké « pour 100 g » : 12 g sur `grams` g → 12 * 100 / grams.
+    expect(after.customN!.proteines).toBeCloseTo((12 * 100) / grams, 5);
+    // La banque n'est pas modifiée.
+    expect(FOOD_BY_ID.get('banane')!.n.proteines).not.toBeCloseTo(12, 5);
+  });
+
+  it('rescale l’ajustement quand la quantité change', () => {
+    const entryId = useStore.getState().addFoodEntry(banane, 1, 'piece');
+    const item = useStore.getState().entries.find((e) => e.id === entryId)!.items[0];
+    useStore.getState().setItemNutrients(entryId, item.id, { ...item.nutrients, proteines: 10 });
+    useStore.getState().updateItem(entryId, item.id, { quantite: 2 });
+
+    const after = useStore.getState().entries.find((e) => e.id === entryId)!.items[0];
+    expect(after.nutrients.proteines).toBeCloseTo(20, 4);
+    expect(after.customN).toBeDefined();
+  });
+
+  it('null rétablit les valeurs de l’aliment', () => {
+    const entryId = useStore.getState().addFoodEntry(banane, 1, 'piece');
+    const item = useStore.getState().entries.find((e) => e.id === entryId)!.items[0];
+    const original = item.nutrients.proteines;
+    useStore.getState().setItemNutrients(entryId, item.id, { ...item.nutrients, proteines: 99 });
+    useStore.getState().setItemNutrients(entryId, item.id, null);
+
+    const after = useStore.getState().entries.find((e) => e.id === entryId)!.items[0];
+    expect(after.customN).toBeUndefined();
+    expect(after.nutrients.proteines).toBeCloseTo(original, 5);
+  });
+
+  it('changer d’aliment annule l’ajustement', () => {
+    const entryId = useStore.getState().addFoodEntry(banane, 1, 'piece');
+    const item = useStore.getState().entries.find((e) => e.id === entryId)!.items[0];
+    useStore.getState().setItemNutrients(entryId, item.id, { ...item.nutrients, proteines: 99 });
+    const pomme = FOOD_BY_ID.get('pomme') ?? FOOD_BY_ID.get('oeuf');
+    useStore.getState().updateItem(entryId, item.id, { foodId: pomme!.id });
+
+    const after = useStore.getState().entries.find((e) => e.id === entryId)!.items[0];
+    expect(after.customN).toBeUndefined();
+    expect(after.foodId).toBe(pomme!.id);
+  });
+});
+
 describe('export / import (sauvegarde)', () => {
   it('le JSON exporté se ré-importe à l’identique', () => {
     useStore.getState().addFoodEntry(banane, 1, 'piece');

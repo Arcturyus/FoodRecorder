@@ -1,16 +1,20 @@
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { useStore, todayStr } from '../store/store';
 import { computeWeight } from '../weight/compute';
 import { WEIGHT_METRICS } from '../weight/types';
 import type { WeightEntry, WeightMetricKey } from '../weight/types';
 import { fmt } from './format';
+import { NumberField } from './NumberField';
 
 /**
  * Historique des pesées : liste chronologique (plus récent en premier), avec
  * édition en place de chaque champ et suppression. Les champs dérivés sont
  * affichés (lecture seule) sous chaque pesée dépliée.
+ *
+ * `focusEntry` (venant d'un clic sur un point du graphe) ouvre et scrolle
+ * automatiquement vers la ligne correspondante.
  */
-export function WeightHistory() {
+export function WeightHistory({ focusEntry }: { focusEntry?: { id: string; nonce: number } | null }) {
   const entries = useStore((s) => s.weightEntries);
   const sorted = useMemo(
     () => [...entries].sort((a, b) => `${b.date} ${b.heure}`.localeCompare(`${a.date} ${a.heure}`)),
@@ -23,7 +27,9 @@ export function WeightHistory() {
       {sorted.length === 0 ? (
         <div className="empty">Aucune pesée enregistrée.</div>
       ) : (
-        sorted.map((e) => <WeightRow key={e.id} entry={e} />)
+        sorted.map((e) => (
+          <WeightRow key={e.id} entry={e} focus={focusEntry && focusEntry.id === e.id ? focusEntry.nonce : undefined} />
+        ))
       )}
     </div>
   );
@@ -34,12 +40,19 @@ function toNum(s: string): number | undefined {
   return Number.isFinite(n) ? n : undefined;
 }
 
-function WeightRow({ entry }: { entry: WeightEntry }) {
+function WeightRow({ entry, focus }: { entry: WeightEntry; focus?: number }) {
   const updateWeightEntry = useStore((s) => s.updateWeightEntry);
   const removeWeightEntry = useStore((s) => s.removeWeightEntry);
   const weightConfig = useStore((s) => s.weightConfig);
   const sexe = useStore((s) => s.profile.sexe);
   const [editing, setEditing] = useState(false);
+  const rowRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (focus == null) return;
+    setEditing(true);
+    rowRef.current?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+  }, [focus]);
 
   const computed = computeWeight(
     { poids: entry.poids, masseMusculaire: entry.masseMusculaire },
@@ -57,7 +70,7 @@ function WeightRow({ entry }: { entry: WeightEntry }) {
     updateWeightEntry(entry.id, { [key]: key === 'poids' ? toNum(v) ?? entry.poids : toNum(v) });
 
   return (
-    <div className="entry-card" style={{ borderTop: '1px solid var(--border)', paddingTop: 10, marginTop: 10 }}>
+    <div ref={rowRef} className="entry-card" style={{ borderTop: '1px solid var(--border)', paddingTop: 10, marginTop: 10 }}>
       <div className="entry-meta">
         <span>
           <strong style={{ textTransform: 'capitalize' }}>{dateLabel}</strong> · {entry.heure} ·{' '}
@@ -109,13 +122,7 @@ function WeightRow({ entry }: { entry: WeightEntry }) {
               <label className="field" key={mt.key} style={{ flex: '1 1 120px' }}>
                 {mt.label}
                 {mt.unit ? ` (${mt.unit})` : ''}
-                <input
-                  type="number"
-                  step="any"
-                  inputMode="decimal"
-                  value={entry[mt.key] ?? ''}
-                  onChange={(e) => setNum(mt.key, e.target.value)}
-                />
+                <NumberField step={0.1} value={entry[mt.key] ?? ''} onChange={(v) => setNum(mt.key, v)} />
               </label>
             ))}
           </div>

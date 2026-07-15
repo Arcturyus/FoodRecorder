@@ -1,9 +1,12 @@
-import { useState } from 'react';
+import { useMemo, useState } from 'react';
 import type { JournalEntry, JournalItem } from '../store/store';
 import { useStore, useEffectiveFoods, todayStr } from '../store/store';
 import { matchFood } from '../nutrition/match';
-import { UNITS } from '../nutrition/types';
-import { fmt, UNIT_LABELS } from './format';
+import { UNITS, EMPTY_NUTRIENTS } from '../nutrition/types';
+import type { NutrientKey, Nutrients } from '../nutrition/types';
+import { computeTargets } from '../nutrition/targets';
+import { fmt, round, UNIT_LABELS } from './format';
+import { NumberField } from './NumberField';
 
 /** Carte récap d'une entrée enregistrée, avec édition en place (plan §Phase 4). */
 export function EntryCard({ entry }: { entry: JournalEntry }) {
@@ -95,24 +98,47 @@ function ItemRow({ entryId, item, editing }: { entryId: string; item: JournalIte
   const updateItem = useStore((s) => s.updateItem);
   const removeItem = useStore((s) => s.removeItem);
   const foods = useEffectiveFoods();
+  const [open, setOpen] = useState(false);
 
   if (!editing) {
+    // Une fois ajusté « pour cette fois », l'estimation IA est considérée vérifiée.
+    const isIa = item.iaEstime && !item.customN;
     return (
-      <div className="item-row">
-        <div className="item-name">
-          <span>
-            {item.nomAffiche}
-            {item.estimation && <span className="badge est">estimé</span>}
-            {item.douteux && <span className="badge doubt">à vérifier</span>}
-          </span>
-          <span className="kcal">
-            {fmt(item.quantite, 2)} {UNIT_LABELS[item.unite]} · {fmt(item.grams)} g
-          </span>
+      <>
+        <div className={`item-row${isIa ? ' ia-estime' : ''}`}>
+          <div className="item-name">
+            <span>
+              {item.nomAffiche}
+              {isIa && (
+                <span className="badge ia" title="Valeurs nutritionnelles estimées par l'IA (aliment hors base) — ouvrez le détail pour les vérifier / ajuster">
+                  IA · à vérifier
+                </span>
+              )}
+              {item.customN && (
+                <span className="badge adj" title="Valeurs ajustées pour cette fois — l'aliment de la base n'est pas modifié">
+                  ajusté
+                </span>
+              )}
+              {item.estimation && <span className="badge est">estimé</span>}
+              {item.douteux && <span className="badge doubt">à vérifier</span>}
+            </span>
+            <span className="kcal">
+              {fmt(item.quantite, 2)} {UNIT_LABELS[item.unite]} · {fmt(item.grams)} g
+            </span>
+          </div>
+          <span className="mono" style={{ textAlign: 'right' }}>{fmt(item.nutrients.kcal)}</span>
+          <span className="small">kcal</span>
+          <button
+            className={`ghost small item-detail-toggle${open ? ' on' : ''}`}
+            aria-expanded={open}
+            title="Voir tout ce que cet aliment apporte / l'ajuster pour cette fois"
+            onClick={() => setOpen((o) => !o)}
+          >
+            {open ? '▲ Détail' : '⌄ Détail'}
+          </button>
         </div>
-        <span className="mono" style={{ textAlign: 'right' }}>{fmt(item.nutrients.kcal)}</span>
-        <span className="small">kcal</span>
-        <span />
-      </div>
+        {open && <ItemDetail entryId={entryId} item={item} />}
+      </>
     );
   }
 
@@ -125,7 +151,7 @@ function ItemRow({ entryId, item, editing }: { entryId: string; item: JournalIte
   ]);
 
   return (
-    <div className="item-row" style={{ gridTemplateColumns: '1fr 70px 120px auto' }}>
+    <div className="item-row" style={{ gridTemplateColumns: '1fr 108px 120px auto' }}>
       <select
         value={item.foodId ?? ''}
         onChange={(e) => updateItem(entryId, item.id, { foodId: e.target.value || null })}
@@ -137,12 +163,11 @@ function ItemRow({ entryId, item, editing }: { entryId: string; item: JournalIte
           </option>
         ))}
       </select>
-      <input
-        type="number"
+      <NumberField
         min={0}
-        step="any"
+        step={1}
         value={item.quantite}
-        onChange={(e) => updateItem(entryId, item.id, { quantite: parseFloat(e.target.value) || 0 })}
+        onChange={(v) => updateItem(entryId, item.id, { quantite: parseFloat(v.replace(',', '.')) || 0 })}
       />
       <select value={item.unite} onChange={(e) => updateItem(entryId, item.id, { unite: e.target.value as JournalItem['unite'] })}>
         {UNITS.map((u) => (
@@ -154,6 +179,131 @@ function ItemRow({ entryId, item, editing }: { entryId: string; item: JournalIte
       <button className="danger small" onClick={() => removeItem(entryId, item.id)}>
         ✕
       </button>
+    </div>
+  );
+}
+
+/** Nutriments détaillés d'un item, regroupés par famille (ordre d'affichage). */
+const DETAIL_GROUPS: { title: string; keys: NutrientKey[] }[] = [
+  { title: 'Macros', keys: ['kcal', 'proteines', 'glucides', 'lipides', 'fibres'] },
+  { title: 'Lipides & oméga', keys: ['agSatures', 'agMonoInsatures', 'agPolyInsatures', 'omega3', 'omega6', 'omega9'] },
+  { title: 'Minéraux', keys: ['fer', 'magnesium', 'potassium', 'calcium', 'zinc', 'sodium', 'selenium', 'iode'] },
+  { title: 'Vitamines', keys: ['vitA', 'vitC', 'vitD', 'vitE', 'vitK1', 'vitK2', 'vitB1', 'vitB2', 'vitB3', 'vitB5', 'vitB6', 'vitB9', 'vitB12'] },
+  { title: 'Autres', keys: ['creatine'] },
+];
+
+/**
+ * Détail nutritionnel complet d'un item (ce qu'il apporte réellement au bilan),
+ * dépliable depuis la ligne. Permet aussi d'ajuster les valeurs « pour cette
+ * fois » sans créer de nouvel aliment — utile pour vérifier/corriger les
+ * estimations IA ou une portion atypique, y compris dans l'historique.
+ */
+function ItemDetail({ entryId, item }: { entryId: string; item: JournalItem }) {
+  const profile = useStore((s) => s.profile);
+  const setItemNutrients = useStore((s) => s.setItemNutrients);
+  const targets = useMemo(() => computeTargets(profile), [profile]);
+  const byKey = useMemo(() => new Map(targets.map((t) => [t.key, t])), [targets]);
+
+  const [editing, setEditing] = useState(false);
+  const [draft, setDraft] = useState<Record<string, string>>({});
+
+  const startEdit = () => {
+    const d: Record<string, string> = {};
+    for (const g of DETAIL_GROUPS) {
+      for (const k of g.keys) {
+        const v = item.nutrients[k] ?? 0;
+        d[k] = v ? String(round(v, v < 10 ? 2 : 0)) : '';
+      }
+    }
+    setDraft(d);
+    setEditing(true);
+  };
+
+  const save = () => {
+    const contribution: Nutrients = { ...EMPTY_NUTRIENTS };
+    for (const g of DETAIL_GROUPS) {
+      for (const k of g.keys) {
+        const raw = draft[k];
+        contribution[k] = !raw ? 0 : parseFloat(raw.replace(',', '.')) || 0;
+      }
+    }
+    setItemNutrients(entryId, item.id, contribution);
+    setEditing(false);
+  };
+
+  return (
+    <div className="item-detail">
+      <div className="item-detail-head">
+        <span className="small">
+          Apports pour <strong>{fmt(item.grams)} g</strong> de {item.nomAffiche}
+        </span>
+        <div className="row" style={{ gap: 6 }}>
+          {editing ? (
+            <>
+              <button className="ghost small" onClick={() => setEditing(false)}>
+                Annuler
+              </button>
+              <button className="primary small" onClick={save}>
+                Enregistrer
+              </button>
+            </>
+          ) : (
+            <>
+              {item.customN && (
+                <button
+                  className="ghost small"
+                  title="Rétablir les valeurs de l'aliment de la base"
+                  onClick={() => setItemNutrients(entryId, item.id, null)}
+                >
+                  ↺ Rétablir
+                </button>
+              )}
+              <button className="ghost small" onClick={startEdit}>
+                ✎ Ajuster pour cette fois
+              </button>
+            </>
+          )}
+        </div>
+      </div>
+      {editing && (
+        <p className="small item-detail-hint">
+          Corrigez ce que cet aliment a réellement apporté cette fois (ex. un pain plus protéiné). Les valeurs
+          rescalent si vous changez la quantité, et l'aliment de la base n'est pas modifié.
+        </p>
+      )}
+      {DETAIL_GROUPS.map((g) => (
+        <div className="item-detail-group" key={g.title}>
+          <div className="idg-title">{g.title}</div>
+          <div className="idg-grid">
+            {g.keys.map((k) => {
+              const t = byKey.get(k);
+              if (!t) return null;
+              const value = item.nutrients[k] ?? 0;
+              const pct = t.optimal > 0 ? (value / t.optimal) * 100 : 0;
+              return (
+                <div className={`idg-cell${!editing && value <= 0 ? ' zero' : ''}`} key={k}>
+                  <span className="idg-label">{t.label}</span>
+                  {editing ? (
+                    <span className="idg-input">
+                      <input
+                        inputMode="decimal"
+                        value={draft[k] ?? ''}
+                        onChange={(e) => setDraft((p) => ({ ...p, [k]: e.target.value }))}
+                      />
+                      <small>{t.unit}</small>
+                    </span>
+                  ) : (
+                    <span className="idg-val mono">
+                      {fmt(value, value < 10 ? 1 : 0)} <small>{t.unit}</small>
+                      {t.goal !== 'limit' && value > 0 && <span className="idg-pct"> · {fmt(pct)}% obj.</span>}
+                    </span>
+                  )}
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      ))}
     </div>
   );
 }

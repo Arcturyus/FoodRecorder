@@ -103,6 +103,24 @@ export interface ExtractedItem {
   quantite: number;
   unite: Unit;
   estimation: boolean;
+  /**
+   * Fourchette plausible de la quantité (même unité que `quantite`), fournie par
+   * une IA forte quand elle ESTIME la quantité (photo surtout). Sert au calcul
+   * d'incertitude des totaux ; absente quand la quantité est donnée par l'utilisateur.
+   */
+  quantiteMin?: number;
+  quantiteMax?: number;
+  /**
+   * Valeurs nutritionnelles (pour 100 g) estimées par une IA forte (API Claude /
+   * pont Claude Code) quand l'aliment n'existe PAS dans la base : dans ce cas
+   * l'IA renseigne TOUS les nutriments. Absent pour les aliments de la base
+   * (résolus par matching) et pour les moteurs légers (règles / IA locale).
+   */
+  nutriments?: Nutrients;
+  /** Catégorie de l'aliment estimé par l'IA (accompagne `nutriments`). */
+  categorie?: FoodCategory;
+  /** Poids moyen en g d'une pièce, pour convertir « piece » d'un aliment estimé. */
+  grammesParPiece?: number;
 }
 
 export interface MatchResult {
@@ -117,6 +135,8 @@ export interface ComputedItem {
   match: MatchResult;
   grams: number;
   nutrients: Nutrients | null;
+  /** Nutriments issus d'une estimation IA (aliment hors base) plutôt que du matching. */
+  aiEstime?: boolean;
 }
 
 export const EMPTY_NUTRIENTS: Nutrients = {

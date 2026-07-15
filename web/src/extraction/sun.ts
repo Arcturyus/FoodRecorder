@@ -31,7 +31,7 @@ function systemPrompt(now = new Date()): string {
 La phrase provient d'une transcription vocale : erreurs et homophones possibles. Interprète l'intention.
 Aujourd'hui nous sommes le ${today} (${weekday}).
 Réponds UNIQUEMENT avec un objet JSON, sans texte autour :
-{"date": string, "heure": string, "dureeMin": number, "ciel": string, "peau": string, "phenotype": string, "creme": boolean}
+{"date": string, "heure": string, "dureeMin": number, "ciel": string, "peau": string, "phenotype": string, "creme": string}
 Règles :
 - N'inclus QUE les champs réellement mentionnés. N'invente rien.
 - "dureeMin" : durée d'exposition en minutes (« une demi-heure » = 30, « trois quarts d'heure » = 45, « une heure » = 60, « 20 minutes » = 20).
@@ -40,11 +40,11 @@ Règles :
 - "ciel" ∈ {"tres-ensoleille","ensoleille","voile","nuageux","couvert"} (« grand soleil/plein soleil » = tres-ensoleille, « voilé » = voile, « gris » = couvert).
 - "peau" ∈ {"visage-mains","visage-bras","bras-jambes","torse-nu"} (« t-shirt » = visage-bras, « short/jambes » = bras-jambes, « torse nu/maillot » = torse-nu, « habillé » = visage-mains).
 - "phenotype" ∈ {"blanc","bronze","mat","noir"} (« peau claire/blanche » = blanc, « bronzé » = bronze, « mate » = mat, « foncée/noire » = noir).
-- "creme" : true si crème solaire / protection / SPF mentionnée.
+- "creme" ∈ {"aucune","visage","complete"} : "visage" si la crème n'est mise QUE sur le visage (« crème sur le visage », « SPF sur la figure »), "complete" si crème solaire / protection / SPF sur le corps ou sans précision, sinon ne rien mettre.
 
 Exemple :
 Entrée : "ce midi je suis resté une demi-heure en plein soleil en short avec de la crème solaire"
-Sortie : {"heure":"13:00","dureeMin":30,"ciel":"tres-ensoleille","peau":"bras-jambes","creme":true}`;
+Sortie : {"heure":"13:00","dureeMin":30,"ciel":"tres-ensoleille","peau":"bras-jambes","creme":"complete"}`;
 }
 
 const sunSchema = z.object({
@@ -54,7 +54,11 @@ const sunSchema = z.object({
   ciel: z.enum(['tres-ensoleille', 'ensoleille', 'voile', 'nuageux', 'couvert']).optional(),
   peau: z.enum(['visage-mains', 'visage-bras', 'bras-jambes', 'torse-nu']).optional(),
   phenotype: z.enum(['blanc', 'bronze', 'mat', 'noir']).optional(),
-  creme: z.boolean().optional(),
+  // Tolère l'ancien format booléen (true = crème complète) autant que le nouvel enum.
+  creme: z
+    .union([z.enum(['aucune', 'visage', 'complete']), z.boolean()])
+    .transform((c) => (c === true ? 'complete' : c === false ? 'aucune' : c))
+    .optional(),
 });
 
 const sunJsonSchema = {
@@ -66,7 +70,7 @@ const sunJsonSchema = {
     ciel: { type: 'string' },
     peau: { type: 'string' },
     phenotype: { type: 'string' },
-    creme: { type: 'boolean' },
+    creme: { type: 'string' },
   },
   additionalProperties: false,
 } as const;
@@ -170,7 +174,10 @@ export function parseSunRules(transcript: string, now = new Date()): SunPatch {
   else if (/peau mate|teint mat/.test(t)) patch.phenotype = 'mat';
   else if (/peau fonc[ée]e|peau noire|teint fonc/.test(t)) patch.phenotype = 'noir';
 
-  if (/cr[èe]me solaire|cr[èe]me|protection solaire|[ée]cran total|spf|indice \d+/.test(t)) patch.creme = true;
+  if (/cr[èe]me solaire|cr[èe]me|protection solaire|[ée]cran total|spf|indice \d+/.test(t)) {
+    // « crème sur le visage / la figure » → visage seulement ; sinon crème complète.
+    patch.creme = /(?:sur|au|le|du)?\s*(?:visage|figure|front|joues?)/.test(t) ? 'visage' : 'complete';
+  }
 
   return patch;
 }

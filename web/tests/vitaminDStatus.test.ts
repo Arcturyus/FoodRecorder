@@ -61,7 +61,12 @@ describe('parseur de dictée soleil', () => {
     expect(p.heure).toBe('13:00');
     expect(p.ciel).toBe('tres-ensoleille');
     expect(p.peau).toBe('bras-jambes');
-    expect(p.creme).toBe(true);
+    expect(p.creme).toBe('complete');
+  });
+
+  it('« crème sur le visage » → crème visage seulement', () => {
+    const p = parseSunRules('20 minutes au soleil en t-shirt avec de la crème solaire sur le visage');
+    expect(p.creme).toBe('visage');
   });
 
   it('comprend « 20 minutes », le t-shirt et le phototype', () => {

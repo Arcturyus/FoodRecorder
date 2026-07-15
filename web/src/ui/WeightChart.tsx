@@ -12,6 +12,7 @@ import {
 } from './PeriodSelector';
 import type { PeriodState } from './PeriodSelector';
 import { fmt } from './format';
+import { NumberField } from './NumberField';
 
 const C = {
   accent: '#5b8cff',
@@ -128,7 +129,7 @@ const MODE_CHIPS: { key: ChartMode; label: string; title?: string }[] = [
  *    ligne d'objectif + date d'atteinte estimée, pesées non à jeun / habillées
  *    en points creux (moins comparables).
  */
-export function WeightChart() {
+export function WeightChart({ onEditEntry }: { onEditEntry?: (id: string) => void } = {}) {
   const entries = useStore((s) => s.weightEntries);
   const journal = useStore((s) => s.entries);
   const weightConfig = useStore((s) => s.weightConfig);
@@ -139,6 +140,10 @@ export function WeightChart() {
   const [mode, setMode] = useState<ChartMode>('poids');
   const [showMa, setShowMa] = useState(true);
   const [showKcal, setShowKcal] = useState(false);
+  /** Ne garder que les pesées comparables (à jeun ET nu). */
+  const [comparableOnly, setComparableOnly] = useState(false);
+  /** Filtre horaire : pesées avant 11h et/ou après 14h (aucun coché = tout). */
+  const [heureFilter, setHeureFilter] = useState({ before11: false, after14: false });
   /** Masse musculaire : kg par défaut (% × poids), bascule vers le % mesuré. */
   const [muscleUnit, setMuscleUnit] = useState<'kg' | '%'>('kg');
   /** Métabolismes : courbes affichées + basal ou × multiplicateur d'activité. */
@@ -157,8 +162,14 @@ export function WeightChart() {
     () =>
       entries
         .filter((e) => e.date >= range.start && e.date <= range.end)
+        .filter((e) => !comparableOnly || isComparable(e))
+        .filter((e) => {
+          const { before11, after14 } = heureFilter;
+          if (!before11 && !after14) return true;
+          return (before11 && e.heure < '11:00') || (after14 && e.heure >= '14:00');
+        })
         .sort((a, b) => entryMs(a) - entryMs(b)),
-    [entries, range],
+    [entries, range, comparableOnly, heureFilter],
   );
 
   /** Valeurs calculées par pesée (IMC, squelettique, métabolismes). */
@@ -361,6 +372,33 @@ export function WeightChart() {
         ))}
       </div>
 
+      <div className="row" style={{ gap: 14, flexWrap: 'wrap', alignItems: 'center', marginBottom: 6 }}>
+        <label className="small" style={{ display: 'flex', alignItems: 'center', gap: 6, cursor: 'pointer' }} title="Exclut les pesées non à jeun ou habillées, au lieu de simplement les griser">
+          <input type="checkbox" checked={comparableOnly} onChange={(e) => setComparableOnly(e.target.checked)} style={{ width: 'auto' }} />
+          À jeun &amp; nu uniquement
+        </label>
+        <span className="row" style={{ gap: 10 }} title="Filtrer par heure de pesée (aucune case cochée = toutes les heures)">
+          <label className="small" style={{ display: 'flex', alignItems: 'center', gap: 6, cursor: 'pointer' }}>
+            <input
+              type="checkbox"
+              checked={heureFilter.before11}
+              onChange={(e) => setHeureFilter((f) => ({ ...f, before11: e.target.checked }))}
+              style={{ width: 'auto' }}
+            />
+            Avant 11h
+          </label>
+          <label className="small" style={{ display: 'flex', alignItems: 'center', gap: 6, cursor: 'pointer' }}>
+            <input
+              type="checkbox"
+              checked={heureFilter.after14}
+              onChange={(e) => setHeureFilter((f) => ({ ...f, after14: e.target.checked }))}
+              style={{ width: 'auto' }}
+            />
+            Après 14h
+          </label>
+        </span>
+      </div>
+
       {!isComposite && (
         <div className="row" style={{ gap: 14, flexWrap: 'wrap', alignItems: 'center', marginBottom: 6 }}>
           {mode === 'masseMusculaire' && (
@@ -385,17 +423,15 @@ export function WeightChart() {
               </label>
               <label className="small" style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
                 Objectif (kg)
-                <input
-                  type="number"
-                  step="any"
-                  inputMode="decimal"
+                <NumberField
+                  step={0.1}
                   placeholder="ex. 68"
                   value={objectif ?? ''}
-                  onChange={(e) => {
-                    const v = parseFloat(e.target.value.replace(',', '.'));
+                  onChange={(raw) => {
+                    const v = parseFloat(raw.replace(',', '.'));
                     setWeightConfig({ objectifPoids: Number.isFinite(v) && v > 0 ? v : undefined });
                   }}
-                  style={{ width: 80 }}
+                  style={{ width: 118 }}
                 />
               </label>
             </>
@@ -455,7 +491,17 @@ export function WeightChart() {
         </div>
       )}
 
-      <MultiLineChart series={series} unit={unit} target={targetLine} />
+      <MultiLineChart
+        series={series}
+        unit={unit}
+        target={targetLine}
+        onZoom={(r) => setPeriod({ preset: 'custom', custom: r })}
+        onPointClick={onEditEntry}
+      />
+
+      <div className="hint" style={{ marginTop: 4 }}>
+        Glisser sur le graphe pour zoomer sur une plage · cliquer un point pour éditer la pesée.
+      </div>
 
       <div className="row small" style={{ gap: 14, marginTop: 8, flexWrap: 'wrap', color: C.muted }}>
         {series.map((s) => (
@@ -498,10 +544,16 @@ function MultiLineChart({
   series,
   unit,
   target,
+  onZoom,
+  onPointClick,
 }: {
   series: Series[];
   unit: string;
   target: { value: number; label: string } | null;
+  /** Glisser-déposer horizontal sur le graphe → zoome sur la plage de dates sélectionnée. */
+  onZoom?: (range: { start: string; end: string }) => void;
+  /** Clic sur un point relié à une pesée → ouvre son édition dans l'historique. */
+  onPointClick?: (entryId: string) => void;
 }) {
   const W = 680;
   const H = 300;
@@ -509,6 +561,8 @@ function MultiLineChart({
   const svgRef = useRef<SVGSVGElement>(null);
   const [hover, setHover] = useState<{ si: number; pi: number } | null>(null);
   const [ptr, setPtr] = useState({ px: 0, py: 0 });
+  /** Glisser en cours : position (unités SVG) du point de départ et courant. */
+  const [drag, setDrag] = useState<{ x0: number; x1: number } | null>(null);
 
   const leftSeries = series.filter((s) => !s.rightAxis && s.points.length > 0);
   const rightSeries = series.filter((s) => s.rightAxis && s.points.length > 0);
@@ -541,14 +595,11 @@ function MultiLineChart({
   const nX = Math.max(...leftSeries.map((s) => s.points.length));
   const xTicks = xs.ticks(Math.min(6, Math.max(2, nX)));
 
-  function onMove(ev: React.MouseEvent) {
-    if (!svgRef.current) return;
-    const rect = svgRef.current.getBoundingClientRect();
-    const x = ((ev.clientX - rect.left) / rect.width) * W;
-    const y = ((ev.clientY - rect.top) / rect.height) * H;
-    // point le plus proche du curseur, toutes séries à points confondues
+  /** Point le plus proche des coordonnées SVG données, toutes séries à points confondues. */
+  function nearestPoint(x: number, y: number): { si: number; pi: number; dxPx: number } | null {
     let best: { si: number; pi: number } | null = null;
     let bd = Infinity;
+    let bestDx = Infinity;
     series.forEach((s, si) => {
       if (!s.drawPoints && !s.rightAxis) return; // séries lissées : pas de survol dédié
       const yScale = yScaleFor(s);
@@ -559,11 +610,57 @@ function MultiLineChart({
         if (dist < bd) {
           bd = dist;
           best = { si, pi };
+          bestDx = Math.abs(dx);
         }
       });
     });
-    setHover(best);
-    setPtr({ px: ((ev.clientX - rect.left) / rect.width) * 100, py: ((ev.clientY - rect.top) / rect.height) * 100 });
+    return best ? { si: (best as { si: number; pi: number }).si, pi: (best as { si: number; pi: number }).pi, dxPx: bestDx } : null;
+  }
+
+  function svgCoords(ev: React.MouseEvent) {
+    const rect = svgRef.current!.getBoundingClientRect();
+    return {
+      x: ((ev.clientX - rect.left) / rect.width) * W,
+      y: ((ev.clientY - rect.top) / rect.height) * H,
+      px: ((ev.clientX - rect.left) / rect.width) * 100,
+      py: ((ev.clientY - rect.top) / rect.height) * 100,
+    };
+  }
+
+  function onMove(ev: React.MouseEvent) {
+    if (!svgRef.current) return;
+    const { x, y, px, py } = svgCoords(ev);
+    if (drag) {
+      setDrag((d) => (d ? { ...d, x1: x } : d));
+      return;
+    }
+    setHover(nearestPoint(x, y));
+    setPtr({ px, py });
+  }
+
+  function onDown(ev: React.MouseEvent) {
+    if (!svgRef.current) return;
+    const { x } = svgCoords(ev);
+    setHover(null);
+    setDrag({ x0: x, x1: x });
+  }
+
+  function onUp(ev: React.MouseEvent) {
+    if (!svgRef.current || !drag) return;
+    const { x } = svgCoords(ev);
+    const moved = Math.abs(x - drag.x0);
+    if (moved < 6) {
+      // Glissement négligeable : traité comme un clic sur le point le plus proche.
+      const nearest = nearestPoint(x, ((ev.clientY - svgRef.current.getBoundingClientRect().top) / svgRef.current.getBoundingClientRect().height) * H);
+      const p = nearest && nearest.dxPx < 14 ? series[nearest.si]?.points[nearest.pi] : null;
+      if (p?.e && onPointClick) onPointClick(p.e.id);
+    } else if (onZoom) {
+      const [xa, xb] = [Math.min(drag.x0, x), Math.max(drag.x0, x)];
+      const ta = xs.invert(xa);
+      const tb = xs.invert(xb);
+      onZoom({ start: todayStr(new Date(ta)), end: todayStr(new Date(tb)) });
+    }
+    setDrag(null);
   }
 
   const hovered = hover ? series[hover.si]?.points[hover.pi] : null;
@@ -574,9 +671,14 @@ function MultiLineChart({
       <svg
         ref={svgRef}
         viewBox={`0 0 ${W} ${H}`}
-        style={{ width: '100%', display: 'block' }}
+        style={{ width: '100%', display: 'block', cursor: 'crosshair' }}
         onMouseMove={onMove}
-        onMouseLeave={() => setHover(null)}
+        onMouseDown={onDown}
+        onMouseUp={onUp}
+        onMouseLeave={() => {
+          setHover(null);
+          setDrag(null);
+        }}
       >
         {yTicks.map((tk) => (
           <g key={tk}>
@@ -669,7 +771,7 @@ function MultiLineChart({
           </text>
         ))}
 
-        {hovered && (
+        {hovered && !drag && (
           <line
             x1={xs(hovered.t)}
             x2={xs(hovered.t)}
@@ -678,6 +780,20 @@ function MultiLineChart({
             stroke={C.muted}
             strokeWidth={1}
             strokeDasharray="3 3"
+          />
+        )}
+
+        {drag && Math.abs(drag.x1 - drag.x0) >= 6 && (
+          <rect
+            x={Math.min(drag.x0, drag.x1)}
+            y={m.top}
+            width={Math.abs(drag.x1 - drag.x0)}
+            height={H - m.top - m.bottom}
+            fill={C.accent}
+            opacity={0.15}
+            stroke={C.accent}
+            strokeWidth={1}
+            strokeDasharray="4 3"
           />
         )}
       </svg>

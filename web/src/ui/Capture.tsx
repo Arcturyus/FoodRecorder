@@ -7,6 +7,7 @@ import { extractWithLlm } from '../extraction/llm';
 import { extractWithAnthropic, extractImageWithAnthropic } from '../extraction/anthropic';
 import { extractWithClaudeCode, extractImageWithClaudeCode } from '../extraction/claudeCode';
 import { parseTranscript } from '../extraction/ruleParser';
+import { isSyncConfigured, pushTranscript } from '../sync/supabase';
 import { normalizeForMatch, trigramSimilarity } from '../nutrition/normalize';
 import type { ExtractedItem } from '../nutrition/types';
 import type { FavoriteMeal } from '../store/store';
@@ -64,8 +65,10 @@ function fileToBase64(file: File): Promise<{ data: string; mediaType: string }> 
 /**
  * Bloc de saisie : dicter (Whisper) ou taper une phrase, puis extraction
  * (LLM si activé, sinon parseur à règles) et enregistrement AUTOMATIQUE.
+ * `date` : jour ciblé (défaut aujourd'hui) — permet de dicter/photographier un
+ * repas oublié depuis l'historique.
  */
-export function Capture() {
+export function Capture({ date, title }: { date?: string; title?: string } = {}) {
   const [text, setText] = useState('');
   const [status, setStatus] = useState('');
   const [busy, setBusy] = useState(false);
@@ -82,6 +85,7 @@ export function Capture() {
   const cloudModel = useStore((s) => s.cloudModel);
   const sttEngine = useStore((s) => s.sttEngine);
   const sttModel = useStore((s) => s.sttModel);
+  const deviceId = useStore((s) => s.deviceId);
 
   const reviewHint = 'Vérifiez / corrigez le texte, puis cliquez « Ajouter ».';
 
@@ -168,7 +172,7 @@ export function Capture() {
     // Repas favori dicté par son nom → ajout direct, sans passer par l'extraction.
     const fav = matchFavorite(clean, favoriteMeals);
     if (fav) {
-      applyFavoriteMeal(fav.id);
+      applyFavoriteMeal(fav.id, date);
       setText('');
       setStatus(`⭐ Repas favori reconnu : « ${fav.nom} » ajouté (${fav.items.length} aliment(s)).`);
       return;
@@ -193,6 +197,20 @@ export function Capture() {
         items = res.items;
         source = res.source;
       } catch (e) {
+        // Pont indisponible ici (typiquement sur tel) : mise en file d'attente
+        // pour traitement différé par l'ordinateur, plutôt que de dégrader
+        // silencieusement vers le parseur à règles.
+        if (isSyncConfigured()) {
+          try {
+            await pushTranscript(deviceId, clean, date);
+            setText('');
+            setStatus('Pont Claude Code indisponible ici : mis en file d’attente, sera traité dès que l’ordinateur sera disponible.');
+            return;
+          } catch (syncErr) {
+            setStatus(`Échec de la mise en file d'attente : ${(syncErr as Error).message}`);
+            return;
+          }
+        }
         setStatus(`${(e as Error).message}. Repli sur le parseur.`);
         items = parseTranscript(clean);
         source = 'rules';
@@ -210,7 +228,7 @@ export function Capture() {
       setStatus('Aucun aliment détecté. Reformulez ou ajoutez à la main.');
       return;
     }
-    addEntry(clean, items, source);
+    addEntry(clean, items, source, date);
     setText('');
     const fallbackNote = source === 'rules' && extractionMode !== 'rules' ? ' [parseur, IA indisponible]' : '';
     setStatus(`✓ Compris (${items.length})${fallbackNote} : ${summarize(items)}`);
@@ -241,7 +259,7 @@ export function Capture() {
         setStatus('Aucun aliment détecté sur la photo. Reprenez la photo ou ajoutez à la main.');
         return;
       }
-      addEntry('📷 Photo', res.items, res.source);
+      addEntry('📷 Photo', res.items, res.source, date);
       setStatus(`✓ Compris (photo, ${res.items.length}) : ${summarize(res.items)}`);
     } catch (err) {
       setStatus(`Erreur photo : ${(err as Error).message}`);
@@ -252,7 +270,7 @@ export function Capture() {
 
   return (
     <div className="panel">
-      <h2>Qu'avez-vous mangé ?</h2>
+      <h2>{title ?? "Qu'avez-vous mangé ?"}</h2>
       <div className="mic-row">
         <button
           className={`record-btn ${recording ? 'rec' : 'primary'}`}

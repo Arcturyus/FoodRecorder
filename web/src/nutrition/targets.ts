@@ -27,9 +27,31 @@ export interface Profile {
   poids: number; // kg
   activite: Activity;
   objectif: Objective;
+  /**
+   * Intensité du déficit calorique, en % sous le maintien (objectif « perte »).
+   * Ajustable : chacun peut se connaître (données d'un autre suivi, ressenti…).
+   * Absent ⇒ valeur par défaut `DEFICIT_DEFAULT`.
+   */
+  deficitPct?: number;
+  /** Intensité du surplus calorique, en % au-dessus du maintien (objectif « muscle »). */
+  surplusPct?: number;
 }
 
-export const DEFAULT_PROFILE: Profile = { sexe: 'homme', poids: 70, activite: 'sportif', objectif: 'maintien' };
+export const DEFAULT_PROFILE: Profile = {
+  sexe: 'homme',
+  poids: 70,
+  activite: 'sportif',
+  objectif: 'maintien',
+  deficitPct: 20,
+  surplusPct: 10,
+};
+
+/** Réglages par défaut et bornes recommandées du déficit / surplus (en %). */
+export const DEFICIT_DEFAULT = 20;
+export const SURPLUS_DEFAULT = 10;
+/** min/max autorisés dans l'UI ; `safeMax` = seuil au-delà duquel on alerte. */
+export const DEFICIT_BOUNDS = { min: 5, max: 30, safeMax: 25 } as const;
+export const SURPLUS_BOUNDS = { min: 3, max: 25, safeMax: 20 } as const;
 
 export const ACTIVITY_LABELS: Record<Activity, string> = {
   sedentaire: 'Sédentaire',
@@ -44,10 +66,59 @@ export const OBJECTIVE_LABELS: Record<Objective, string> = {
   muscle: 'Prise de muscle',
 };
 
-/** Facteur appliqué aux calories de maintien selon l'objectif (déficit / surplus). */
-const OBJECTIVE_KCAL: Record<Objective, number> = { maintien: 1, perte: 0.8, muscle: 1.1 };
 /** Bonus de protéines (g/kg) : plus haut en sèche (préserver le muscle) et en prise de masse. */
 const OBJECTIVE_PROT_BONUS: Record<Objective, number> = { maintien: 0, perte: 0.4, muscle: 0.3 };
+
+/** % effectif de déficit/surplus retenu pour un profil (valeur bornée). */
+export function objectivePct(profile: Profile): number {
+  if (profile.objectif === 'perte') {
+    const v = profile.deficitPct ?? DEFICIT_DEFAULT;
+    return Math.min(DEFICIT_BOUNDS.max, Math.max(DEFICIT_BOUNDS.min, v));
+  }
+  if (profile.objectif === 'muscle') {
+    const v = profile.surplusPct ?? SURPLUS_DEFAULT;
+    return Math.min(SURPLUS_BOUNDS.max, Math.max(SURPLUS_BOUNDS.min, v));
+  }
+  return 0;
+}
+
+/** Facteur calorique appliqué au maintien selon l'objectif et son intensité réglée. */
+export function objectiveKcalFactor(profile: Profile): number {
+  const pct = objectivePct(profile);
+  if (profile.objectif === 'perte') return 1 - pct / 100;
+  if (profile.objectif === 'muscle') return 1 + pct / 100;
+  return 1;
+}
+
+export interface ObjectiveAdvice {
+  /** Intensité perçue, du plus doux au plus marqué. */
+  level: 'doux' | 'modéré' | 'soutenu' | 'agressif';
+  text: string;
+  /** Vrai si l'intensité dépasse la zone recommandée (à afficher en alerte). */
+  warn: boolean;
+}
+
+/**
+ * Conseil « garde-fou » selon l'objectif et l'intensité choisie : garde l'utilisateur
+ * dans une fourchette raisonnable (ni trop mou, ni trop agressif) sans l'empêcher
+ * d'ajuster s'il se connaît.
+ */
+export function objectiveAdvice(profile: Profile): ObjectiveAdvice | null {
+  const pct = objectivePct(profile);
+  if (profile.objectif === 'perte') {
+    if (pct < 10) return { level: 'doux', warn: false, text: `Déficit léger (~${pct} %) : perte lente et confortable, facile à tenir dans la durée.` };
+    if (pct <= 20) return { level: 'modéré', warn: false, text: `Déficit modéré (~${pct} %) : bon compromis perte de gras / préservation du muscle et de l'énergie.` };
+    if (pct <= DEFICIT_BOUNDS.safeMax) return { level: 'soutenu', warn: false, text: `Déficit soutenu (~${pct} %) : perte rapide, veillez à garder des protéines élevées et de la force à l'entraînement.` };
+    return { level: 'agressif', warn: true, text: `Déficit agressif (~${pct} %) : risque de fonte musculaire, de fatigue et de fringales. À réserver au court terme, avec beaucoup de protéines.` };
+  }
+  if (profile.objectif === 'muscle') {
+    if (pct < 8) return { level: 'doux', warn: false, text: `Surplus léger (~${pct} %) : prise de masse « propre », très peu de gras, idéale pour un bon niveau d'entraînement.` };
+    if (pct <= 15) return { level: 'modéré', warn: false, text: `Surplus modéré (~${pct} %) : bon rythme de prise de muscle avec une prise de gras limitée.` };
+    if (pct <= SURPLUS_BOUNDS.safeMax) return { level: 'soutenu', warn: false, text: `Surplus soutenu (~${pct} %) : prise de masse rapide, mais une part ira au gras — surveillez le poids.` };
+    return { level: 'agressif', warn: true, text: `Surplus agressif (~${pct} %) : au-delà de ce que le muscle peut construire, l'excédent part surtout en gras. Rarement utile.` };
+  }
+  return null;
+}
 
 export interface Target {
   key: NutrientKey;
@@ -75,7 +146,8 @@ export function computeTargets(profile: Profile): Target[] {
   const sexFactor = sexe === 'homme' ? 1 : 0.87; // besoin énergétique moyen plus faible
 
   // Objectif : déficit (perte) ou surplus (muscle) sur les calories, protéines relevées.
-  const kcalOptimal = Math.round((poids * KCAL_PER_KG[activite] * sexFactor * OBJECTIVE_KCAL[objectif]) / 10) * 10;
+  // L'intensité du déficit/surplus est réglable (objectiveKcalFactor), avec garde-fous.
+  const kcalOptimal = Math.round((poids * KCAL_PER_KG[activite] * sexFactor * objectiveKcalFactor(profile)) / 10) * 10;
   const protOptimal = Math.round(poids * (PROT_PER_KG[activite] + OBJECTIVE_PROT_BONUS[objectif]));
 
   return RDA.map((r): Target => {

@@ -5,6 +5,7 @@ import { WEIGHT_METRICS } from '../weight/types';
 import type { WeightEntry, WeightMetricKey } from '../weight/types';
 import type { WeightPatch } from '../extraction/weight';
 import { fmt } from './format';
+import { NumberField } from './NumberField';
 
 /** Champs numériques saisissables (poids requis en tête). */
 const NUM_FIELDS = WEIGHT_METRICS; // même ordre que le CSV
@@ -151,14 +152,7 @@ export function WeightForm({ prefill }: { prefill?: { patch: WeightPatch; nonce:
             {m.label}
             {m.unit ? ` (${m.unit})` : ''}
             {m.key === 'poids' ? ' *' : ''}
-            <input
-              type="number"
-              min={0}
-              step="any"
-              inputMode="decimal"
-              value={draft[m.key]}
-              onChange={(e) => set(m.key, e.target.value)}
-            />
+            <NumberField min={0} step={0.1} value={draft[m.key]} onChange={(v) => set(m.key, v)} />
           </label>
         ))}
       </div>
@@ -201,31 +195,26 @@ export function WeightForm({ prefill }: { prefill?: { patch: WeightPatch; nonce:
         <div className="row wrap-form" style={{ marginTop: 10 }}>
           <label className="field">
             Taille (m)
-            <input
-              type="number"
-              step="any"
-              inputMode="decimal"
+            <NumberField
+              step={0.01}
               value={weightConfig.taille}
-              onChange={(e) => setWeightConfig({ taille: toNum(e.target.value) || weightConfig.taille })}
+              onChange={(v) => setWeightConfig({ taille: toNum(v) || weightConfig.taille })}
             />
           </label>
           <label className="field">
             Âge (ans)
-            <input
-              type="number"
-              step="1"
+            <NumberField
+              step={1}
               value={weightConfig.age}
-              onChange={(e) => setWeightConfig({ age: toNum(e.target.value) ?? weightConfig.age })}
+              onChange={(v) => setWeightConfig({ age: toNum(v) ?? weightConfig.age })}
             />
           </label>
           <label className="field">
             Multiplicateur d'activité
-            <input
-              type="number"
-              step="any"
-              inputMode="decimal"
+            <NumberField
+              step={0.05}
               value={weightConfig.activityMultiplier}
-              onChange={(e) => setWeightConfig({ activityMultiplier: toNum(e.target.value) || weightConfig.activityMultiplier })}
+              onChange={(v) => setWeightConfig({ activityMultiplier: toNum(v) || weightConfig.activityMultiplier })}
             />
           </label>
           <span className="small" style={{ flex: '1 1 100%' }}>
