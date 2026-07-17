@@ -813,3 +813,45 @@ button.chip-active:hover { filter: brightness(1.08); }
   .series-chip:hover { border-color: var(--border); color: var(--muted); }
   .sun-term:hover { border-color: var(--border); background: var(--panel); }
 }
+
+/* ---- Recommandations (Conseils du jour + classement Stats) ---- */
+.advice-list { display: flex; flex-direction: column; gap: 10px; }
+.advice-item { padding: 10px 12px; border: 1px solid var(--border); border-radius: 10px; background: var(--panel-2); }
+.advice-chip {
+  display: inline-flex; align-items: baseline; gap: 2px;
+  padding: 2px 9px; border-radius: 999px; font-size: 12.5px;
+  border: 1px solid var(--border); background: var(--panel);
+}
+.advice-known { margin-left: 3px; color: var(--accent-2); font-weight: 700; }
+
+.reco-h3 { margin: 14px 0 6px; font-size: 15px; }
+.reco-list { display: flex; flex-direction: column; gap: 8px; }
+.reco-row {
+  padding: 8px 10px; border: 1px solid var(--border); border-radius: 10px;
+  background: var(--panel-2); cursor: pointer;
+}
+.reco-row.open { border-color: var(--accent); }
+.reco-line { display: flex; align-items: center; gap: 8px; min-width: 0; }
+.reco-rank { flex: none; width: 22px; text-align: right; color: var(--muted); font-size: 12px; }
+.reco-nom { font-weight: 600; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.reco-known { margin-left: 5px; color: var(--accent-2); font-weight: 700; }
+.reco-badges { display: flex; gap: 6px; margin-left: auto; flex: none; }
+.reco-badge { font-size: 11.5px; font-weight: 700; }
+.reco-pts { flex: none; min-width: 34px; text-align: right; font-weight: 700; font-size: 13px; }
+.reco-detail { margin-top: 8px; padding-top: 8px; border-top: 1px solid var(--border); cursor: auto; }
+.reco-gap {
+  padding: 2px 9px; border-radius: 999px; font-size: 12px; font-weight: 600;
+  background: rgba(245, 166, 35, 0.14); color: var(--warn);
+}
+.reco-gap.bad { background: rgba(239, 93, 93, 0.14); color: var(--danger); }
+.reco-settings summary { cursor: pointer; color: var(--muted); }
+.reco-sliders { display: flex; flex-direction: column; gap: 14px; margin-top: 10px; }
+.reco-sliders label { display: flex; flex-direction: column; gap: 4px; }
+.reco-sliders input[type="range"] { width: 100%; max-width: 380px; }
+
+/* Mobile : les badges passent sous le nom pour ne pas l'écraser. */
+@media (max-width: 520px) {
+  .reco-line { flex-wrap: wrap; }
+  .reco-nom { flex: 1 1 auto; }
+  .reco-badges { margin-left: 30px; order: 3; flex-basis: 100%; }
+}

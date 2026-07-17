@@ -1,5 +1,5 @@
 import { describe, expect, it, beforeEach } from 'vitest';
-import { useStore, todayStr, recentFoodCounts, backfillNutrients } from '../src/store/store';
+import { useStore, todayStr, recentFoodCounts, resolveItemNutrients } from '../src/store/store';
 import { buildBackup, importBackup, journalToCsv, weightsToCsv } from '../src/store/backup';
 import { FOOD_BY_ID } from '../src/nutrition/foods';
 
@@ -175,31 +175,31 @@ describe('export / import (sauvegarde)', () => {
   });
 });
 
-describe('backfill rétroactif des nutriments ajoutés après coup (collagène)', () => {
+describe('recalcul rétroactif des nutriments depuis la base (foodId résolu)', () => {
   const steak = FOOD_BY_ID.get('steak-hache-15')!;
 
-  it('recalcule le collagène d’un ancien snapshot (sans la clé) depuis la base', () => {
-    // Snapshot d'AVANT l'ajout du collagène : la clé n'existe pas.
+  it('recalcule TOUS les nutriments d’un ancien snapshot depuis la base actuelle', () => {
+    // Snapshot d'AVANT un nutriment ajouté depuis (collagène, AG trans…) : la clé n'existe pas encore.
     const oldItem = { grams: 200, customN: undefined, nutrients: { kcal: 460, proteines: 48 } };
-    const n = backfillNutrients(oldItem, steak);
+    const n = resolveItemNutrients(oldItem, steak);
     expect(n.collagene).toBeCloseTo(3.2, 5); // 1,6 g/100 g × 200 g
-    // Les autres valeurs restent le snapshot d'origine, pas un recalcul.
-    expect(n.kcal).toBe(460);
+    expect(n.kcal).toBeCloseTo(steak.n.kcal * 2, 5); // recalculé depuis la base, pas le snapshot figé
   });
 
-  it('ne touche pas un item ajusté à la main (customN) ni un item sans aliment', () => {
+  it('ne touche pas un item ajusté à la main (customN) ni un item sans aliment résolu', () => {
     const base = { grams: 200, nutrients: { kcal: 460 } };
-    expect(backfillNutrients({ ...base, customN: { ...steak.n } }, steak).collagene).toBe(0);
-    expect(backfillNutrients({ ...base, customN: undefined }, null).collagene).toBe(0);
+    expect(resolveItemNutrients({ ...base, customN: { ...steak.n } }, steak).collagene).toBe(0);
+    expect(resolveItemNutrients({ ...base, customN: undefined }, null).collagene).toBe(0);
   });
 
-  it('n’écrase pas une valeur déjà non nulle', () => {
+  it('écrase une valeur de snapshot devenue obsolète (correction de la base propagée)', () => {
     const item = { grams: 200, customN: undefined, nutrients: { collagene: 9 } };
-    expect(backfillNutrients(item, steak).collagene).toBe(9);
+    // 9 était l'ancienne valeur figée ; la base actuelle (1,6 g/100 g × 200 g = 3,2) prime désormais.
+    expect(resolveItemNutrients(item, steak).collagene).toBeCloseTo(3.2, 5);
   });
 
   it('reste à 0 pour un aliment sans collagène (banane)', () => {
     const item = { grams: 120, customN: undefined, nutrients: { kcal: 108 } };
-    expect(backfillNutrients(item, banane).collagene).toBe(0);
+    expect(resolveItemNutrients(item, banane).collagene).toBe(0);
   });
 });

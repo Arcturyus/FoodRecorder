@@ -11,6 +11,8 @@ import { EMPTY_NUTRIENTS } from '../nutrition/types';
 import { sunVitDForDate } from '../sun/vitaminD';
 import { vitaminDFlux, VITD_LOW, VITD_OK } from '../sun/vitaminDStatus';
 import { HoverCard } from './HoverCard';
+import { Recommendations } from './Recommend';
+import { Omega3Breakdown } from './Totals';
 import {
   PeriodSelector,
   resolveRange,
@@ -361,13 +363,7 @@ export function Stats() {
         <CoverageList averages={averages} targets={targets} selected={selected} onToggle={toggle} />
       </div>
 
-      <div className="panel">
-        <h2>Couverture micronutritionnelle (moyenne/jour)</h2>
-        <p className="small" style={{ marginTop: -6 }}>
-          Rayon = % de la cible optimale (anneau plein = 100 %). Survolez un sommet pour le détail.
-        </p>
-        <RadarChart totals={averages} targets={targets} />
-      </div>
+      <Recommendations averages={averages} targets={targets} hasData={recorded.length > 0} />
 
       <div className="panel">
         <h2>Répartition des calories (macros, moyenne/jour)</h2>
@@ -658,7 +654,7 @@ function MultiTrend({
 /** Groupes nommés du sélecteur : rapports en tête, puis nutriments par famille. */
 const NAMED_GROUPS: { title: string; keys: NutrientKey[] }[] = [
   { title: 'Macros', keys: ['kcal', 'proteines', 'glucides', 'lipides', 'fibres'] },
-  { title: 'Lipides & oméga', keys: ['agSatures', 'agMonoInsatures', 'agPolyInsatures', 'omega3', 'omega6', 'omega9'] },
+  { title: 'Lipides & oméga', keys: ['agSatures', 'agTrans', 'agMonoInsatures', 'agPolyInsatures', 'omega3', 'omega6', 'omega9'] },
   { title: 'Minéraux', keys: ['fer', 'magnesium', 'potassium', 'calcium', 'zinc', 'sodium', 'selenium', 'iode'] },
   { title: 'Vitamines', keys: ['vitA', 'vitC', 'vitD', 'vitE', 'vitK1', 'vitK2', 'vitB1', 'vitB2', 'vitB3', 'vitB5', 'vitB6', 'vitB9', 'vitB12'] },
 ];
@@ -776,10 +772,12 @@ interface CovRow {
   avg: number;
   pct: number;
   isLimit: boolean;
+  /** Répartition ALA/EPA/DHA moyenne/j — renseignée uniquement pour la ligne oméga-3. */
+  omega3Detail?: { omega3Ala: number; omega3Epa: number; omega3Dha: number };
 }
 
 /** Contenu de l'info-bulle riche d'un nutriment (suivi souris). */
-function CoverageCard({ t, avg, pct, isLimit }: CovRow) {
+function CoverageCard({ t, avg, pct, isLimit, omega3Detail }: CovRow) {
   const covered = pct >= 100;
   const color = isLimit ? (pct > 100 ? 'var(--danger)' : 'var(--accent-2)') : covered ? 'var(--accent-2)' : 'var(--warn)';
   const bg = isLimit ? (pct > 100 ? 'rgba(239,93,93,0.18)' : 'rgba(123,201,111,0.16)') : covered ? 'rgba(123,201,111,0.16)' : 'rgba(245,166,35,0.16)';
@@ -797,6 +795,9 @@ function CoverageCard({ t, avg, pct, isLimit }: CovRow) {
       </div>
       {t.key === 'vitD' && (
         <div className="small" style={{ marginTop: 8, opacity: 0.9 }}>☀️ Soleil inclus (comme la carte « carence ? »)</div>
+      )}
+      {omega3Detail && (omega3Detail.omega3Ala > 0 || omega3Detail.omega3Epa > 0 || omega3Detail.omega3Dha > 0) && (
+        <Omega3Breakdown totals={{ ...EMPTY_NUTRIENTS, ...omega3Detail }} />
       )}
       {t.optimalNote && <div className="small" style={{ marginTop: 8, opacity: 0.9 }}>💡 {t.optimalNote}</div>}
       <div className="small" style={{ marginTop: 8, color: 'var(--accent)' }}>Cliquez pour l'ajouter à la tendance</div>
@@ -820,7 +821,15 @@ function CoverageList({
 
   const atLeast: CovRow[] = targets
     .filter((t) => t.goal !== 'limit')
-    .map((t) => ({ t, avg: averages[t.key], pct: t.optimal > 0 ? (averages[t.key] / t.optimal) * 100 : 0, isLimit: false }))
+    .map((t) => ({
+      t,
+      avg: averages[t.key],
+      pct: t.optimal > 0 ? (averages[t.key] / t.optimal) * 100 : 0,
+      isLimit: false,
+      ...(t.key === 'omega3'
+        ? { omega3Detail: { omega3Ala: averages.omega3Ala, omega3Epa: averages.omega3Epa, omega3Dha: averages.omega3Dha } }
+        : {}),
+    }))
     .sort((a, b) => a.pct - b.pct);
   const limits: CovRow[] = targets
     .filter((t) => t.goal === 'limit')
@@ -883,99 +892,6 @@ function FollowTip({ x, y, children }: { x: number; y: number; children: React.R
   return (
     <div className="follow-tip" style={{ left, top: y - 16 }}>
       {children}
-    </div>
-  );
-}
-
-// ---------------------------------------------------------------------------
-// Radar micros (moyenne/jour)
-// ---------------------------------------------------------------------------
-
-const RADAR_KEYS: NutrientKey[] = ['proteines', 'fibres', 'fer', 'magnesium', 'calcium', 'zinc', 'vitC', 'vitD', 'vitB12', 'potassium'];
-
-function RadarChart({ totals, targets }: { totals: Record<NutrientKey, number>; targets: Target[] }) {
-  const W = 380;
-  const H = 340;
-  const cx = W / 2;
-  const cy = H / 2 + 6;
-  const R = 118;
-  const CAP = 1.5;
-
-  const svgRef = useRef<SVGSVGElement>(null);
-  const [hover, setHover] = useState<number | null>(null);
-  const [ptr, setPtr] = useState({ px: 0, py: 0 });
-
-  const axes = RADAR_KEYS.map((key, i) => {
-    const t = targets.find((x) => x.key === key)!;
-    const value = totals[key] ?? 0;
-    const ratio = t.optimal > 0 ? value / t.optimal : 0;
-    const angle = -Math.PI / 2 + (i * 2 * Math.PI) / RADAR_KEYS.length;
-    const rr = (Math.min(ratio, CAP) / CAP) * R;
-    return {
-      key,
-      label: t.label,
-      unit: t.unit,
-      value,
-      optimal: t.optimal,
-      pct: ratio * 100,
-      angle,
-      x: cx + rr * Math.cos(angle),
-      y: cy + rr * Math.sin(angle),
-      lx: cx + (R + 20) * Math.cos(angle),
-      ly: cy + (R + 20) * Math.sin(angle),
-    };
-  });
-
-  const polygon = axes.map((a) => `${a.x},${a.y}`).join(' ');
-  const rings = [0.5, 1, 1.5];
-
-  return (
-    <div style={{ position: 'relative' }}>
-      <svg ref={svgRef} viewBox={`0 0 ${W} ${H}`} style={{ width: '100%', maxWidth: 440, display: 'block', margin: '0 auto' }} onMouseLeave={() => setHover(null)}>
-        {rings.map((r) => (
-          <circle key={r} cx={cx} cy={cy} r={(r / CAP) * R} fill="none" stroke={C.border} strokeWidth={1} />
-        ))}
-        <circle cx={cx} cy={cy} r={(1 / CAP) * R} fill="none" stroke={C.accent2} strokeWidth={1.5} strokeDasharray="3 3" opacity={0.7} />
-
-        {axes.map((a) => (
-          <line key={a.key} x1={cx} y1={cy} x2={cx + R * Math.cos(a.angle)} y2={cy + R * Math.sin(a.angle)} stroke={C.border} strokeWidth={1} />
-        ))}
-
-        <polygon points={polygon} fill={C.accent} fillOpacity={0.25} stroke={C.accent} strokeWidth={2} />
-
-        {axes.map((a, i) => (
-          <g key={a.key}>
-            <circle cx={a.x} cy={a.y} r={hover === i ? 6 : 4} fill={a.pct >= 100 ? C.accent2 : C.accent} stroke={C.text} strokeWidth={hover === i ? 1.5 : 0} />
-            <circle
-              cx={a.x}
-              cy={a.y}
-              r={14}
-              fill="transparent"
-              style={{ cursor: 'pointer' }}
-              onMouseEnter={(e) => {
-                setHover(i);
-                if (svgRef.current) {
-                  const p = toViewBox(e, svgRef.current, W, H);
-                  setPtr({ px: (p.px / svgRef.current.getBoundingClientRect().width) * 100, py: (p.py / svgRef.current.getBoundingClientRect().height) * 100 });
-                }
-              }}
-            />
-            <text x={a.lx} y={a.ly} fill={hover === i ? C.text : C.muted} fontSize={11} textAnchor={Math.abs(a.lx - cx) < 8 ? 'middle' : a.lx > cx ? 'start' : 'end'} dominantBaseline="middle">
-              {a.label}
-            </text>
-          </g>
-        ))}
-      </svg>
-
-      {hover !== null && (
-        <Tooltip px={ptr.px} py={ptr.py}>
-          <strong>{axes[hover].label}</strong>
-          <br />
-          {fmt(axes[hover].value, axes[hover].value < 10 ? 1 : 0)} / {fmt(axes[hover].optimal)} {axes[hover].unit}
-          <br />
-          <span style={{ color: axes[hover].pct >= 100 ? C.accent2 : C.warn }}>{fmt(axes[hover].pct)} % de l'objectif</span>
-        </Tooltip>
-      )}
     </div>
   );
 }

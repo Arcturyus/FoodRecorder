@@ -69,6 +69,11 @@ export const RDA: RdaEntry[] = [
     optimalNote: 'Plafond ≈ 10 % de l\'énergie (≈ 22 g pour 2000 kcal) ; idéal le plus bas, vers 15 g.',
   },
   {
+    key: 'agTrans', label: 'AG trans', unit: 'g', rda: 2, goal: 'limit', optimalLow: 0,
+    role: 'Graisses industrielles (huiles partiellement hydrogénées, fritures, viennoiseries) ; trace naturelle chez les ruminants (bœuf, agneau, produits laitiers).',
+    optimalNote: 'OMS : ne pas dépasser 1 % de l\'énergie (≈ 2 g/2000 kcal). Contrairement aux AG saturés, aucun seuil n\'est considéré sûr : viser 0.',
+  },
+  {
     key: 'agMonoInsatures', label: 'AG mono-insaturés', unit: 'g', rda: 35, goal: 'atLeast', optimalFactor: 1,
     role: 'Graisses « cœur-protectrices » (huile d\'olive, avocat) qui améliorent le profil lipidique.',
   },
@@ -79,7 +84,7 @@ export const RDA: RdaEntry[] = [
   {
     key: 'omega3', label: 'Oméga 3', unit: 'g', rda: 2, goal: 'atLeast', optimalFactor: 1.5,
     role: 'Anti-inflammatoire ; EPA/DHA soutiennent cœur, cerveau et récupération musculaire.',
-    optimalNote: 'AS ALA ≈ 2 g. Optimal ~3 g avec EPA+DHA relevés (250-500 mg) pour l\'effet anti-inflammatoire.',
+    optimalNote: 'Équivalent pondéré = ALA ÷ 10 + EPA + DHA (l\'ALA végétal est mal converti par le corps, ~10 % de rendement) ; c\'est cette valeur qui compte pour la cible, les rapports et le score. AS ALA brut ≈ 2 g ; optimal ~3 g d\'équivalent avec EPA+DHA relevés (250-500 mg) pour l\'effet anti-inflammatoire.',
   },
   {
     key: 'omega6', label: 'Oméga 6', unit: 'g', rda: 10, goal: 'atLeast', optimalFactor: 1,

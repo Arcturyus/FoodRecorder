@@ -7,11 +7,10 @@ import { fmt } from './format';
 
 /**
  * « Explorer visuel » : atelier de visualisation D3 de la banque d'aliments, pour
- * lire la table sous plusieurs angles (données pour 100 g). Trois vues :
+ * lire la table sous plusieurs angles (données pour 100 g). Deux vues :
  *  - Nuage de points / bulles : deux (ou trois) nutriments croisés, frontière de
  *    Pareto pour repérer p. ex. « max protéines / min kcal » ;
- *  - Matrice de corrélation : liens statistiques entre tous les nutriments ;
- *  - Coordonnées parallèles : profil multi-nutriments de chaque aliment.
+ *  - Matrice de corrélation : liens statistiques entre tous les nutriments.
  * On reste volontairement en D3 pur (SVG maison, d3-scale/array/shape).
  */
 
@@ -97,7 +96,7 @@ export function paretoFrontier<P extends ParetoPoint>(points: P[], xGoal: 'min' 
   return Array.from(merged.values()).sort((a, b) => a.x - b.x || a.y - b.y);
 }
 
-type View = 'nuage' | 'correlation' | 'paralleles';
+type View = 'nuage' | 'correlation';
 
 export function FoodExplorer({ foods }: { foods: Food[] }) {
   const [view, setView] = useState<View>('nuage');
@@ -120,18 +119,11 @@ export function FoodExplorer({ foods }: { foods: Food[] }) {
           >
             Matrice de corrélation
           </button>
-          <button
-            className={`ghost small ${view === 'paralleles' ? 'chip-active' : ''}`}
-            onClick={() => setView('paralleles')}
-          >
-            Coordonnées parallèles
-          </button>
         </div>
       </div>
 
       {view === 'nuage' && <ScatterView />}
       {view === 'correlation' && <CorrelationView />}
-      {view === 'paralleles' && <ParallelView />}
 
       <CategoryLegend />
     </ExplorableCtx.Provider>
@@ -255,8 +247,8 @@ function ScatterView() {
   const [xk, setXk] = useState<NutrientKey>('kcal');
   const [yk, setYk] = useState<NutrientKey>('proteines');
   const [sizeK, setSizeK] = useState<NutrientKey | 'none'>('none');
-  const [logX, setLogX] = useState(false);
-  const [logY, setLogY] = useState(false);
+  const [logX, setLogX] = useState(true);
+  const [logY, setLogY] = useState(true);
   const [pareto, setPareto] = useState(true);
   const [xGoal, setXGoal] = useState<'min' | 'max'>('min');
   const [yGoal, setYGoal] = useState<'min' | 'max'>('max');
@@ -296,6 +288,11 @@ function ScatterView() {
     });
   }
 
+  // Molette/trackpad : Ctrl (ou pincement, que les navigateurs synthétisent en
+  // wheel + ctrlKey) zoome vers le curseur. Un simple défilement (molette de
+  // souris, ou glisser à deux doigts sur trackpad SANS pincer) déplace la vue
+  // au lieu de zoomer — sinon ce geste de « scroll » se traduisait par un zoom
+  // non désiré à la place d'un simple déplacement.
   useEffect(() => {
     const el = svgRef.current;
     if (!el) return;
@@ -304,18 +301,49 @@ function ScatterView() {
       const rect = el.getBoundingClientRect();
       const px = ((e.clientX - rect.left) / rect.width) * W;
       const py = ((e.clientY - rect.top) / rect.height) * H;
-      zoomAt(Math.exp(-e.deltaY * 0.0015), px, py);
+      if (e.ctrlKey) {
+        zoomAt(Math.exp(-e.deltaY * 0.01), px, py);
+      } else {
+        setZoomX((z) => ({ ...z, x: z.x - e.deltaX }));
+        setZoomY((z) => ({ ...z, y: z.y - e.deltaY }));
+      }
     };
     el.addEventListener('wheel', onWheel, { passive: false });
     return () => el.removeEventListener('wheel', onWheel);
   }, [W, H]);
 
+  // Pointeurs actifs (pour le pincer-zoomer tactile à deux doigts) et pincement
+  // en cours (distance + centre courants, pour calculer le facteur de zoom).
+  const pointersRef = useRef<Map<number, { x: number; y: number }>>(new Map());
+  const pinchRef = useRef<{ dist: number } | null>(null);
+
   function onPointerDown(e: React.PointerEvent<SVGSVGElement>) {
-    dragRef.current = { x: e.clientX, y: e.clientY };
-    setDragging(true);
     e.currentTarget.setPointerCapture(e.pointerId);
+    pointersRef.current.set(e.pointerId, { x: e.clientX, y: e.clientY });
+    if (pointersRef.current.size === 1) {
+      dragRef.current = { x: e.clientX, y: e.clientY };
+      setDragging(true);
+    } else {
+      dragRef.current = null;
+      const pts = [...pointersRef.current.values()];
+      pinchRef.current = { dist: Math.hypot(pts[0].x - pts[1].x, pts[0].y - pts[1].y) };
+    }
   }
   function onPointerMove(e: React.PointerEvent<SVGSVGElement>) {
+    if (!pointersRef.current.has(e.pointerId)) return;
+    pointersRef.current.set(e.pointerId, { x: e.clientX, y: e.clientY });
+
+    if (pointersRef.current.size >= 2 && svgRef.current) {
+      const [p0, p1] = [...pointersRef.current.values()];
+      const rect = svgRef.current.getBoundingClientRect();
+      const dist = Math.hypot(p0.x - p1.x, p0.y - p1.y);
+      const cx = ((p0.x + p1.x) / 2 - rect.left) / rect.width * W;
+      const cy = ((p0.y + p1.y) / 2 - rect.top) / rect.height * H;
+      if (pinchRef.current && pinchRef.current.dist > 0) zoomAt(dist / pinchRef.current.dist, cx, cy);
+      pinchRef.current = { dist };
+      return;
+    }
+
     if (!dragRef.current || !svgRef.current) return;
     const rect = svgRef.current.getBoundingClientRect();
     const dx = ((e.clientX - dragRef.current.x) / rect.width) * W;
@@ -324,9 +352,16 @@ function ScatterView() {
     setZoomX((z) => ({ ...z, x: z.x + dx }));
     setZoomY((z) => ({ ...z, y: z.y + dy }));
   }
-  function endDrag() {
-    dragRef.current = null;
-    setDragging(false);
+  function endDrag(e: React.PointerEvent<SVGSVGElement>) {
+    pointersRef.current.delete(e.pointerId);
+    if (pointersRef.current.size < 2) pinchRef.current = null;
+    if (pointersRef.current.size === 1) {
+      const [remaining] = pointersRef.current.values();
+      dragRef.current = { x: remaining.x, y: remaining.y };
+    } else {
+      dragRef.current = null;
+      setDragging(false);
+    }
   }
   const zoomed = zoomX.k > 1.001 || zoomY.k > 1.001 || Math.abs(zoomX.x) > 0.5 || Math.abs(zoomY.y) > 0.5;
 
@@ -568,7 +603,8 @@ function ScatterView() {
           )}
         </div>
         <p className="small" style={{ marginTop: 0 }}>
-          Molette (ou pincer) pour zoomer, glisser pour déplacer. Les zones à 0 (voie séparée) restent fixes.
+          Ctrl + molette (ou pincer à deux doigts) pour zoomer, glisser (un doigt ou la souris) pour déplacer. Les
+          zones à 0 (voie séparée) restent fixes.
         </p>
         {(hasZeroX || hasZeroY) && (
           <p className="small" style={{ marginBottom: pareto ? undefined : 0 }}>
@@ -628,7 +664,7 @@ function CorrelationView() {
   const [onlyMacros, setOnlyMacros] = useState(false);
 
   const explorable = useExplorable();
-  const MACRO_KEYS: NutrientKey[] = ['kcal', 'proteines', 'glucides', 'lipides', 'fibres', 'agSatures', 'agMonoInsatures', 'agPolyInsatures', 'omega3', 'omega6', 'omega9'];
+  const MACRO_KEYS: NutrientKey[] = ['kcal', 'proteines', 'glucides', 'lipides', 'fibres', 'agSatures', 'agTrans', 'agMonoInsatures', 'agPolyInsatures', 'omega3', 'omega6', 'omega9'];
   const keys = onlyMacros ? MACRO_KEYS : (NUT.map((n) => n.key) as NutrientKey[]);
 
   const cols = useMemo(() => keys.map((k) => explorable.map((f) => val(f, k))), [explorable, keys.join(',')]);
@@ -748,156 +784,3 @@ function corrLabel(r: number): string {
   return '— quasi indépendants';
 }
 
-// ===========================================================================
-// Vue 3 — Coordonnées parallèles (profil multi-nutriments)
-// ===========================================================================
-
-const DEFAULT_AXES: NutrientKey[] = ['kcal', 'proteines', 'lipides', 'glucides', 'fibres', 'fer', 'calcium'];
-
-function ParallelView() {
-  const [axes, setAxes] = useState<NutrientKey[]>(DEFAULT_AXES);
-  const [focusCat, setFocusCat] = useState<FoodCategory | 'all'>('all');
-  const explorable = useExplorable();
-  const W = 720;
-  const H = 420;
-  const m = { top: 26, right: 24, bottom: 34, left: 24 };
-  const svgRef = useRef<SVGSVGElement>(null);
-  const [hover, setHover] = useState<{ id: string; nom: string; px: number; py: number } | null>(null);
-
-  // Échelle par axe : 0 → 95e centile (limite l'écrasement par les valeurs extrêmes).
-  const scales = useMemo(() => {
-    return axes.map((k) => {
-      const vals = explorable.map((f) => val(f, k)).sort((a, b) => a - b);
-      const cap = quantile(vals, 0.95) || d3max(vals) || 1;
-      return scaleLinear().domain([0, cap || 1]).range([H - m.bottom, m.top]);
-    });
-  }, [explorable, axes]);
-
-  const xFor = (i: number) => m.left + (i * (W - m.left - m.right)) / Math.max(1, axes.length - 1);
-
-  const lines = useMemo(
-    () =>
-      explorable.map((f) => ({
-        f,
-        d: axes
-          .map((k, i) => {
-            const y = scales[i](Math.min(val(f, k), scales[i].domain()[1]));
-            return `${i === 0 ? 'M' : 'L'} ${xFor(i)} ${y}`;
-          })
-          .join(' '),
-      })),
-    [explorable, axes, scales],
-  );
-
-  function toggleAxis(k: NutrientKey) {
-    setAxes((a) => (a.includes(k) ? a.filter((x) => x !== k) : [...a, k]));
-  }
-
-  return (
-    <>
-      <div className="panel">
-        <div className="small" style={{ marginBottom: 8 }}>Axes (nutriments) — cliquez pour ajouter/retirer</div>
-        <div className="row" style={{ gap: 6, flexWrap: 'wrap' }}>
-          {NUT.map((nn) => (
-            <button
-              key={nn.key}
-              className={`ghost small ${axes.includes(nn.key) ? 'chip-active' : ''}`}
-              onClick={() => toggleAxis(nn.key)}
-            >
-              {nn.label}
-            </button>
-          ))}
-        </div>
-        <div className="small" style={{ margin: '12px 0 8px' }}>Mettre en avant une catégorie</div>
-        <div className="row" style={{ gap: 6, flexWrap: 'wrap' }}>
-          <button className={`ghost small ${focusCat === 'all' ? 'chip-active' : ''}`} onClick={() => setFocusCat('all')}>
-            Toutes
-          </button>
-          {CATS.map((c) => (
-            <button
-              key={c.key}
-              className="ghost small"
-              style={{ borderColor: focusCat === c.key ? c.color : C.border, background: focusCat === c.key ? c.color : undefined, color: focusCat === c.key ? '#fff' : undefined }}
-              onClick={() => setFocusCat((v) => (v === c.key ? 'all' : c.key))}
-            >
-              {c.label}
-            </button>
-          ))}
-        </div>
-      </div>
-
-      <div className="panel">
-        {axes.length < 2 ? (
-          <div className="empty">Sélectionnez au moins deux axes.</div>
-        ) : (
-          <div style={{ position: 'relative', overflowX: 'auto' }}>
-            <svg
-              ref={svgRef}
-              viewBox={`0 0 ${W} ${H}`}
-              style={{ width: axes.length > 7 ? W : '100%', maxWidth: '100%', display: 'block' }}
-              onMouseLeave={() => setHover(null)}
-            >
-              {/* axes verticaux + graduations */}
-              {axes.map((k, i) => {
-                const sc = scales[i];
-                const ticks = sc.ticks(4);
-                return (
-                  <g key={k}>
-                    <line x1={xFor(i)} x2={xFor(i)} y1={m.top} y2={H - m.bottom} stroke={C.border} strokeWidth={1.5} />
-                    {ticks.map((t) => (
-                      <g key={t}>
-                        <line x1={xFor(i) - 3} x2={xFor(i) + 3} y1={sc(t)} y2={sc(t)} stroke={C.muted} strokeWidth={1} />
-                        <text x={xFor(i) + 6} y={sc(t)} fill={C.muted} fontSize={8} dominantBaseline="middle">
-                          {fmt(t, t < 1 ? 1 : 0)}
-                        </text>
-                      </g>
-                    ))}
-                    <text x={xFor(i)} y={m.top - 10} fill={C.text} fontSize={10} textAnchor="middle">
-                      {NUT_LABEL.get(k)}
-                    </text>
-                    <text x={xFor(i)} y={H - m.bottom + 16} fill={C.muted} fontSize={8} textAnchor="middle">
-                      {NUT_UNIT.get(k)}
-                    </text>
-                  </g>
-                );
-              })}
-
-              {/* lignes aliments */}
-              {lines.map(({ f, d }) => {
-                const dim = focusCat !== 'all' && f.categorie !== focusCat;
-                const isHover = hover?.id === f.id;
-                return (
-                  <path
-                    key={f.id}
-                    d={d}
-                    fill="none"
-                    stroke={COLOR_BY_CAT.get(f.categorie)}
-                    strokeWidth={isHover ? 2.6 : 1.2}
-                    opacity={isHover ? 1 : dim ? 0.06 : 0.4}
-                    style={{ cursor: 'pointer' }}
-                    onMouseMove={(e) => {
-                      if (svgRef.current) {
-                        const v = toViewBox(e, svgRef.current, W, H);
-                        setHover({ id: f.id, nom: f.nom, px: v.px, py: v.py });
-                      }
-                    }}
-                  />
-                );
-              })}
-            </svg>
-
-            {hover && (
-              <Tooltip px={hover.px} py={hover.py}>
-                <strong>{hover.nom}</strong>
-              </Tooltip>
-            )}
-          </div>
-        )}
-        <p className="small" style={{ marginBottom: 0 }}>
-          Chaque ligne = un aliment, son profil lu de gauche à droite. Échelle de chaque axe bornée au 95ᵉ centile.
-          Survolez une ligne pour l'isoler.
-        </p>
-      </div>
-    </>
-  );
-}

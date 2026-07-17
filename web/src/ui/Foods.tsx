@@ -1,47 +1,29 @@
 import { useMemo, useState } from 'react';
 import { normalize, isSupplementQuery } from '../nutrition/normalize';
 import { RDA } from '../nutrition/rda';
+import type { RdaEntry } from '../nutrition/rda';
 import { computeTargets } from '../nutrition/targets';
 import { useStore, useEffectiveFoods } from '../store/store';
 import { EMPTY_NUTRIENTS } from '../nutrition/types';
 import type { Food, FoodCategory, NutrientKey, Nutrients } from '../nutrition/types';
-import { fmt, UNIT_LABELS } from './format';
+import { fmt, UNIT_LABELS, CATEGORY_LABELS } from './format';
 import { FoodExplorer } from './FoodExplorer';
 import { FoodConsumption } from './FoodFrequency';
 
-/** Libellés lisibles des catégories, dans l'ordre d'affichage. */
-const CATEGORY_LABELS: { key: FoodCategory; label: string }[] = [
-  { key: 'fruit', label: 'Fruits' },
-  { key: 'legume', label: 'Légumes' },
-  { key: 'feculent', label: 'Féculents' },
-  { key: 'viande', label: 'Viandes' },
-  { key: 'poisson', label: 'Poissons' },
-  { key: 'oeuf-laitier', label: 'Œufs & laitages' },
-  { key: 'sucre-snack', label: 'Sucré / snacks' },
-  { key: 'matiere-grasse', label: 'Matières grasses' },
-  { key: 'boisson', label: 'Boissons' },
-  { key: 'plat', label: 'Plats' },
-  { key: 'supplement', label: 'Compléments & assaisonnements' },
-  { key: 'autre', label: 'Autres' },
-];
-
 const LABEL_BY_KEY = new Map(CATEGORY_LABELS.map((c) => [c.key, c.label]));
 
-/** Champs de micros optionnels exposés dans le formulaire d'ajout / d'édition. */
-const OPTIONAL_MICROS: { key: keyof Nutrients; label: string }[] = [
-  { key: 'fibres', label: 'Fibres (g)' },
-  { key: 'agSatures', label: 'AG saturés (g)' },
-  { key: 'omega3', label: 'Oméga 3 (g)' },
-  { key: 'fer', label: 'Fer (mg)' },
-  { key: 'calcium', label: 'Calcium (mg)' },
-  { key: 'magnesium', label: 'Magnésium (mg)' },
-  { key: 'potassium', label: 'Potassium (mg)' },
-  { key: 'zinc', label: 'Zinc (mg)' },
-  { key: 'sodium', label: 'Sodium (mg)' },
-  { key: 'vitC', label: 'Vitamine C (mg)' },
-  { key: 'vitD', label: 'Vitamine D (µg)' },
-  { key: 'vitB12', label: 'Vitamine B12 (µg)' },
-];
+/** Base toujours affichée en dur (calories, protéines, glucides, lipides). */
+const BASE_MACRO_KEYS = new Set<keyof Nutrients>(['kcal', 'proteines', 'glucides', 'lipides']);
+
+/**
+ * Champs de micros optionnels exposés dans le formulaire d'ajout / d'édition :
+ * tous les nutriments du type `Nutrients` sauf les 4 macros de base ci-dessus,
+ * pour que rien (collagène, créatine, iode, vitamines, AG détaillés…) ne soit
+ * impossible à corriger — un champ non renseigné reste traité comme zéro.
+ */
+const OPTIONAL_MICROS: { key: keyof Nutrients; label: string }[] = RDA.filter(
+  (r: RdaEntry) => !BASE_MACRO_KEYS.has(r.key),
+).map((r) => ({ key: r.key, label: `${r.label} (${r.unit})` }));
 
 type Mode = 'liste' | 'classement' | 'consommation' | 'explorer';
 
@@ -78,7 +60,7 @@ export function Foods() {
             className={`ghost small ${mode === 'consommation' ? 'chip-active' : ''}`}
             onClick={() => setMode('consommation')}
           >
-            Consommation
+            Ma consommation
           </button>
           <button
             className={`ghost small ${mode === 'explorer' ? 'chip-active' : ''}`}

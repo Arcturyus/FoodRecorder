@@ -39,7 +39,7 @@ export const RATIOS: RatioDef[] = [
     better: 'lower',
     suffix: ':1',
     role: 'Équilibre inflammatoire. Les oméga-6 sont pro-inflammatoires, les oméga-3 anti-inflammatoires.',
-    note: 'L\'alimentation moderne atteint souvent 15:1 à 20:1. Viser ≤ 4:1 (idéalement 1:1 à 4:1) en augmentant les oméga-3 (poissons gras, colza, lin, noix) et en limitant les huiles riches en oméga-6.',
+    note: 'L\'alimentation moderne atteint souvent 15:1 à 20:1. Viser ≤ 4:1 (idéalement 1:1 à 4:1) en augmentant les oméga-3 (poissons gras, colza, lin, noix) et en limitant les huiles riches en oméga-6. L\'oméga-3 compté ici est l\'équivalent pondéré (ALA ÷ 10 + EPA + DHA) : les sources marines (EPA/DHA) corrigent le rapport bien plus vite que les sources végétales (ALA).',
   },
   {
     key: 'kna',

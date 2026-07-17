@@ -67,6 +67,23 @@ function Breakdown({
 }
 
 /**
+ * Répartition ALA/EPA/DHA sous la tuile oméga-3 : l'ALA (végétal) est affiché
+ * en valeur brute ET en équivalent pondéré (÷10, mal converti par le corps),
+ * seul celui-ci comptant dans la cible/le score/les rapports. EPA et DHA
+ * (marins/animaux) comptent pour leur valeur brute.
+ */
+export function Omega3Breakdown({ totals }: { totals: Nutrients }) {
+  const { omega3Ala, omega3Epa, omega3Dha } = totals;
+  if (omega3Ala <= 0 && omega3Epa <= 0 && omega3Dha <= 0) return null;
+  return (
+    <div className="small mono" style={{ marginTop: 2, opacity: 0.75 }}>
+      dont ALA {fmt(omega3Ala, 1)} g (≈ {fmt(omega3Ala / 10, 2)} g éq.) · EPA {fmt(omega3Epa, 1)} g · DHA{' '}
+      {fmt(omega3Dha, 1)} g
+    </div>
+  );
+}
+
+/**
  * Bilan du jour : kcal + macros en tête, puis grille de tous les nutriments avec
  * une barre de progression vers la cible « optimale » et un repère sur l'AJR.
  * Chaque tuile est survolable (ou tapable) pour voir les aliments qui apportent
@@ -164,6 +181,7 @@ export function Totals({
                 {fmt(pctOpt)}%{' '}
                 {distinct ? `· AJR ${fmt(t.ajr)} / opti ${fmt(t.optimal)}` : `· AJR ${fmt(t.ajr)}`}
               </div>
+              {t.key === 'omega3' && <Omega3Breakdown totals={totals} />}
               <Breakdown items={items} nutrientKey={t.key} unit={t.unit} total={value} />
             </div>
           );

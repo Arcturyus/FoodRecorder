@@ -10,11 +10,24 @@ export interface Nutrients {
   lipides: number;
   fibres: number;
   agSatures: number;
+  agTrans: number; // g (huiles hydrogénées, fritures ; trace naturelle chez les ruminants)
   agMonoInsatures: number; // g (total AG mono-insaturés)
   agPolyInsatures: number; // g (total AG poly-insaturés)
-  omega3: number; // g (ALA + EPA + DHA) — sous-ensemble des poly-insaturés
+  /**
+   * g — équivalent oméga-3 EFFECTIF (ALA/10 + EPA + DHA), utilisé par les
+   * cibles/rapports/score : l'ALA est mal converti par le corps en EPA/DHA
+   * (~10 % de rendement), donc pondéré 10× moins que l'EPA/DHA directs. La
+   * répartition réelle (non pondérée) est dans omega3Ala/Epa/Dha ci-dessous.
+   */
+  omega3: number;
   omega6: number; // g (acide linoléique surtout) — sous-ensemble des poly-insaturés
   omega9: number; // g (acide oléique surtout) — sous-ensemble des mono-insaturés
+  /** g — acide alpha-linolénique BRUT (avant pondération), sous-ensemble végétal de omega3. */
+  omega3Ala: number;
+  /** g — EPA (acide eicosapentaénoïque) BRUT, sous-ensemble marin/animal de omega3. */
+  omega3Epa: number;
+  /** g — DHA (acide docosahexaénoïque) BRUT, sous-ensemble marin/animal de omega3. */
+  omega3Dha: number;
   // minéraux (mg)
   fer: number;
   magnesium: number;
@@ -142,7 +155,8 @@ export interface ComputedItem {
 
 export const EMPTY_NUTRIENTS: Nutrients = {
   kcal: 0, proteines: 0, glucides: 0, lipides: 0, fibres: 0,
-  agSatures: 0, agMonoInsatures: 0, agPolyInsatures: 0, omega3: 0, omega6: 0, omega9: 0,
+  agSatures: 0, agTrans: 0, agMonoInsatures: 0, agPolyInsatures: 0, omega3: 0, omega6: 0, omega9: 0,
+  omega3Ala: 0, omega3Epa: 0, omega3Dha: 0,
   fer: 0, magnesium: 0, potassium: 0, calcium: 0, zinc: 0, sodium: 0,
   selenium: 0, iode: 0,
   vitA: 0, vitC: 0, vitD: 0, vitE: 0, vitK1: 0, vitK2: 0,

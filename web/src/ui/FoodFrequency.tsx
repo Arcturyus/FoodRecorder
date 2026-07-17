@@ -2,8 +2,10 @@ import { useMemo, useState } from 'react';
 import { scaleLinear } from 'd3-scale';
 import { useStore, useEffectiveFoods } from '../store/store';
 import type { JournalEntry } from '../store/store';
-import { foodFrequencies, occurrencesByDate } from '../nutrition/frequency';
+import { normalize } from '../nutrition/normalize';
+import { foodFrequencies, foodPairFrequencies, occurrencesByDate } from '../nutrition/frequency';
 import type { FoodFrequency } from '../nutrition/frequency';
+import type { Food, FoodCategory } from '../nutrition/types';
 import {
   PeriodSelector,
   resolveRange,
@@ -12,7 +14,7 @@ import {
   defaultPeriodState,
 } from './PeriodSelector';
 import type { PeriodState } from './PeriodSelector';
-import { fmt } from './format';
+import { fmt, CATEGORY_LABELS } from './format';
 
 /**
  * Mode « Consommation » de l'onglet Aliments : ce que VOUS mangez réellement
@@ -57,11 +59,14 @@ function fmtFreqValue(v: number, metric: FreqMetric): string {
  * Point d'entrée du mode : période, case « sans les suppléments » (la créatine
  * quotidienne écraserait tous les classements), puis le panneau.
  */
+type ConsoMode = 'classement' | 'ensemble';
+
 export function FoodConsumption() {
   const entries = useStore((s) => s.entries);
   const foods = useEffectiveFoods();
   const [period, setPeriod] = useState<PeriodState>(defaultPeriodState);
   const [excludeSupplements, setExcludeSupplements] = useState(true);
+  const [mode, setMode] = useState<ConsoMode>('classement');
 
   /** 1re date enregistrée (borne « Tout »). */
   const earliest = useMemo(() => {
@@ -89,10 +94,18 @@ export function FoodConsumption() {
   return (
     <div className="panel">
       <div className="row" style={{ justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: 8 }}>
-        <h2 style={{ margin: 0 }}>Ce que vous mangez le plus</h2>
+        <h2 style={{ margin: 0 }}>Ma consommation</h2>
         <PeriodSelector value={period} onChange={setPeriod} />
       </div>
-      <div className="row" style={{ alignItems: 'center', marginTop: 4 }}>
+      <div className="row" style={{ gap: 6, marginTop: 8 }}>
+        <button className={`ghost small ${mode === 'classement' ? 'chip-active' : ''}`} onClick={() => setMode('classement')}>
+          Classement
+        </button>
+        <button className={`ghost small ${mode === 'ensemble' ? 'chip-active' : ''}`} onClick={() => setMode('ensemble')}>
+          Mangés ensemble
+        </button>
+      </div>
+      <div className="row" style={{ alignItems: 'center', marginTop: 10 }}>
         <label
           className="row small"
           style={{ gap: 6, alignItems: 'center', cursor: 'pointer' }}
@@ -106,11 +119,23 @@ export function FoodConsumption() {
           Sans les suppléments
         </label>
       </div>
-      <p className="small" style={{ marginTop: 2 }}>
-        Classement sur la période, d'après votre journal. Cliquez un aliment pour voir <em>quand</em> vous l'avez
-        mangé.
-      </p>
-      <FoodFrequencyPanel entries={freqEntries} range={range} days={days} />
+      {mode === 'classement' ? (
+        <>
+          <p className="small" style={{ marginTop: 2 }}>
+            Classement sur la période, d'après votre journal. Cliquez un aliment pour voir <em>quand</em> vous l'avez
+            mangé.
+          </p>
+          <FoodFrequencyPanel entries={freqEntries} range={range} days={days} foods={foods} />
+        </>
+      ) : (
+        <>
+          <p className="small" style={{ marginTop: 2 }}>
+            Paires d'aliments qui reviennent dans une même requête (même repas saisi), classées par nombre de fois
+            mangées ensemble.
+          </p>
+          <FoodPairsPanel entries={freqEntries} range={range} />
+        </>
+      )}
     </div>
   );
 }
@@ -150,22 +175,38 @@ function FoodFrequencyPanel({
   entries,
   range,
   days,
+  foods,
 }: {
   entries: JournalEntry[];
   range: { start: string; end: string };
   days: number;
+  foods: Food[];
 }) {
   const [metric, setMetric] = useState<FreqMetric>('occurrences');
   const [openKey, setOpenKey] = useState<string | null>(null);
   const [tip, setTip] = useState<{ f: FoodFrequency; x: number; y: number } | null>(null);
+  const [query, setQuery] = useState('');
+  const [cat, setCat] = useState<FoodCategory | 'all'>('all');
+  const [showAll, setShowAll] = useState(false);
 
+  const categoryById = useMemo(() => new Map(foods.map((f) => [f.id, f.categorie])), [foods]);
   const freqs = useMemo(() => foodFrequencies(entries, range), [entries, range]);
-  const ranked = useMemo(
-    () => [...freqs].sort((a, b) => freqValue(b, metric) - freqValue(a, metric) || a.nom.localeCompare(b.nom, 'fr')),
-    [freqs, metric],
+  const q = normalize(query);
+  const filtered = useMemo(
+    () =>
+      freqs.filter((f) => {
+        if (cat !== 'all' && (f.foodId === null || categoryById.get(f.foodId) !== cat)) return false;
+        if (q && !normalize(f.nom).includes(q)) return false;
+        return true;
+      }),
+    [freqs, cat, q, categoryById],
   );
-  const top = ranked.slice(0, TOP_N);
-  const maxVal = top.length > 0 ? freqValue(top[0], metric) : 0;
+  const ranked = useMemo(
+    () => [...filtered].sort((a, b) => freqValue(b, metric) - freqValue(a, metric) || a.nom.localeCompare(b.nom, 'fr')),
+    [filtered, metric],
+  );
+  const shown = showAll ? ranked : ranked.slice(0, TOP_N);
+  const maxVal = shown.length > 0 ? freqValue(shown[0], metric) : 0;
   const open = openKey ? freqs.find((f) => f.key === openKey) ?? null : null;
 
   if (freqs.length === 0) {
@@ -187,34 +228,61 @@ function FoodFrequencyPanel({
         ))}
       </div>
 
-      {top.map((f) => {
-        const v = freqValue(f, metric);
-        return (
-          <div
-            className={`cov-row${openKey === f.key ? ' sel' : ''}`}
-            key={f.key}
-            onClick={() => setOpenKey((prev) => (prev === f.key ? null : f.key))}
-            onMouseMove={(e) => setTip({ f, x: e.clientX, y: e.clientY })}
-            onMouseLeave={() => setTip((prev) => (prev?.f.key === f.key ? null : prev))}
+      <input
+        value={query}
+        onChange={(e) => setQuery(e.target.value)}
+        placeholder="Rechercher un aliment…"
+        style={{ width: '100%', marginBottom: 8 }}
+      />
+      <div className="row" style={{ gap: 6, flexWrap: 'wrap', marginBottom: 10 }}>
+        <button className={`ghost small ${cat === 'all' ? 'chip-active' : ''}`} onClick={() => setCat('all')}>
+          Tout
+        </button>
+        {CATEGORY_LABELS.map((c) => (
+          <button
+            key={c.key}
+            className={`ghost small ${cat === c.key ? 'chip-active' : ''}`}
+            onClick={() => setCat((v) => (v === c.key ? 'all' : c.key))}
           >
-            <span className="cov-label" title={f.nom}>
-              {openKey === f.key && <span style={{ color: 'var(--accent)' }}>● </span>}
-              {f.nom}
-            </span>
-            <div className="bar">
-              <span style={{ width: `${maxVal > 0 ? (v / maxVal) * 100 : 0}%` }} />
-            </div>
-            <span className="mono small" style={{ textAlign: 'right' }}>
-              {fmtFreqValue(v, metric)}
-            </span>
-          </div>
-        );
-      })}
+            {c.label}
+          </button>
+        ))}
+      </div>
 
-      {ranked.length > TOP_N && (
-        <div className="hint">
-          {ranked.length - TOP_N} autre(s) aliment(s) moins consommé(s) ne sont pas affichés.
-        </div>
+      {ranked.length === 0 ? (
+        <div className="empty">Aucun aliment ne correspond à ces filtres.</div>
+      ) : (
+        <>
+          {shown.map((f) => {
+            const v = freqValue(f, metric);
+            return (
+              <div
+                className={`cov-row${openKey === f.key ? ' sel' : ''}`}
+                key={f.key}
+                onClick={() => setOpenKey((prev) => (prev === f.key ? null : f.key))}
+                onMouseMove={(e) => setTip({ f, x: e.clientX, y: e.clientY })}
+                onMouseLeave={() => setTip((prev) => (prev?.f.key === f.key ? null : prev))}
+              >
+                <span className="cov-label" title={f.nom}>
+                  {openKey === f.key && <span style={{ color: 'var(--accent)' }}>● </span>}
+                  {f.nom}
+                </span>
+                <div className="bar">
+                  <span style={{ width: `${maxVal > 0 ? (v / maxVal) * 100 : 0}%` }} />
+                </div>
+                <span className="mono small" style={{ textAlign: 'right' }}>
+                  {fmtFreqValue(v, metric)}
+                </span>
+              </div>
+            );
+          })}
+
+          {ranked.length > TOP_N && (
+            <button className="ghost small" style={{ marginTop: 4 }} onClick={() => setShowAll((v) => !v)}>
+              {showAll ? '− Réduire' : `+ Voir les ${ranked.length - TOP_N} autre(s)`}
+            </button>
+          )}
+        </>
       )}
 
       {open && <FrequencyDetail f={open} entries={entries} range={range} days={days} />}
@@ -223,6 +291,47 @@ function FoodFrequencyPanel({
         <FollowTip x={tip.x} y={tip.y}>
           <FrequencyCard f={tip.f} days={days} />
         </FollowTip>
+      )}
+    </>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Mode « Mangés ensemble » : paires d'aliments qui reviennent dans la même requête
+// ---------------------------------------------------------------------------
+
+const PAIR_TOP_N = 20;
+
+function FoodPairsPanel({ entries, range }: { entries: JournalEntry[]; range: { start: string; end: string } }) {
+  const [showAll, setShowAll] = useState(false);
+  const pairs = useMemo(() => foodPairFrequencies(entries, range), [entries, range]);
+  const shown = showAll ? pairs : pairs.slice(0, PAIR_TOP_N);
+  const maxCount = pairs.length > 0 ? pairs[0].count : 0;
+
+  if (pairs.length === 0) {
+    return <div className="empty">Pas encore assez de repas avec plusieurs aliments pour voir des paires.</div>;
+  }
+
+  return (
+    <>
+      {shown.map((p) => (
+        <div className="cov-row" key={p.key}>
+          <span className="cov-label" title={`${p.nomA} + ${p.nomB}`}>
+            {p.nomA} + {p.nomB}
+          </span>
+          <div className="bar">
+            <span style={{ width: `${maxCount > 0 ? (p.count / maxCount) * 100 : 0}%` }} />
+          </div>
+          <span className="mono small" style={{ textAlign: 'right' }}>
+            {fmt(p.count)}×
+          </span>
+        </div>
+      ))}
+
+      {pairs.length > PAIR_TOP_N && (
+        <button className="ghost small" style={{ marginTop: 4 }} onClick={() => setShowAll((v) => !v)}>
+          {showAll ? '− Réduire' : `+ Voir les ${pairs.length - PAIR_TOP_N} autre(s)`}
+        </button>
       )}
     </>
   );

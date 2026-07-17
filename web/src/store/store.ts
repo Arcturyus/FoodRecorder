@@ -98,20 +98,6 @@ function uid(): string {
   return Math.random().toString(36).slice(2, 10);
 }
 
-/**
- * Nutriments ajoutés à l'app APRÈS que des entrées ont été enregistrées, et
- * recalculables rétroactivement depuis la base : les snapshots des anciens
- * jours sont à 0 pour ces clés (normalizeNutrients), alors que l'item connaît
- * son aliment (foodId) et sa masse. On complète donc l'historique au lieu de
- * n'avoir la donnée qu'à partir du jour de l'ajout (cf. backfillNutrients).
- *
- * ⚠️ Doit être déclaré AVANT `create()` : l'hydratation zustand (localStorage)
- * est synchrone pendant la création du store et appelle mergePersisted →
- * backfillNutrients. Un `const` déclaré plus bas serait encore en zone morte
- * temporelle → ReferenceError avalée par zustand → journal réinitialisé.
- */
-const BACKFILL_KEYS: (keyof Nutrients)[] = ['collagene'];
-
 /** Heure locale HH:MM (défaut pratique pour une nouvelle pesée). */
 function nowTime(d = new Date()): string {
   return `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`;
@@ -525,27 +511,23 @@ export const useStore = create<AppState>()(
       editFood: (id, patch) =>
         set((s) => {
           // Aliment perso : on édite l'objet directement (fusion des nutriments).
-          if (id.startsWith('custom-')) {
-            return {
-              customFoods: s.customFoods.map((f) =>
-                f.id === id ? { ...f, ...patch, id, n: { ...f.n, ...(patch.n ?? {}) } } : f,
-              ),
-            };
-          }
+          const customFoods = id.startsWith('custom-')
+            ? s.customFoods.map((f) => (f.id === id ? { ...f, ...patch, id, n: { ...f.n, ...(patch.n ?? {}) } } : f))
+            : s.customFoods;
           // Aliment de la banque : override cumulatif persistant.
           const prev = s.foodOverrides[id];
-          return {
-            foodOverrides: {
-              ...s.foodOverrides,
-              [id]: { ...prev, ...patch, n: { ...(prev?.n ?? {}), ...(patch.n ?? {}) } },
-            },
-          };
+          const foodOverrides = id.startsWith('custom-')
+            ? s.foodOverrides
+            : { ...s.foodOverrides, [id]: { ...prev, ...patch, n: { ...(prev?.n ?? {}), ...(patch.n ?? {}) } } };
+          // Répercute immédiatement la correction sur tout l'historique déjà saisi
+          // (mêmes items, nutriments recalculés depuis l'aliment mis à jour).
+          return { customFoods, foodOverrides, entries: resyncEntries(s.entries, effectiveFoods(customFoods, foodOverrides)) };
         }),
 
       resetFood: (id) =>
         set((s) => {
           const { [id]: _, ...rest } = s.foodOverrides;
-          return { foodOverrides: rest };
+          return { foodOverrides: rest, entries: resyncEntries(s.entries, effectiveFoods(s.customFoods, rest)) };
         }),
 
       addWeightEntry: (entry) => {
@@ -599,42 +581,44 @@ function normalizeNutrients(n: Partial<Nutrients> | undefined): Nutrients {
 }
 
 /**
- * Recalcule les nutriments « backfillables » d'un item depuis son aliment.
- * Ne touche à rien d'autre : les autres valeurs restent le snapshot d'origine.
- * Sont laissés tels quels : les items ajustés à la main (customN), ceux sans
- * aliment résolu (estimation IA, texte libre) et les valeurs déjà non nulles.
+ * Nutriments À JOUR d'un item : recalculés depuis l'aliment de la base (foodId)
+ * quand il est résolu et sans ajustement manuel — ainsi TOUTE correction de la
+ * base (nouveau nutriment ajouté, valeur corrigée, aliment édité…) se répercute
+ * automatiquement sur l'historique déjà saisi. Sinon (aliment supprimé/absent
+ * de la base, estimation IA, ajustement « pour cette fois ») on garde le
+ * snapshot figé, seulement complété des clés manquantes.
  */
-export function backfillNutrients(
+export function resolveItemNutrients(
   it: Pick<JournalItem, 'grams' | 'customN'> & { nutrients: Partial<Nutrients> | undefined },
   food: Food | null,
 ): Nutrients {
-  const n = normalizeNutrients(it.nutrients);
-  if (!food || it.customN || !(it.grams > 0)) return n;
-  for (const k of BACKFILL_KEYS) {
-    if (n[k] === 0 && food.n[k] > 0) n[k] = (food.n[k] * it.grams) / 100;
-  }
-  return n;
+  if (food && !it.customN && it.grams > 0) return scaleNutrients(food.n, it.grams);
+  return normalizeNutrients(it.nutrients);
+}
+
+/** Recalcule les nutriments de tous les items résolus d'un journal, depuis `foods`. */
+function resyncEntries(entries: JournalEntry[], foods: Food[]): JournalEntry[] {
+  return entries.map((e) => ({
+    ...e,
+    items: e.items.map((it) => ({
+      ...it,
+      nutrients: resolveItemNutrients(it, it.foodId ? foods.find((f) => f.id === it.foodId) ?? null : null),
+      ...(it.customN ? { customN: normalizeNutrients(it.customN) } : {}),
+    })),
+  }));
 }
 
 /**
  * Fusion à l'hydratation : réconcilie l'état persisté avec l'état courant et
- * complète les nutriments figés (entrées + aliments custom) avec les clés
- * ajoutées depuis la dernière sauvegarde (sinon `undefined` → NaN dans les totaux).
+ * recalcule les nutriments figés (entrées + aliments custom) depuis la base
+ * ACTUELLE — toute évolution de foods.ts (nouveaux nutriments, valeurs
+ * corrigées) se répercute ainsi sur tout l'historique dès le prochain chargement.
  */
 function mergePersisted(persisted: unknown, current: AppState): AppState {
   const p = (persisted ?? {}) as Partial<AppState>;
   const customFoods = (p.customFoods ?? []).map((food) => ({ ...food, n: normalizeNutrients(food.n) }));
   const overrides = p.foodOverrides ?? {};
-  const entries = (p.entries ?? []).map((e) => ({
-    ...e,
-    items: e.items.map((it) => ({
-      ...it,
-      // Complète les clés manquantes ET recalcule rétroactivement les
-      // nutriments ajoutés depuis (collagène…) pour les items résolus.
-      nutrients: backfillNutrients(it, it.foodId ? effectiveFoodById(it.foodId, customFoods, overrides) : null),
-      ...(it.customN ? { customN: normalizeNutrients(it.customN) } : {}),
-    })),
-  }));
+  const entries = resyncEntries(p.entries ?? [], effectiveFoods(customFoods, overrides));
   return {
     ...current,
     ...p,

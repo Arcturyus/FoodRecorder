@@ -1,4 +1,4 @@
-import type { Unit } from '../nutrition/types';
+import type { FoodCategory, Unit } from '../nutrition/types';
 
 export function round(n: number, d = 0): number {
   const f = 10 ** d;
@@ -28,3 +28,19 @@ export const UNIT_LABELS: Record<Unit, string> = {
   pincee: 'pincée(s)',
   dose: 'dose(s)',
 };
+
+/** Libellés lisibles des catégories d'aliments, dans l'ordre d'affichage. */
+export const CATEGORY_LABELS: { key: FoodCategory; label: string }[] = [
+  { key: 'fruit', label: 'Fruits' },
+  { key: 'legume', label: 'Légumes' },
+  { key: 'feculent', label: 'Féculents' },
+  { key: 'viande', label: 'Viandes' },
+  { key: 'poisson', label: 'Poissons' },
+  { key: 'oeuf-laitier', label: 'Œufs & laitages' },
+  { key: 'sucre-snack', label: 'Sucré / snacks' },
+  { key: 'matiere-grasse', label: 'Matières grasses' },
+  { key: 'boisson', label: 'Boissons' },
+  { key: 'plat', label: 'Plats' },
+  { key: 'supplement', label: 'Compléments & assaisonnements' },
+  { key: 'autre', label: 'Autres' },
+];

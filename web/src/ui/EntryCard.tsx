@@ -187,7 +187,7 @@ function ItemRow({ entryId, item, editing }: { entryId: string; item: JournalIte
 /** Nutriments détaillés d'un item, regroupés par famille (ordre d'affichage). */
 const DETAIL_GROUPS: { title: string; keys: NutrientKey[] }[] = [
   { title: 'Macros', keys: ['kcal', 'proteines', 'glucides', 'lipides', 'fibres'] },
-  { title: 'Lipides & oméga', keys: ['agSatures', 'agMonoInsatures', 'agPolyInsatures', 'omega3', 'omega6', 'omega9'] },
+  { title: 'Lipides & oméga', keys: ['agSatures', 'agTrans', 'agMonoInsatures', 'agPolyInsatures', 'omega3', 'omega6', 'omega9'] },
   { title: 'Minéraux', keys: ['fer', 'magnesium', 'potassium', 'calcium', 'zinc', 'sodium', 'selenium', 'iode'] },
   { title: 'Vitamines', keys: ['vitA', 'vitC', 'vitD', 'vitE', 'vitK1', 'vitK2', 'vitB1', 'vitB2', 'vitB3', 'vitB5', 'vitB6', 'vitB9', 'vitB12'] },
   { title: 'Autres', keys: ['creatine'] },
