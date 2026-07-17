@@ -1,16 +1,17 @@
 import { useRef, useState } from 'react';
-import { useStore } from '../store/store';
+import { useStore, useEffectiveFoods, recentFoodCounts } from '../store/store';
 import { MicRecorder } from '../stt/recorder';
 import { isSttLoaded, loadStt, transcribe } from '../stt/whisper';
 import { NativeRecognizer } from '../stt/webspeech';
 import { extractWithLlm } from '../extraction/llm';
 import { extractWithAnthropic, extractImageWithAnthropic } from '../extraction/anthropic';
 import { extractWithClaudeCode, extractImageWithClaudeCode } from '../extraction/claudeCode';
+import { verifyMatches } from '../extraction/verify';
 import { parseTranscript } from '../extraction/ruleParser';
 import { isSyncConfigured, pushTranscript, pushImage } from '../sync/supabase';
 import { normalizeForMatch, trigramSimilarity } from '../nutrition/normalize';
 import type { ExtractedItem } from '../nutrition/types';
-import type { FavoriteMeal } from '../store/store';
+import type { FavoriteMeal, JournalEntry } from '../store/store';
 
 /**
  * Reconnaît un repas favori dicté par son nom (« petit-déj habituel ») :
@@ -113,6 +114,7 @@ export function Capture({ date, title }: { date?: string; title?: string } = {})
   const [recording, setRecording] = useState(false);
 
   const addEntry = useStore((s) => s.addEntry);
+  const entries = useStore((s) => s.entries);
   const favoriteMeals = useStore((s) => s.favoriteMeals);
   const applyFavoriteMeal = useStore((s) => s.applyFavoriteMeal);
   const extractionMode = useStore((s) => s.extractionMode);
@@ -121,8 +123,36 @@ export function Capture({ date, title }: { date?: string; title?: string } = {})
   const sttEngine = useStore((s) => s.sttEngine);
   const sttModel = useStore((s) => s.sttModel);
   const deviceId = useStore((s) => s.deviceId);
+  const foods = useEffectiveFoods();
 
   const reviewHint = 'Vérifiez / corrigez le texte, puis cliquez « Ajouter ».';
+
+  /**
+   * Enregistre un repas extrait, après avoir laissé l'IA forte juger les
+   * correspondances incertaines de la base (cf. extraction/verify.ts). Renvoie
+   * la note à afficher quand elle a préféré sa propre estimation.
+   */
+  async function saveVerified(
+    transcript: string,
+    items: ExtractedItem[],
+    source: JournalEntry['source'],
+  ): Promise<string> {
+    let verified = items;
+    if (extractionMode === 'cloud' || extractionMode === 'claudecode') {
+      setStatus('Vérification des correspondances…');
+      verified = await verifyMatches(
+        items,
+        foods,
+        extractionMode,
+        cloudApiKey,
+        cloudModel,
+        recentFoodCounts(entries),
+      );
+    }
+    addEntry(transcript, verified, source, date);
+    const reestimes = verified.filter((v, i) => v.nutriments && !items[i]?.nutriments).length;
+    return reestimes > 0 ? ` · ${reestimes} estimé(s) par l'IA (hors base)` : '';
+  }
 
   async function handleRecord() {
     return sttEngine === 'native' ? handleRecordNative() : handleRecordWhisper();
@@ -263,10 +293,10 @@ export function Capture({ date, title }: { date?: string; title?: string } = {})
       setStatus('Aucun aliment détecté. Reformulez ou ajoutez à la main.');
       return;
     }
-    addEntry(clean, items, source, date);
+    const iaNote = await saveVerified(clean, items, source);
     setText('');
     const fallbackNote = source === 'rules' && extractionMode !== 'rules' ? ' [parseur, IA indisponible]' : '';
-    setStatus(`✓ Compris (${items.length})${fallbackNote} : ${summarize(items)}`);
+    setStatus(`✓ Compris (${items.length})${fallbackNote} : ${summarize(items)}${iaNote}`);
   }
 
   async function handleTextSubmit() {
@@ -293,8 +323,8 @@ export function Capture({ date, title }: { date?: string; title?: string } = {})
             setStatus('Aucun aliment détecté sur la photo. Reprenez la photo ou ajoutez à la main.');
             return;
           }
-          addEntry('📷 Photo', res.items, res.source, date);
-          setStatus(`✓ Compris (photo, ${res.items.length}) : ${summarize(res.items)}`);
+          const iaNote = await saveVerified('📷 Photo', res.items, res.source);
+          setStatus(`✓ Compris (photo, ${res.items.length}) : ${summarize(res.items)}${iaNote}`);
         } catch (bridgeErr) {
           // Pont indisponible ici (tel, ou site déployé) : mise en file d'attente
           // de la photo réduite, pour analyse différée par l'ordinateur.
@@ -316,8 +346,8 @@ export function Capture({ date, title }: { date?: string; title?: string } = {})
         setStatus('Aucun aliment détecté sur la photo. Reprenez la photo ou ajoutez à la main.');
         return;
       }
-      addEntry('📷 Photo', res.items, res.source, date);
-      setStatus(`✓ Compris (photo, ${res.items.length}) : ${summarize(res.items)}`);
+      const iaNote = await saveVerified('📷 Photo', res.items, res.source);
+      setStatus(`✓ Compris (photo, ${res.items.length}) : ${summarize(res.items)}${iaNote}`);
     } catch (err) {
       setStatus(`Erreur photo : ${(err as Error).message}`);
     } finally {

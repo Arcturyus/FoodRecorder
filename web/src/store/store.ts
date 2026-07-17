@@ -98,6 +98,20 @@ function uid(): string {
   return Math.random().toString(36).slice(2, 10);
 }
 
+/**
+ * Nutriments ajoutés à l'app APRÈS que des entrées ont été enregistrées, et
+ * recalculables rétroactivement depuis la base : les snapshots des anciens
+ * jours sont à 0 pour ces clés (normalizeNutrients), alors que l'item connaît
+ * son aliment (foodId) et sa masse. On complète donc l'historique au lieu de
+ * n'avoir la donnée qu'à partir du jour de l'ajout (cf. backfillNutrients).
+ *
+ * ⚠️ Doit être déclaré AVANT `create()` : l'hydratation zustand (localStorage)
+ * est synchrone pendant la création du store et appelle mergePersisted →
+ * backfillNutrients. Un `const` déclaré plus bas serait encore en zone morte
+ * temporelle → ReferenceError avalée par zustand → journal réinitialisé.
+ */
+const BACKFILL_KEYS: (keyof Nutrients)[] = ['collagene'];
+
 /** Heure locale HH:MM (défaut pratique pour une nouvelle pesée). */
 function nowTime(d = new Date()): string {
   return `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`;
@@ -209,6 +223,8 @@ interface AppState {
   deviceId: string;
   /** Horodatage de la dernière entrée synchronisée reçue d'un autre appareil. */
   syncCursor: string | null;
+  /** Jour (YYYY-MM-DD) de la dernière sauvegarde automatique écrite sur le disque. */
+  lastAutoSave: string | null;
 
   setSttEngine: (e: SttEngine) => void;
   setSttModel: (id: string) => void;
@@ -218,6 +234,7 @@ interface AppState {
   setCloudModel: (id: string) => void;
   setProfile: (patch: Partial<Profile>) => void;
   setSyncCursor: (cursor: string) => void;
+  setLastAutoSave: (day: string) => void;
 
   /** Enregistre automatiquement une entrée (auto-validation, plan §Phase 4). */
   /** Ajoute un repas extrait (voix/texte/photo). `date` : jour ciblé (défaut aujourd'hui). */
@@ -262,6 +279,8 @@ interface AppState {
 
   /** Enregistre une sortie au soleil (section « Soleil » du jour). */
   addSunExposure: (e: Omit<SunExposure, 'id' | 'createdAt'>) => void;
+  /** Corrige une sortie déjà enregistrée (durée, ciel, peau… après une dictée auto-validée). */
+  updateSunExposure: (id: string, patch: Partial<Omit<SunExposure, 'id' | 'createdAt'>>) => void;
   removeSunExposure: (id: string) => void;
 }
 
@@ -284,6 +303,7 @@ export const useStore = create<AppState>()(
       sunExposures: [],
       deviceId: uid(),
       syncCursor: null,
+      lastAutoSave: null,
 
       setSttEngine: (e) => set({ sttEngine: e }),
       setSttModel: (id) => set({ sttModel: id }),
@@ -293,6 +313,7 @@ export const useStore = create<AppState>()(
       setCloudModel: (id) => set({ cloudModel: id }),
       setProfile: (patch) => set((s) => ({ profile: { ...s.profile, ...patch } })),
       setSyncCursor: (cursor) => set({ syncCursor: cursor }),
+      setLastAutoSave: (day) => set({ lastAutoSave: day }),
 
       addEntry: (transcript, items, source, date) => {
         const computed = computeItems(
@@ -558,6 +579,13 @@ export const useStore = create<AppState>()(
       addSunExposure: (e) =>
         set((s) => ({ sunExposures: [{ ...e, id: uid(), createdAt: Date.now() }, ...s.sunExposures] })),
 
+      updateSunExposure: (id, patch) =>
+        set((s) => ({
+          sunExposures: s.sunExposures.map((e) =>
+            e.id === id ? { ...e, ...patch, ...(patch.creme ? { creme: normalizeCreme(patch.creme) } : {}) } : e,
+          ),
+        })),
+
       removeSunExposure: (id) =>
         set((s) => ({ sunExposures: s.sunExposures.filter((e) => e.id !== id) })),
     }),
@@ -571,21 +599,42 @@ function normalizeNutrients(n: Partial<Nutrients> | undefined): Nutrients {
 }
 
 /**
+ * Recalcule les nutriments « backfillables » d'un item depuis son aliment.
+ * Ne touche à rien d'autre : les autres valeurs restent le snapshot d'origine.
+ * Sont laissés tels quels : les items ajustés à la main (customN), ceux sans
+ * aliment résolu (estimation IA, texte libre) et les valeurs déjà non nulles.
+ */
+export function backfillNutrients(
+  it: Pick<JournalItem, 'grams' | 'customN'> & { nutrients: Partial<Nutrients> | undefined },
+  food: Food | null,
+): Nutrients {
+  const n = normalizeNutrients(it.nutrients);
+  if (!food || it.customN || !(it.grams > 0)) return n;
+  for (const k of BACKFILL_KEYS) {
+    if (n[k] === 0 && food.n[k] > 0) n[k] = (food.n[k] * it.grams) / 100;
+  }
+  return n;
+}
+
+/**
  * Fusion à l'hydratation : réconcilie l'état persisté avec l'état courant et
  * complète les nutriments figés (entrées + aliments custom) avec les clés
  * ajoutées depuis la dernière sauvegarde (sinon `undefined` → NaN dans les totaux).
  */
 function mergePersisted(persisted: unknown, current: AppState): AppState {
   const p = (persisted ?? {}) as Partial<AppState>;
+  const customFoods = (p.customFoods ?? []).map((food) => ({ ...food, n: normalizeNutrients(food.n) }));
+  const overrides = p.foodOverrides ?? {};
   const entries = (p.entries ?? []).map((e) => ({
     ...e,
     items: e.items.map((it) => ({
       ...it,
-      nutrients: normalizeNutrients(it.nutrients),
+      // Complète les clés manquantes ET recalcule rétroactivement les
+      // nutriments ajoutés depuis (collagène…) pour les items résolus.
+      nutrients: backfillNutrients(it, it.foodId ? effectiveFoodById(it.foodId, customFoods, overrides) : null),
       ...(it.customN ? { customN: normalizeNutrients(it.customN) } : {}),
     })),
   }));
-  const customFoods = (p.customFoods ?? []).map((food) => ({ ...food, n: normalizeNutrients(food.n) }));
   return {
     ...current,
     ...p,

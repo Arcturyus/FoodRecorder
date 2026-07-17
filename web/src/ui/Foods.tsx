@@ -7,6 +7,7 @@ import { EMPTY_NUTRIENTS } from '../nutrition/types';
 import type { Food, FoodCategory, NutrientKey, Nutrients } from '../nutrition/types';
 import { fmt, UNIT_LABELS } from './format';
 import { FoodExplorer } from './FoodExplorer';
+import { FoodConsumption } from './FoodFrequency';
 
 /** Libellés lisibles des catégories, dans l'ordre d'affichage. */
 const CATEGORY_LABELS: { key: FoodCategory; label: string }[] = [
@@ -42,13 +43,14 @@ const OPTIONAL_MICROS: { key: keyof Nutrients; label: string }[] = [
   { key: 'vitB12', label: 'Vitamine B12 (µg)' },
 ];
 
-type Mode = 'liste' | 'classement' | 'explorer';
+type Mode = 'liste' | 'classement' | 'consommation' | 'explorer';
 
 /**
  * Onglet « Aliments » : fusion de l'ancienne banque et des aliments perso.
- * Tout aliment (banque ou perso) est modifiable. Trois modes :
+ * Tout aliment (banque ou perso) est modifiable. Quatre modes :
  *  - « Liste » : recherche/filtre, ajout perso et édition en place de chaque aliment ;
  *  - « Classement » : aliments les plus riches en un nutriment choisi (pour 100 g) ;
+ *  - « Consommation » : ce que VOUS mangez le plus (fréquences sur le journal) ;
  *  - « Explorer visuel » : atelier de visualisations D3.
  */
 export function Foods() {
@@ -73,6 +75,12 @@ export function Foods() {
             Classement par nutriment
           </button>
           <button
+            className={`ghost small ${mode === 'consommation' ? 'chip-active' : ''}`}
+            onClick={() => setMode('consommation')}
+          >
+            Consommation
+          </button>
+          <button
             className={`ghost small ${mode === 'explorer' ? 'chip-active' : ''}`}
             onClick={() => setMode('explorer')}
           >
@@ -83,6 +91,7 @@ export function Foods() {
 
       {mode === 'liste' && <FoodList foods={foods} />}
       {mode === 'classement' && <NutrientRanking foods={foods} />}
+      {mode === 'consommation' && <FoodConsumption />}
       {mode === 'explorer' && <FoodExplorer foods={foods} />}
     </>
   );

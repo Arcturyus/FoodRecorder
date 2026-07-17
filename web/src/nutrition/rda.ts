@@ -191,4 +191,9 @@ export const RDA: RdaEntry[] = [
     role: 'Recharge rapide de l\'ATP : force, puissance et performances sur efforts brefs.',
     optimalNote: 'Pas d\'AJR officiel. ~3 g/j (synthèse ~1 g + apport) ; supplémenter jusqu\'à 3-5 g est courant et sûr.',
   },
+  {
+    key: 'collagene', label: 'Collagène', unit: 'g', rda: 10, goal: 'atLeast', optimalFactor: 1,
+    role: 'Protéine structurale de la peau, des tendons, du cartilage et des os ; soutient les articulations.',
+    optimalNote: 'Pas d\'AJR officiel : repère issu des études (~10 g/j de peptides). Sous-ensemble des protéines, présent uniquement dans les tissus conjonctifs animaux (peau, tendons, os, morceaux gélatineux) — nul dans les végétaux, les laitages et les œufs.',
+  },
 ];

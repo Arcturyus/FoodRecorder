@@ -2,7 +2,7 @@ import { useMemo, useRef, useState } from 'react';
 import { scaleLinear, scaleLog } from 'd3-scale';
 import { line as d3line, arc as d3arc, pie as d3pie } from 'd3-shape';
 import { max as d3max } from 'd3-array';
-import { useStore, todayStr } from '../store/store';
+import { useStore, todayStr, useEffectiveFoods } from '../store/store';
 import { computeTargets } from '../nutrition/targets';
 import type { Target } from '../nutrition/targets';
 import { RATIOS, computeRatio } from '../nutrition/ratios';
@@ -105,21 +105,42 @@ export function Stats() {
    * reçue) tire artificiellement les moyennes vers le bas en début de journée.
    */
   const [includeToday, setIncludeToday] = useState(false);
+  /**
+   * Retire les compléments et assaisonnements (catégorie « supplement ») de
+   * toutes les analyses : ce que l'alimentation seule apporte vraiment, donc
+   * quels suppléments sont réellement utiles.
+   */
+  const [excludeSupplements, setExcludeSupplements] = useState(false);
   const today = todayStr();
 
-  /** Totaux par jour (tous nutriments) pour tout l'historique. */
+  const foods = useEffectiveFoods();
+  /** Ids des aliments « supplement » (banque + perso), pour le filtre ci-dessous. */
+  const supplementIds = useMemo(
+    () => new Set(foods.filter((f) => f.categorie === 'supplement').map((f) => f.id)),
+    [foods],
+  );
+
+  /**
+   * Totaux par jour (tous nutriments) pour tout l'historique. Un jour n'apparaît
+   * que s'il reste au moins un item après filtrage : sinon une journée ne
+   * contenant QUE des suppléments compterait comme un jour enregistré à zéro et
+   * tirerait toutes les moyennes vers le bas.
+   */
   const byDate = useMemo(() => {
     const map = new Map<string, Nutrients>();
     for (const e of entries) {
-      let t = map.get(e.date);
-      if (!t) {
-        t = { ...EMPTY_NUTRIENTS };
-        map.set(e.date, t);
+      for (const it of e.items) {
+        if (excludeSupplements && it.foodId && supplementIds.has(it.foodId)) continue;
+        let t = map.get(e.date);
+        if (!t) {
+          t = { ...EMPTY_NUTRIENTS };
+          map.set(e.date, t);
+        }
+        for (const k of KEYS) t[k] += it.nutrients[k] ?? 0;
       }
-      for (const it of e.items) for (const k of KEYS) t[k] += it.nutrients[k] ?? 0;
     }
     return map;
-  }, [entries]);
+  }, [entries, excludeSupplements, supplementIds]);
 
   /**
    * Totaux par jour avec la vitamine D du SOLEIL intégrée (mêmes jours que `byDate`).
@@ -250,7 +271,7 @@ export function Stats() {
           <h2 style={{ margin: 0 }}>Analyse sur {days} jours</h2>
           <PeriodSelector value={period} onChange={setPeriod} />
         </div>
-        <div className="row" style={{ alignItems: 'center', marginTop: 4 }}>
+        <div className="row" style={{ alignItems: 'center', marginTop: 4, gap: 16, flexWrap: 'wrap' }}>
           <label
             className="row small"
             style={{ gap: 6, alignItems: 'center', cursor: 'pointer' }}
@@ -259,10 +280,32 @@ export function Stats() {
             <input type="checkbox" checked={includeToday} onChange={(e) => setIncludeToday(e.target.checked)} />
             Inclure la journée en cours dans les moyennes
           </label>
+          <label
+            className="row small"
+            style={{ gap: 6, alignItems: 'center', cursor: 'pointer' }}
+            title="Retire créatine, whey, magnésium, vitamines, oméga 3… mais aussi le sel et le poivre (même catégorie) de toutes les analyses ci-dessous. Le gain de vitamine D du soleil, lui, est conservé."
+          >
+            <input
+              type="checkbox"
+              checked={excludeSupplements}
+              onChange={(e) => setExcludeSupplements(e.target.checked)}
+            />
+            Sans les suppléments
+          </label>
         </div>
         <div className="hint">
           {recorded.length} jour(s) enregistré(s) sur cette période ({days} j
           {!includeToday && ", aujourd'hui exclu"}) — tout est recalculé sur la période.
+          {excludeSupplements && (
+            <>
+              {' '}
+              <strong>Suppléments exclus</strong> : les courbes, moyennes et couvertures ci-dessous montrent ce que
+              votre <em>alimentation seule</em> apporte — utile pour voir quels compléments comblent un vrai manque.
+              La catégorie « Compléments &amp; assaisonnements » inclut le sel et le poivre, également retirés (le
+              sodium chute donc fortement). Les aliments estimés par l'IA, sans aliment de la base associé, restent
+              comptés.
+            </>
+          )}
         </div>
       </div>
 
@@ -612,14 +655,25 @@ function MultiTrend({
 // Sélecteur unique d'éléments (nutriments + rapports), compact multi-colonnes
 // ---------------------------------------------------------------------------
 
-/** Groupes du sélecteur : rapports en tête, puis nutriments par famille. */
-const PICKER_GROUPS: { title: string; keys: NutrientKey[] }[] = [
+/** Groupes nommés du sélecteur : rapports en tête, puis nutriments par famille. */
+const NAMED_GROUPS: { title: string; keys: NutrientKey[] }[] = [
   { title: 'Macros', keys: ['kcal', 'proteines', 'glucides', 'lipides', 'fibres'] },
   { title: 'Lipides & oméga', keys: ['agSatures', 'agMonoInsatures', 'agPolyInsatures', 'omega3', 'omega6', 'omega9'] },
   { title: 'Minéraux', keys: ['fer', 'magnesium', 'potassium', 'calcium', 'zinc', 'sodium', 'selenium', 'iode'] },
   { title: 'Vitamines', keys: ['vitA', 'vitC', 'vitD', 'vitE', 'vitK1', 'vitK2', 'vitB1', 'vitB2', 'vitB3', 'vitB5', 'vitB6', 'vitB9', 'vitB12'] },
-  { title: 'Autres', keys: ['creatine'] },
 ];
+
+/**
+ * « Autres » est CALCULÉ : tout nutriment de `Nutrients` absent des groupes
+ * nommés y tombe automatiquement. Un nouveau nutriment (créatine hier,
+ * collagène aujourd'hui) apparaît ainsi dans le sélecteur sans qu'on ait à
+ * penser à cette liste — c'est précisément l'oubli qui a fait « disparaître »
+ * le collagène de la tendance à son ajout.
+ */
+const PICKER_GROUPS: { title: string; keys: NutrientKey[] }[] = (() => {
+  const named = new Set(NAMED_GROUPS.flatMap((g) => g.keys));
+  return [...NAMED_GROUPS, { title: 'Autres', keys: KEYS.filter((k) => !named.has(k)) }];
+})();
 
 function Chip({
   id,
@@ -991,6 +1045,7 @@ function MacroDonut({ totals }: { totals: { proteines: number; glucides: number;
     </div>
   );
 }
+
 
 // ---------------------------------------------------------------------------
 // Tooltip partagé

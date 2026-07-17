@@ -109,6 +109,51 @@ export function normalizeCreme(c: Creme | boolean | undefined | null): Creme {
   return c;
 }
 
+/** Champs qu'une dictée peut renseigner (structurellement : `SunPatch`). */
+export type SunPatchLike = Partial<
+  Pick<SunExposure, 'date' | 'heure' | 'dureeMin' | 'ciel' | 'peau' | 'phenotype' | 'creme'>
+>;
+
+/** Toutes les valeurs d'une sortie, servant de fond à une dictée partielle. */
+export type SunDefaults = Omit<SunExposure, 'id' | 'createdAt'>;
+
+/**
+ * Réglages retenus quand rien n'est dit ni affiché à l'écran (synchro entre
+ * appareils : le poste qui analyse n'a pas le formulaire de celui qui a dicté).
+ * Volontairement prudents : sans précision, on suppose un ciel moyen et une
+ * tenue courante plutôt que les conditions les plus généreuses.
+ */
+export const SUN_FALLBACK: Omit<SunDefaults, 'date'> = {
+  heure: '13:00',
+  dureeMin: 30,
+  ciel: 'ensoleille',
+  peau: 'visage-bras',
+  phenotype: 'blanc',
+  creme: 'aucune',
+};
+
+/** Bornes du curseur de durée (une sortie enregistrée reste dans cette plage). */
+const MIN_DUREE = 5;
+const MAX_DUREE = 240;
+
+/**
+ * Complète une sortie dictée (partielle) avec des valeurs par défaut : l'IA ne
+ * renseigne que ce qui a été dit, le reste vient du formulaire (UI) ou de
+ * `SUN_FALLBACK` (synchro). `ignoreDate` : le jour est imposé par l'écran
+ * (édition d'un jour passé), la date dictée est alors écartée.
+ */
+export function completeSunExposure(p: SunPatchLike, defaults: SunDefaults, ignoreDate = false): SunDefaults {
+  return {
+    date: !ignoreDate && p.date ? p.date : defaults.date,
+    heure: p.heure ?? defaults.heure,
+    dureeMin: Math.min(MAX_DUREE, Math.max(MIN_DUREE, Math.round(p.dureeMin ?? defaults.dureeMin))),
+    ciel: p.ciel ?? defaults.ciel,
+    peau: p.peau ?? defaults.peau,
+    phenotype: p.phenotype ?? defaults.phenotype,
+    creme: p.creme != null ? normalizeCreme(p.creme) : defaults.creme,
+  };
+}
+
 /**
  * Surface de peau crémée (dans les unités de `SKIN_OPTIONS.factor`) : toute la
  * peau découverte en crème « complète », seulement le visage en crème « visage »

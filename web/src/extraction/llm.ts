@@ -28,14 +28,15 @@ Réponds UNIQUEMENT avec un JSON {"items":[{"aliment","quantite","unite","estima
 - "unite" ∈ ["g","ml","piece","portion","cas","cac","bol","verre","assiette","tranche","poignee","carre","pot","pincee","dose"].
 - "aliment" : le nom de l'aliment, en français, sans quantité ni adjectifs superflus.
 - Si la quantité n'est pas donnée, choisis une quantité plausible et mets "estimation": true, sinon false.
+- PRIVILÉGIE l'unité "g" (ou "ml" pour un liquide) : convertis toi-même les contenants en grammes (un bol de riz → 200 g, une assiette de pâtes → 280 g, une cuillère à soupe d'huile → 14 g, une poignée d'amandes → 30 g). Utilise "mg"/"µg" pour un complément dosé (300 mg de magnésium). "piece" seulement pour un objet dénombrable standard (œuf, banane, yaourt, carré de chocolat).
 - N'invente JAMAIS de valeurs nutritionnelles. N'ajoute aucun aliment non mentionné.
 
 Exemples :
 "j'ai mangé un bol de riz avec 150 g de poulet et un yaourt nature"
-→ {"items":[{"aliment":"riz","quantite":1,"unite":"bol","estimation":false},{"aliment":"poulet","quantite":150,"unite":"g","estimation":false},{"aliment":"yaourt nature","quantite":1,"unite":"piece","estimation":false}]}
+→ {"items":[{"aliment":"riz","quantite":200,"unite":"g","estimation":true},{"aliment":"poulet","quantite":150,"unite":"g","estimation":false},{"aliment":"yaourt nature","quantite":1,"unite":"piece","estimation":false}]}
 
 "euh ce midi j'ai pris genre des pâtes avec du fromage râpé"
-→ {"items":[{"aliment":"pâtes","quantite":1,"unite":"assiette","estimation":true},{"aliment":"fromage râpé","quantite":2,"unite":"cas","estimation":true}]}
+→ {"items":[{"aliment":"pâtes","quantite":280,"unite":"g","estimation":true},{"aliment":"fromage râpé","quantite":20,"unite":"g","estimation":true}]}
 
 "deux œufs au plat, une demi-baguette et trois carrés de chocolat noir"
 → {"items":[{"aliment":"œuf au plat","quantite":2,"unite":"piece","estimation":false},{"aliment":"baguette","quantite":0.5,"unite":"piece","estimation":false},{"aliment":"chocolat noir","quantite":3,"unite":"carre","estimation":false}]}`;

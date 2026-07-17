@@ -1,0 +1,99 @@
+import { describe, expect, it } from 'vitest';
+import { foodFrequencies, frequencyKey, occurrencesByDate } from '../src/nutrition/frequency';
+import type { JournalEntry, JournalItem } from '../src/store/store';
+import { EMPTY_NUTRIENTS } from '../src/nutrition/types';
+
+function item(foodId: string | null, nom: string, kcal = 100, grams = 100): JournalItem {
+  return {
+    id: `i-${nom}-${Math.random()}`,
+    foodId,
+    nomAffiche: nom,
+    quantite: 1,
+    unite: 'piece',
+    grams,
+    nutrients: { ...EMPTY_NUTRIENTS, kcal },
+    estimation: false,
+    douteux: false,
+  };
+}
+
+function entry(date: string, items: JournalItem[], createdAt = 0): JournalEntry {
+  return { id: `e-${date}-${createdAt}`, date, createdAt, transcript: '', source: 'manuel', items };
+}
+
+const ALL = { start: '2026-01-01', end: '2026-12-31' };
+
+describe('foodFrequencies', () => {
+  it('agrège occurrences, jours distincts, grammes et kcal par aliment', () => {
+    const entries = [
+      entry('2026-03-01', [item('saumon', 'Saumon (cuit)', 200, 130), item('riz-blanc', 'Riz blanc (cuit)')]),
+      // Deux fois du saumon le MÊME jour : 2 occurrences mais 1 seul jour.
+      entry('2026-03-05', [item('saumon', 'Saumon (cuit)', 200, 130), item('saumon', 'Saumon (cuit)', 200, 70)], 1),
+    ];
+
+    const [saumon, riz] = foodFrequencies(entries, ALL);
+
+    expect(saumon.foodId).toBe('saumon');
+    expect(saumon.occurrences).toBe(3);
+    expect(saumon.jours).toBe(2);
+    expect(saumon.grammes).toBe(330);
+    expect(saumon.kcal).toBe(600);
+    expect(saumon.dates).toEqual(['2026-03-01', '2026-03-05']);
+    expect(saumon.derniere).toBe('2026-03-05');
+
+    // Tri par occurrences décroissantes.
+    expect(riz.foodId).toBe('riz-blanc');
+    expect(riz.occurrences).toBe(1);
+  });
+
+  it('ne retient que les entrées de la plage demandée', () => {
+    const entries = [
+      entry('2026-03-01', [item('banane', 'Banane')]),
+      entry('2026-06-01', [item('banane', 'Banane')]),
+    ];
+    const freqs = foodFrequencies(entries, { start: '2026-05-01', end: '2026-07-01' });
+    expect(freqs).toHaveLength(1);
+    expect(freqs[0].occurrences).toBe(1);
+    expect(freqs[0].dates).toEqual(['2026-06-01']);
+  });
+
+  it('regroupe les aliments non résolus sur leur nom normalisé', () => {
+    const entries = [
+      entry('2026-03-01', [item(null, 'Tarte aux myrtilles')]),
+      entry('2026-03-02', [item(null, 'tarte aux myrtille')], 1),
+    ];
+    const freqs = foodFrequencies(entries, ALL);
+    expect(freqs).toHaveLength(1);
+    expect(freqs[0].foodId).toBeNull();
+    expect(freqs[0].occurrences).toBe(2);
+    // Libellé retenu = celui de la consommation la plus récente.
+    expect(freqs[0].nom).toBe('tarte aux myrtille');
+  });
+
+  it('ne confond pas deux aliments distincts de même libellé mais d’ids différents', () => {
+    const entries = [
+      entry('2026-03-01', [item('fromage-blanc-0', 'Fromage blanc'), item('fromage-blanc', 'Fromage blanc')]),
+    ];
+    expect(foodFrequencies(entries, ALL)).toHaveLength(2);
+  });
+
+  it('frequencyKey préfère le foodId et normalise les noms libres', () => {
+    expect(frequencyKey('saumon', 'Saumon (cuit)')).toBe('saumon');
+    expect(frequencyKey(null, 'Tartes aux Myrtilles')).toBe(frequencyKey(null, 'tarte aux myrtille'));
+  });
+});
+
+describe('occurrencesByDate', () => {
+  it('compte les occurrences par jour pour un seul aliment', () => {
+    const entries = [
+      entry('2026-03-01', [item('saumon', 'Saumon (cuit)'), item('riz-blanc', 'Riz blanc (cuit)')]),
+      entry('2026-03-01', [item('saumon', 'Saumon (cuit)')], 1),
+      entry('2026-03-04', [item('saumon', 'Saumon (cuit)')], 2),
+    ];
+    const [saumon] = foodFrequencies(entries, ALL);
+    const counts = occurrencesByDate(saumon, entries);
+    expect(counts.get('2026-03-01')).toBe(2);
+    expect(counts.get('2026-03-04')).toBe(1);
+    expect(counts.size).toBe(2);
+  });
+});

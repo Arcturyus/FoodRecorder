@@ -1,6 +1,6 @@
 /**
  * Valeurs nutritionnelles pour 100 g d'aliment.
- * Unités : kcal ; g pour macros/fibres/créatine ; mg pour fer→sodium, vitC, vitE ;
+ * Unités : kcal ; g pour macros/fibres/créatine/collagène ; mg pour fer→sodium, vitC, vitE ;
  * µg pour sélénium, iode, vitA (EAR), vitD, B9, B12, K1, K2.
  */
 export interface Nutrients {
@@ -41,6 +41,7 @@ export interface Nutrients {
   vitB12: number; // µg
   // autres
   creatine: number; // g (viandes/poissons, valeurs manuelles)
+  collagene: number; // g (sous-ensemble des protéines : tissus conjonctifs animaux, nul dans les végétaux)
 }
 
 export type NutrientKey = keyof Nutrients;
@@ -146,5 +147,5 @@ export const EMPTY_NUTRIENTS: Nutrients = {
   selenium: 0, iode: 0,
   vitA: 0, vitC: 0, vitD: 0, vitE: 0, vitK1: 0, vitK2: 0,
   vitB1: 0, vitB2: 0, vitB3: 0, vitB5: 0, vitB6: 0, vitB9: 0, vitB12: 0,
-  creatine: 0,
+  creatine: 0, collagene: 0,
 };

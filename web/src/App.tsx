@@ -6,6 +6,7 @@ import { dayKcalUncertainty } from './nutrition/uncertainty';
 import { sunVitDForDate } from './sun/vitaminD';
 import { isSyncConfigured } from './sync/supabase';
 import { runSyncTick } from './sync/poller';
+import { runAutoSaveTick } from './store/autosave';
 
 /** Intervalle entre deux vérifications de la file de synchro (30 s). */
 const SYNC_INTERVAL_MS = 30_000;
@@ -89,6 +90,12 @@ export function App() {
     runSyncTick();
     const id = setInterval(runSyncTick, SYNC_INTERVAL_MS);
     return () => clearInterval(id);
+  }, []);
+
+  // Filet de sécurité : une sauvegarde JSON par jour sur le disque, à la
+  // première ouverture (sous `npm run dev` uniquement — no-op ailleurs).
+  useEffect(() => {
+    runAutoSaveTick();
   }, []);
 
   return (

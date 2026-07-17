@@ -60,7 +60,7 @@ export function addNutrients(a: Nutrients, b: Nutrients): Nutrients {
  * prime — un plat (« gâteau au chocolat noir ») ne doit pas être écrasé par un de
  * ses ingrédients présents en base (« chocolat noir »).
  */
-const STRONG_DB_MATCH = 0.9;
+export const STRONG_DB_MATCH = 0.9;
 
 /** Construit un aliment synthétique à partir d'une estimation IA (hors base). */
 export function iaEstimatedFood(extracted: ExtractedItem): Food | null {

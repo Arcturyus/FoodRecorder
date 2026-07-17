@@ -1,6 +1,10 @@
-import { useMemo, useState } from 'react';
-import { useStore, todayStr } from '../store/store';
+import { useEffect, useMemo, useState } from 'react';
+import { useStore, todayStr, useEffectiveFoods } from '../store/store';
 import { computeTargets } from '../nutrition/targets';
+import { foodFrequencies, frequencyKey } from '../nutrition/frequency';
+import type { FoodFrequency } from '../nutrition/frequency';
+import { matchFood } from '../nutrition/match';
+import { normalizeForMatch } from '../nutrition/normalize';
 import { dayKcalUncertainty } from '../nutrition/uncertainty';
 import { Capture } from './Capture';
 import { EntryCard } from './EntryCard';
@@ -41,6 +45,14 @@ export function History() {
   const now = new Date();
   const [ym, setYm] = useState<{ y: number; m: number }>({ y: now.getFullYear(), m: now.getMonth() });
   const [editDate, setEditDate] = useState<string | null>(null);
+  /** Jours mis en évidence par la recherche d'aliment (« quand ai-je mangé du saumon ? »). */
+  const [foundDates, setFoundDates] = useState<Set<string>>(new Set());
+
+  /** Ouvre un jour trouvé par la recherche, en basculant le calendrier sur son mois. */
+  function goToDate(date: string) {
+    setYm({ y: Number(date.slice(0, 4)), m: Number(date.slice(5, 7)) - 1 });
+    setEditDate(date);
+  }
 
   /** Totaux kcal par jour (tout l'historique). */
   const kcalByDate = useMemo(() => {
@@ -74,6 +86,8 @@ export function History() {
 
   return (
     <>
+      <FoodSearch onDatesChange={setFoundDates} onPickDate={goToDate} />
+
       <div className="panel">
         <div className="row" style={{ justifyContent: 'space-between', alignItems: 'center' }}>
           <button className="ghost" onClick={() => shift(-1)} aria-label="Mois précédent">
@@ -109,6 +123,7 @@ export function History() {
                 isToday={date === today}
                 isFuture={date > today}
                 selected={date === editDate}
+                found={foundDates.has(date)}
                 onClick={() => setEditDate(date)}
               />
             ),
@@ -124,6 +139,11 @@ export function History() {
           <span>
             <i className="cal-legend over" /> au-dessus
           </span>
+          {foundDates.size > 0 && (
+            <span>
+              <i className="cal-legend found" /> contient l'aliment recherché
+            </span>
+          )}
         </div>
       </div>
 
@@ -140,6 +160,7 @@ function CalCell({
   isToday,
   isFuture,
   selected,
+  found,
   onClick,
 }: {
   date: string;
@@ -148,6 +169,8 @@ function CalCell({
   isToday: boolean;
   isFuture: boolean;
   selected: boolean;
+  /** Jour contenant l'aliment recherché (mis en évidence). */
+  found: boolean;
   onClick: () => void;
 }) {
   const day = Number(date.slice(8, 10));
@@ -158,9 +181,10 @@ function CalCell({
     <button
       className={`cal-cell${isToday ? ' today' : ''}${selected ? ' selected' : ''}${isFuture ? ' future' : ''}${
         kcal != null ? ' filled' : ''
-      }`}
+      }${found ? ' found' : ''}`}
       onClick={onClick}
       disabled={isFuture}
+      title={found ? 'Contient l’aliment recherché' : undefined}
     >
       <span className="cal-day">{day}</span>
       {kcal != null && (
@@ -173,6 +197,140 @@ function CalCell({
       )}
     </button>
   );
+}
+
+// ---------------------------------------------------------------------------
+// Recherche d'un aliment dans l'historique
+// ---------------------------------------------------------------------------
+
+/** Nombre de jours affichés d'emblée dans les résultats (le reste au clic). */
+const DATES_SHOWN = 12;
+
+/**
+ * « Quand ai-je mangé du saumon ? » : cherche un aliment dans tout l'historique
+ * et répond par sa fréquence et la liste des jours, cliquables (le calendrier
+ * bascule sur le mois du jour choisi et l'ouvre). Les jours trouvés sont aussi
+ * mis en évidence dans le calendrier.
+ */
+function FoodSearch({
+  onDatesChange,
+  onPickDate,
+}: {
+  onDatesChange: (dates: Set<string>) => void;
+  onPickDate: (date: string) => void;
+}) {
+  const entries = useStore((s) => s.entries);
+  const foods = useEffectiveFoods();
+  const [query, setQuery] = useState('');
+  const [pickedKey, setPickedKey] = useState<string | null>(null);
+  const [showAll, setShowAll] = useState(false);
+
+  const today = todayStr();
+  /** Fréquences sur TOUT l'historique (la recherche n'est pas bornée à une période). */
+  const freqs = useMemo(() => foodFrequencies(entries, { start: '0000-01-01', end: today }), [entries, today]);
+
+  /**
+   * Résultats : recoupement direct sur le libellé (« saumon » → « Saumon (cuit) »,
+   * « Saumon fumé »), complété par le matching flou de l'app quand rien ne
+   * ressort (fautes de frappe, alias : « pavé de saumon » → aliment `saumon`).
+   */
+  const results = useMemo<FoodFrequency[]>(() => {
+    const q = normalizeForMatch(query.trim());
+    if (q.length < 2) return [];
+    const direct = freqs.filter((f) => normalizeForMatch(f.nom).includes(q));
+    if (direct.length > 0) return direct;
+    const m = matchFood(query, foods);
+    if (!m.food) return [];
+    const byId = freqs.filter((f) => f.key === frequencyKey(m.food!.id, m.food!.nom));
+    return byId;
+  }, [query, freqs, foods]);
+
+  const active = results.find((f) => f.key === pickedKey) ?? results[0] ?? null;
+
+  // Le surlignage du calendrier (état du parent) suit l'aliment actif. En effet
+  // et non pendant le rendu : remonter l'info au parent est un effet de bord.
+  const activeDates = active?.dates;
+  useEffect(() => {
+    onDatesChange(new Set(activeDates ?? []));
+  }, [activeDates, onDatesChange]);
+
+  const dates = active ? [...active.dates].reverse() : [];
+  const shown = showAll ? dates : dates.slice(0, DATES_SHOWN);
+
+  return (
+    <div className="panel">
+      <div className="row" style={{ gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
+        <input
+          type="search"
+          value={query}
+          onChange={(e) => {
+            setQuery(e.target.value);
+            setPickedKey(null);
+            setShowAll(false);
+          }}
+          placeholder="Rechercher un aliment… (« saumon » : quand en ai-je mangé ?)"
+          style={{ flex: '1 1 260px' }}
+          aria-label="Rechercher un aliment dans l'historique"
+        />
+        {query && (
+          <button className="ghost small" onClick={() => { setQuery(''); setPickedKey(null); }}>
+            Effacer
+          </button>
+        )}
+      </div>
+
+      {query.trim().length >= 2 && results.length === 0 && (
+        <div className="hint">Aucun aliment de ce nom dans l'historique.</div>
+      )}
+
+      {results.length > 1 && (
+        <div className="row" style={{ gap: 6, flexWrap: 'wrap', marginTop: 8 }}>
+          {results.map((f) => (
+            <button
+              key={f.key}
+              className={`small ${active?.key === f.key ? 'chip-active' : 'ghost'}`}
+              onClick={() => { setPickedKey(f.key); setShowAll(false); }}
+            >
+              {f.nom} · {fmt(f.occurrences)}×
+            </button>
+          ))}
+        </div>
+      )}
+
+      {active && (
+        <>
+          <div className="hint" style={{ marginTop: 8 }}>
+            <strong>{active.nom}</strong> : {fmt(active.occurrences)} fois sur {fmt(active.jours)} jour(s) —
+            dernière fois <strong>{dayLabel(active.derniere, true)}</strong> ({daysSince(active.derniere, today)}).
+            Total {fmt(active.grammes)} g · {fmt(active.kcal)} kcal. Les jours concernés sont surlignés dans le
+            calendrier.
+          </div>
+          <div className="row" style={{ gap: 6, flexWrap: 'wrap', marginTop: 6 }}>
+            {shown.map((d) => (
+              <button key={d} className="ghost small" onClick={() => onPickDate(d)} title="Ouvrir ce jour">
+                {dayLabel(d, true)}
+              </button>
+            ))}
+            {!showAll && dates.length > DATES_SHOWN && (
+              <button className="ghost small" onClick={() => setShowAll(true)}>
+                +{dates.length - DATES_SHOWN} autre(s)
+              </button>
+            )}
+          </div>
+        </>
+      )}
+    </div>
+  );
+}
+
+/** « il y a 3 jours », « aujourd'hui » — lisible dans le résumé de recherche. */
+function daysSince(date: string, today: string): string {
+  const diff = Math.round(
+    (new Date(`${today}T12:00:00`).getTime() - new Date(`${date}T12:00:00`).getTime()) / 86_400_000,
+  );
+  if (diff <= 0) return "aujourd'hui";
+  if (diff === 1) return 'hier';
+  return `il y a ${diff} jours`;
 }
 
 // ---------------------------------------------------------------------------

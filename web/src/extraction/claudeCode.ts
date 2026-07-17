@@ -1,5 +1,5 @@
 import type { ExtractedItem } from '../nutrition/types';
-import { validateExtraction, ESTIMATION_PROMPT, FOURCHETTE_PROMPT } from './schema';
+import { validateExtraction, ESTIMATION_PROMPT, FOURCHETTE_PROMPT, UNITES_PROMPT } from './schema';
 import { parseTranscript } from './ruleParser';
 
 /**
@@ -25,6 +25,8 @@ Aucun texte hors du JSON, pas de bloc de code.
 - ATTENTION : ne confonds pas une reformulation avec une ÉNUMÉRATION D'INGRÉDIENTS. Quand la phrase nomme un PLAT puis liste ce qu'il contient (« une part de gâteau au chocolat, il y a du sucre, du beurre, du chocolat 85 % et de la farine »), l'aliment est LE PLAT ENTIER — un seul item estimé — et JAMAIS l'un de ses ingrédients pris isolément, ni chaque ingrédient séparément. Les ingrédients cités ne servent qu'à affiner l'estimation nutritionnelle du plat (via "nutriments"). N'émets un ingrédient comme aliment distinct que s'il a été consommé seul, avec sa propre quantité.
 - Les déterminants et petits mots (un, une, en, le, des…) sont souvent mal transcrits : ne supprime PAS un aliment clairement nommé sous prétexte que son article semble bizarre (« une pêche en abricot » = « une pêche, un abricot »). Dans le doute, INCLUS l'aliment plutôt que de l'omettre.
 
+${UNITES_PROMPT}
+
 ${FOURCHETTE_PROMPT}
 
 ${ESTIMATION_PROMPT}
@@ -37,7 +39,7 @@ Sortie : {"items":[{"aliment":"pêche","quantite":1,"unite":"piece","estimation"
 Exemple (plat composé décrit par ses ingrédients) :
 Entrée : "une part de gâteau au chocolat noir donc il y a du sucre et du beurre du chocolat noir 85 % et de la farine et du fromage blanc 300 grammes"
 Raisonnement : « il y a du sucre, du beurre, du chocolat 85 %, de la farine » énumère les INGRÉDIENTS du gâteau (un plat composé) → UN seul item « gâteau au chocolat noir » estimé (≈ une part), à qui on attache une estimation nutritionnelle ; ne surtout PAS le réduire à « chocolat noir ». Le fromage blanc 300 g est un aliment distinct, pesé.
-Sortie : {"items":[{"aliment":"gâteau au chocolat noir","quantite":1,"unite":"portion","estimation":true,"quantiteMin":70,"quantiteMax":120,"categorie":"sucre-snack","grammesParPiece":90,"nutriments":{"kcal":390,"proteines":6,"glucides":45,"lipides":21,"fibres":3,"agSatures":13,"agMonoInsatures":5.5,"agPolyInsatures":1.5,"omega3":0.1,"omega6":1.3,"omega9":5,"fer":2,"magnesium":45,"potassium":210,"calcium":45,"zinc":1,"sodium":250,"selenium":5,"iode":8,"vitA":120,"vitC":0,"vitD":0.5,"vitE":1,"vitK1":2,"vitK2":1,"vitB1":0.08,"vitB2":0.2,"vitB3":0.6,"vitB5":0.5,"vitB6":0.05,"vitB9":20,"vitB12":0.3,"creatine":0}},{"aliment":"fromage blanc","quantite":300,"unite":"g","estimation":false}]}`;
+Sortie : {"items":[{"aliment":"gâteau au chocolat noir","quantite":90,"unite":"g","estimation":true,"quantiteMin":70,"quantiteMax":120,"categorie":"sucre-snack","nutriments":{"kcal":390,"proteines":6,"glucides":45,"lipides":21,"fibres":3,"agSatures":13,"agMonoInsatures":5.5,"agPolyInsatures":1.5,"omega3":0.1,"omega6":1.3,"omega9":5,"fer":2,"magnesium":45,"potassium":210,"calcium":45,"zinc":1,"sodium":250,"selenium":5,"iode":8,"vitA":120,"vitC":0,"vitD":0.5,"vitE":1,"vitK1":2,"vitK2":1,"vitB1":0.08,"vitB2":0.2,"vitB3":0.6,"vitB5":0.5,"vitB6":0.05,"vitB9":20,"vitB12":0.3,"creatine":0,"collagene":0}},{"aliment":"fromage blanc","quantite":300,"unite":"g","estimation":false}]}`;
 
 function buildPrompt(transcript: string): string {
   return `${SYSTEM_PROMPT}\n\nPhrase : "${transcript}"\nJSON :`;
@@ -52,6 +54,8 @@ Aucun texte hors du JSON, pas de bloc de code.
 - Estime la quantité d'après ce que tu vois (taille des portions, du contenant) et mets TOUJOURS "estimation": true.
 - N'invente jamais d'aliment non visible sur la photo. En cas de doute sur un aliment, ne l'inclus pas.
 - Si aucun aliment n'est identifiable, réponds {"items":[]}.
+
+${UNITES_PROMPT}
 
 ${FOURCHETTE_PROMPT}
 Sur une photo, chaque quantité est une estimation visuelle : renseigne SYSTÉMATIQUEMENT "quantiteMin" et "quantiteMax" pour chaque item.

@@ -6,6 +6,9 @@ web/dist/
 dist/
 *.tsbuildinfo
 
+# Sauvegardes automatiques du journal (npm run dev) : données perso, pas du code
+save/
+
 # Logs
 *.log
 npm-debug.log*

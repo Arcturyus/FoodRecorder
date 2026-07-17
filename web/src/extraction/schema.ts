@@ -100,7 +100,8 @@ export const NUTRIMENTS_PROMPT_DOC = `Toutes les valeurs sont POUR 100 g d'alime
 - fer, magnesium, potassium, calcium, zinc, sodium : mg
 - vitC, vitE, vitB1, vitB2, vitB3, vitB5, vitB6 : mg
 - selenium, iode, vitA, vitD, vitK1, vitK2, vitB9, vitB12 : µg (vitA en µg équivalent rétinol)
-- creatine : g (viandes/poissons, 0 sinon)`;
+- creatine : g (viandes/poissons, 0 sinon)
+- collagene : g (sous-ensemble des proteines : tissus conjonctifs animaux — peau, tendons, os, morceaux gélatineux, gélatine. 0 pour tout végétal, laitage ou œuf)`;
 
 /**
  * Consigne d'estimation d'un aliment hors base, commune aux IA fortes (API Claude
@@ -115,8 +116,25 @@ Dans ce cas, ajoute à l'item :
 - "grammesParPiece" (optionnel) : poids en g d'une pièce/portion si l'unité est "piece"/"portion"
 - "nutriments" : un objet contenant TOUS les champs ci-dessous (n'en omets AUCUN ; mets 0 si négligeable).
 ${NUTRIMENTS_PROMPT_DOC}
-Exemple : {"aliment":"pastel de nata","quantite":1,"unite":"piece","estimation":true,"categorie":"sucre-snack","grammesParPiece":60,"nutriments":{"kcal":298,"proteines":6,"glucides":37,"lipides":13,"fibres":1,"agSatures":6,"agMonoInsatures":4,"agPolyInsatures":1.5,"omega3":0.1,"omega6":1.2,"omega9":3.5,"fer":0.6,"magnesium":12,"potassium":90,"calcium":80,"zinc":0.5,"sodium":180,"selenium":8,"iode":10,"vitA":90,"vitC":0,"vitD":0.8,"vitE":0.4,"vitK1":2,"vitK2":1,"vitB1":0.05,"vitB2":0.2,"vitB3":0.4,"vitB5":0.5,"vitB6":0.05,"vitB9":18,"vitB12":0.4,"creatine":0}}
+Exemple : {"aliment":"pastel de nata","quantite":1,"unite":"piece","estimation":true,"categorie":"sucre-snack","grammesParPiece":60,"nutriments":{"kcal":298,"proteines":6,"glucides":37,"lipides":13,"fibres":1,"agSatures":6,"agMonoInsatures":4,"agPolyInsatures":1.5,"omega3":0.1,"omega6":1.2,"omega9":3.5,"fer":0.6,"magnesium":12,"potassium":90,"calcium":80,"zinc":0.5,"sodium":180,"selenium":8,"iode":10,"vitA":90,"vitC":0,"vitD":0.8,"vitE":0.4,"vitK1":2,"vitK2":1,"vitB1":0.05,"vitB2":0.2,"vitB3":0.4,"vitB5":0.5,"vitB6":0.05,"vitB9":18,"vitB12":0.4,"creatine":0,"collagene":0}}
 N'utilise "nutriments" QUE lorsque c'est justifié ; en cas de doute, laisse l'application résoudre l'aliment (n'ajoute pas de nutriments).`;
+
+/**
+ * Consigne de CHOIX D'UNITÉ, commune à tous les moteurs.
+ *
+ * Les unités « contenant » (bol, assiette, portion…) existent pour les cas où
+ * l'utilisateur parle vraiment comme ça, mais un LLM les choisit trop souvent
+ * (« 1 portion de poulet ») là où il connaît parfaitement l'ordre de grandeur en
+ * grammes. Or une portion générique vaut 150 g pour TOUT aliment (cf.
+ * DEFAULT_UNIT_GRAMS) faute de surcharge : l'estimation en grammes du modèle est
+ * presque toujours meilleure que ce forfait.
+ */
+export const UNITES_PROMPT = `Choix de l'unité — PRIVILÉGIE LES GRAMMES :
+- Par défaut, exprime toujours la quantité en "g" (ou "ml" pour un liquide), quitte à convertir toi-même une mesure approximative : tu connais mieux le poids réel d'une portion que l'application, qui applique sinon un forfait générique identique pour tous les aliments.
+- Convertis donc les contenants et les mesures de cuisine en grammes : « un bol de riz » → 200 g, « une assiette de pâtes » → 280 g, « une cuillère à soupe d'huile d'olive » → 14 g, « une poignée d'amandes » → 30 g, « un verre de lait » → 200 ml.
+- Pour un COMPLÉMENT dosé en élément pur (magnésium, zinc, vitamine C, vitamine D…), utilise l'unité de l'étiquette : "mg" pour les minéraux et la plupart des vitamines, "µg" pour les micro-dosés (vitamine D, B12, K2, sélénium, iode). Ex. « 300 mg de magnésium » → {"quantite":300,"unite":"mg"}.
+- N'utilise "piece" que pour un objet réellement dénombrable et standard (un œuf, une banane, un yaourt, un carré de chocolat).
+- Ne garde une unité "portion", "bol", "assiette", "poignee", "cas", "cac", "verre", "tranche", "pot", "pincee" ou "dose" QUE si tu es incapable d'estimer un poids (cas rare) : c'est un dernier recours, pas le choix par défaut.`;
 
 /**
  * Consigne de fourchette d'incertitude sur les quantités estimées, commune aux

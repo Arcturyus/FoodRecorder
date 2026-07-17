@@ -1,5 +1,5 @@
 import { describe, expect, it, beforeEach } from 'vitest';
-import { useStore, todayStr, recentFoodCounts } from '../src/store/store';
+import { useStore, todayStr, recentFoodCounts, backfillNutrients } from '../src/store/store';
 import { buildBackup, importBackup, journalToCsv, weightsToCsv } from '../src/store/backup';
 import { FOOD_BY_ID } from '../src/nutrition/foods';
 
@@ -172,5 +172,34 @@ describe('export / import (sauvegarde)', () => {
     const lines = csv.split('\r\n');
     expect(lines[0]).toContain('poids');
     expect(lines.length).toBe(useStore.getState().weightEntries.length + 1);
+  });
+});
+
+describe('backfill rétroactif des nutriments ajoutés après coup (collagène)', () => {
+  const steak = FOOD_BY_ID.get('steak-hache-15')!;
+
+  it('recalcule le collagène d’un ancien snapshot (sans la clé) depuis la base', () => {
+    // Snapshot d'AVANT l'ajout du collagène : la clé n'existe pas.
+    const oldItem = { grams: 200, customN: undefined, nutrients: { kcal: 460, proteines: 48 } };
+    const n = backfillNutrients(oldItem, steak);
+    expect(n.collagene).toBeCloseTo(3.2, 5); // 1,6 g/100 g × 200 g
+    // Les autres valeurs restent le snapshot d'origine, pas un recalcul.
+    expect(n.kcal).toBe(460);
+  });
+
+  it('ne touche pas un item ajusté à la main (customN) ni un item sans aliment', () => {
+    const base = { grams: 200, nutrients: { kcal: 460 } };
+    expect(backfillNutrients({ ...base, customN: { ...steak.n } }, steak).collagene).toBe(0);
+    expect(backfillNutrients({ ...base, customN: undefined }, null).collagene).toBe(0);
+  });
+
+  it('n’écrase pas une valeur déjà non nulle', () => {
+    const item = { grams: 200, customN: undefined, nutrients: { collagene: 9 } };
+    expect(backfillNutrients(item, steak).collagene).toBe(9);
+  });
+
+  it('reste à 0 pour un aliment sans collagène (banane)', () => {
+    const item = { grams: 120, customN: undefined, nutrients: { kcal: 108 } };
+    expect(backfillNutrients(item, banane).collagene).toBe(0);
   });
 });

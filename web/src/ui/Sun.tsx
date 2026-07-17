@@ -6,6 +6,7 @@ import { isSttLoaded, loadStt, transcribe } from '../stt/whisper';
 import { NativeRecognizer } from '../stt/webspeech';
 import { extractSun } from '../extraction/sun';
 import type { SunPatch } from '../extraction/sun';
+import { isSyncConfigured, pushSunTranscript } from '../sync/supabase';
 import {
   SKY_OPTIONS,
   SKIN_OPTIONS,
@@ -17,9 +18,10 @@ import {
   vitaminDBreakdown,
   sunVitDForDate,
   normalizeCreme,
+  completeSunExposure,
   seasonHint,
 } from '../sun/vitaminD';
-import type { SkyCondition, SkinExposure, Phenotype, Creme } from '../sun/vitaminD';
+import type { SkyCondition, SkinExposure, Phenotype, Creme, SunExposure, SunDefaults } from '../sun/vitaminD';
 import { fmt } from './format';
 
 /** Durée lisible : « 45 min », « 1 h », « 1 h 30 ». */
@@ -55,6 +57,7 @@ function summarizeSun(p: SunPatch): string {
 export function Sun({ date }: { date?: string } = {}) {
   const exposures = useStore((s) => s.sunExposures);
   const addSunExposure = useStore((s) => s.addSunExposure);
+  const updateSunExposure = useStore((s) => s.updateSunExposure);
   const removeSunExposure = useStore((s) => s.removeSunExposure);
 
   const fixedDate = date != null;
@@ -78,15 +81,16 @@ export function Sun({ date }: { date?: string } = {}) {
   const breakdown = vitaminDBreakdown(draft);
   const hint = seasonHint(activeDate);
 
-  /** Applique un patch dicté aux champs du formulaire. */
-  function applyPatch(p: SunPatch) {
-    if (p.date && !fixedDate) setDateState(p.date);
-    if (p.heure) setHeure(p.heure);
-    if (p.dureeMin != null) setDuree(Math.min(240, Math.max(5, Math.round(p.dureeMin))));
-    if (p.ciel) setCiel(p.ciel);
-    if (p.peau) setPeau(p.peau);
-    if (p.phenotype) setPhenotype(p.phenotype);
-    if (p.creme != null) setCreme(normalizeCreme(p.creme));
+  /**
+   * Une dictée est auto-validée, comme un repas : chaque sortie comprise est
+   * ajoutée directement au journal (complétée par les réglages du formulaire
+   * pour ce qui n'a pas été dit). Les sorties restent modifiables dans la liste
+   * ci-dessous. Retourne le nombre ajouté, pour le message de statut.
+   */
+  function addFromDictation(sorties: SunPatch[]): number {
+    const defaults: SunDefaults = { date: activeDate, heure, dureeMin: duree, ciel, peau, phenotype, creme };
+    for (const p of sorties) addSunExposure(completeSunExposure(p, defaults, fixedDate));
+    return sorties.length;
   }
 
   function add() {
@@ -102,7 +106,7 @@ export function Sun({ date }: { date?: string } = {}) {
         </span>
       </div>
 
-      <SunDictation onPatch={applyPatch} />
+      <SunDictation onSorties={addFromDictation} date={date} />
 
       {/* Heure + jour sur une même ligne : créneaux pratiques en un clic + heure/date précises */}
       <div className="sun-field">
@@ -207,25 +211,12 @@ export function Sun({ date }: { date?: string } = {}) {
       {dayExposures.length > 0 && (
         <ul style={{ listStyle: 'none', padding: 0, margin: '10px 0 0' }}>
           {dayExposures.map((e) => (
-            <li
+            <SunRow
               key={e.id}
-              className="row small"
-              style={{ justifyContent: 'space-between', alignItems: 'center', padding: '4px 0', gap: 8 }}
-            >
-              <span>
-                {e.heure} · {fmtDuree(e.dureeMin)} · {SKY_OPTIONS.find((o) => o.value === e.ciel)?.short ?? e.ciel}
-                {' · '}
-                {SKIN_OPTIONS.find((o) => o.value === e.peau)?.short ?? e.peau}
-                {normalizeCreme(e.creme) !== 'aucune'
-                  ? ` · 🧴${normalizeCreme(e.creme) === 'visage' ? ' visage' : ''}`
-                  : ''}
-                {' → '}
-                <strong className="mono">{fmt(estimateVitaminD(e), 1)} µg</strong>
-              </span>
-              <button className="ghost small" onClick={() => removeSunExposure(e.id)} title="Supprimer cette sortie">
-                ✕
-              </button>
-            </li>
+              e={e}
+              onUpdate={(patch) => updateSunExposure(e.id, patch)}
+              onRemove={() => removeSunExposure(e.id)}
+            />
           ))}
         </ul>
       )}
@@ -235,6 +226,124 @@ export function Sun({ date }: { date?: string } = {}) {
         découverte, du phototype et de la crème. Le gain s'ajoute à la vitamine D du bilan du jour.
       </div>
     </div>
+  );
+}
+
+/**
+ * Une sortie enregistrée : résumé sur une ligne, dépliable pour corriger sur
+ * place. La dictée étant auto-validée, c'est ici qu'on rattrape ce que l'IA a
+ * mal compris, sans devoir supprimer puis re-saisir.
+ */
+function SunRow({
+  e,
+  onUpdate,
+  onRemove,
+}: {
+  e: SunExposure;
+  onUpdate: (patch: Partial<Omit<SunExposure, 'id' | 'createdAt'>>) => void;
+  onRemove: () => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const creme = normalizeCreme(e.creme);
+
+  return (
+    <li style={{ borderTop: '1px solid var(--border)', padding: '6px 0' }}>
+      <div className="row small" style={{ justifyContent: 'space-between', alignItems: 'center', gap: 8 }}>
+        <span>
+          {e.heure} · {fmtDuree(e.dureeMin)} · {SKY_OPTIONS.find((o) => o.value === e.ciel)?.short ?? e.ciel}
+          {' · '}
+          {SKIN_OPTIONS.find((o) => o.value === e.peau)?.short ?? e.peau}
+          {creme !== 'aucune' ? ` · 🧴${creme === 'visage' ? ' visage' : ''}` : ''}
+          {' → '}
+          <strong className="mono">{fmt(estimateVitaminD(e), 1)} µg</strong>
+        </span>
+        <span className="row" style={{ gap: 4 }}>
+          <button
+            className={`ghost small ${open ? 'chip-active' : ''}`}
+            onClick={() => setOpen((o) => !o)}
+            title="Corriger cette sortie"
+            aria-expanded={open}
+          >
+            {open ? 'Fermer' : '✎ Modifier'}
+          </button>
+          <button className="ghost small" onClick={onRemove} title="Supprimer cette sortie">
+            ✕
+          </button>
+        </span>
+      </div>
+
+      {open && (
+        <div style={{ padding: '8px 0 4px' }}>
+          <div className="row" style={{ gap: 8, flexWrap: 'wrap', alignItems: 'center' }}>
+            <label className="row small" style={{ gap: 6, alignItems: 'center' }}>
+              Début
+              <input
+                type="time"
+                value={e.heure}
+                onChange={(ev) => ev.target.value && onUpdate({ heure: ev.target.value })}
+                style={{ width: 104 }}
+              />
+            </label>
+            <label className="row small" style={{ gap: 6, alignItems: 'center', flex: '1 1 220px' }}>
+              Durée <strong className="mono">{fmtDuree(e.dureeMin)}</strong>
+              <input
+                type="range"
+                min={5}
+                max={240}
+                step={5}
+                value={e.dureeMin}
+                onChange={(ev) => onUpdate({ dureeMin: parseInt(ev.target.value, 10) })}
+                style={{ flex: 1 }}
+              />
+            </label>
+          </div>
+          <div className="row" style={{ gap: 6, flexWrap: 'wrap', marginTop: 6 }}>
+            {SKY_OPTIONS.map((o) => (
+              <button
+                key={o.value}
+                className={`small ${e.ciel === o.value ? 'chip-active' : 'ghost'}`}
+                onClick={() => onUpdate({ ciel: o.value })}
+              >
+                {o.short}
+              </button>
+            ))}
+          </div>
+          <div className="row" style={{ gap: 6, flexWrap: 'wrap', marginTop: 6 }}>
+            {SKIN_OPTIONS.map((o) => (
+              <button
+                key={o.value}
+                className={`small ${e.peau === o.value ? 'chip-active' : 'ghost'}`}
+                onClick={() => onUpdate({ peau: o.value })}
+                title={o.label}
+              >
+                {o.short}
+              </button>
+            ))}
+          </div>
+          <div className="row" style={{ gap: 6, flexWrap: 'wrap', marginTop: 6 }}>
+            {PHENOTYPE_OPTIONS.map((o) => (
+              <button
+                key={o.value}
+                className={`small ${e.phenotype === o.value ? 'chip-active' : 'ghost'}`}
+                onClick={() => onUpdate({ phenotype: o.value })}
+              >
+                {o.label}
+              </button>
+            ))}
+            {CREME_OPTIONS.map((o) => (
+              <button
+                key={o.value}
+                className={`small ${creme === o.value ? 'chip-active' : 'ghost'}`}
+                onClick={() => onUpdate({ creme: o.value })}
+                title={o.label}
+              >
+                {o.value === 'aucune' ? 'Sans crème' : o.short}
+              </button>
+            ))}
+          </div>
+        </div>
+      )}
+    </li>
   );
 }
 
@@ -324,10 +433,11 @@ function FormulaBreakdown({ breakdown }: { breakdown: ReturnType<typeof vitaminD
 }
 
 /**
- * Dictée d'une sortie au soleil : mêmes moteurs STT/extraction que le reste de
- * l'app ; le résultat pré-remplit le formulaire (à ajuster puis ajouter).
+ * Dictée d'une ou plusieurs sorties au soleil : mêmes moteurs STT/extraction que
+ * le reste de l'app. Le résultat est enregistré directement (auto-validation,
+ * comme un repas) ; les sorties restent corrigeables dans la liste du jour.
  */
-function SunDictation({ onPatch }: { onPatch: (p: SunPatch) => void }) {
+function SunDictation({ onSorties, date }: { onSorties: (sorties: SunPatch[]) => number; date?: string }) {
   const [text, setText] = useState('');
   const [status, setStatus] = useState('');
   const [busy, setBusy] = useState(false);
@@ -340,6 +450,7 @@ function SunDictation({ onPatch }: { onPatch: (p: SunPatch) => void }) {
   const cloudModel = useStore((s) => s.cloudModel);
   const sttEngine = useStore((s) => s.sttEngine);
   const sttModel = useStore((s) => s.sttModel);
+  const deviceId = useStore((s) => s.deviceId);
 
   async function handleRecord() {
     return sttEngine === 'native' ? handleNative() : handleWhisper();
@@ -417,16 +528,35 @@ function SunDictation({ onPatch }: { onPatch: (p: SunPatch) => void }) {
     setBusy(true);
     setStatus('Extraction…');
     try {
-      const { patch, source } = await extractSun(clean, extractionMode, cloudApiKey, cloudModel);
-      if (Object.keys(patch).length === 0) {
+      const { sorties, source } = await extractSun(clean, extractionMode, cloudApiKey, cloudModel);
+      if (sorties.length === 0) {
         setStatus('Rien compris. Réglez les curseurs à la main ci-dessous.');
         return;
       }
-      onPatch(patch);
+      const n = onSorties(sorties);
       const via = source === 'rules' && extractionMode !== 'rules' ? ' [règles, IA indisponible]' : '';
-      setStatus(`✓ Compris${via} : ${summarizeSun(patch)}`);
+      const detail = sorties.map(summarizeSun).filter(Boolean).join(' — ');
+      setStatus(
+        n > 1
+          ? `✓ ${n} sorties ajoutées${via} : ${detail}. Corrigez-les ci-dessous si besoin.`
+          : `✓ Sortie ajoutée${via} : ${detail}. Corrigez-la ci-dessous si besoin.`,
+      );
       setText('');
     } catch (e) {
+      // Pont Claude Code indisponible ici (typiquement sur téléphone) : on met la
+      // dictée en file d'attente pour l'ordinateur, comme pour un repas, plutôt
+      // que de la perdre. Même repli que Capture.
+      if (extractionMode === 'claudecode' && isSyncConfigured()) {
+        try {
+          await pushSunTranscript(deviceId, clean, date);
+          setText('');
+          setStatus('Pont Claude Code indisponible ici : dictée mise en file d’attente, sera traitée dès que l’ordinateur sera disponible.');
+          return;
+        } catch (syncErr) {
+          setStatus(`Échec de la mise en file d'attente : ${(syncErr as Error).message}`);
+          return;
+        }
+      }
       setStatus(`Erreur : ${(e as Error).message}`);
     } finally {
       setBusy(false);

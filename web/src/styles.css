@@ -558,6 +558,18 @@ button.chip-active:hover { filter: brightness(1.08); }
 .cal-cell:not(.filled):not(.future) { background: transparent; }
 .cal-cell.today { border-color: var(--accent); box-shadow: inset 0 0 0 1px var(--accent); }
 .cal-cell.selected { border-color: var(--accent); box-shadow: 0 0 0 2px rgba(255,159,67,0.35); }
+/* Jour contenant l'aliment recherché : fond + pastille (jamais la couleur seule). */
+.cal-cell.found { background: rgba(123,201,111,0.16); border-color: var(--accent-2); }
+.cal-cell.found::after {
+  content: '';
+  position: absolute;
+  top: 4px;
+  right: 4px;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--accent-2);
+}
 .cal-day { font-size: 12px; font-weight: 600; color: var(--muted); }
 .cal-cell.filled .cal-day { color: var(--text); }
 .cal-kcal { font-size: 12px; font-variant-numeric: tabular-nums; font-weight: 600; }
@@ -570,6 +582,7 @@ button.chip-active:hover { filter: brightness(1.08); }
 .cal-legend.under { background: var(--warn); }
 .cal-legend.ok { background: var(--accent-2); }
 .cal-legend.over { background: var(--danger); }
+.cal-legend.found { background: var(--accent-2); border-radius: 50%; width: 6px; height: 6px; }
 @media (max-width: 560px) {
   .cal-cell { min-height: 46px; padding: 3px; }
   .cal-kcal { font-size: 11px; }
