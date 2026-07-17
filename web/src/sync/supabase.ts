@@ -20,30 +20,41 @@ export function isSyncConfigured(): boolean {
   return supabase !== null;
 }
 
-export interface TranscriptPayload {
-  transcript: string;
+/**
+ * Champs communs d'horodatage joints par l'appareil ÉMETTEUR au moment où il
+ * dépose sur Supabase : `date` = son jour LOCAL (déjà résolu, jamais `todayStr()`
+ * différé), `clientTime` = son heure locale en epoch ms. On les propage jusqu'à
+ * l'entrée finale pour que l'heure/le jour affichés soient ceux de la SAISIE,
+ * pas ceux du traitement différé par le pont Claude Code (potentiellement le
+ * lendemain, ou sur un autre fuseau).
+ */
+interface StampedPayload {
   date?: string;
+  /** Heure locale de l'émetteur à l'envoi (epoch ms) → `createdAt` de l'entrée. */
+  clientTime?: number;
 }
 
-export interface ImagePayload {
+export interface TranscriptPayload extends StampedPayload {
+  transcript: string;
+}
+
+export interface ImagePayload extends StampedPayload {
   /** Image réduite, en base64 nu (sans préfixe data:…). */
   imageBase64: string;
   mediaType: string;
-  date?: string;
 }
 
-export interface EntryPayload {
+export interface EntryPayload extends StampedPayload {
   transcript: string;
   items: ExtractedItem[];
   source: 'claudecode';
-  date?: string;
 }
 
 /** Une sortie au soleil prête à enregistrer (l'id et l'horodatage sont locaux). */
 export type SunPayloadExposure = Omit<SunExposure, 'id' | 'createdAt'>;
 
 /** Résultat d'une dictée soleil analysée, à rejouer sur les autres appareils. */
-export interface SunEntryPayload {
+export interface SunEntryPayload extends StampedPayload {
   transcript: string;
   sorties: SunPayloadExposure[];
 }
@@ -64,9 +75,9 @@ interface SyncRow<T> {
 }
 
 /** Dépose une transcription en attente de traitement par un autre appareil. */
-export async function pushTranscript(device: string, transcript: string, date?: string): Promise<void> {
+export async function pushTranscript(device: string, transcript: string, date?: string, clientTime?: number): Promise<void> {
   if (!supabase) return;
-  const payload: TranscriptPayload = { transcript, ...(date ? { date } : {}) };
+  const payload: TranscriptPayload = { transcript, ...(date ? { date } : {}), ...(clientTime ? { clientTime } : {}) };
   const { error } = await supabase
     .from('sync_queue')
     .insert({ device, kind: 'transcript', payload, processed: false });
@@ -74,9 +85,9 @@ export async function pushTranscript(device: string, transcript: string, date?: 
 }
 
 /** Dépose une photo (réduite) en attente d'analyse par un autre appareil. */
-export async function pushImage(device: string, imageBase64: string, mediaType: string, date?: string): Promise<void> {
+export async function pushImage(device: string, imageBase64: string, mediaType: string, date?: string, clientTime?: number): Promise<void> {
   if (!supabase) return;
-  const payload: ImagePayload = { imageBase64, mediaType, ...(date ? { date } : {}) };
+  const payload: ImagePayload = { imageBase64, mediaType, ...(date ? { date } : {}), ...(clientTime ? { clientTime } : {}) };
   const { error } = await supabase
     .from('sync_queue')
     .insert({ device, kind: 'image', payload, processed: false });
@@ -112,9 +123,9 @@ export function fetchPendingSun(): Promise<SyncRow<TranscriptPayload>[]> {
 }
 
 /** Dépose une dictée « soleil » en attente d'analyse par un autre appareil. */
-export async function pushSunTranscript(device: string, transcript: string, date?: string): Promise<void> {
+export async function pushSunTranscript(device: string, transcript: string, date?: string, clientTime?: number): Promise<void> {
   if (!supabase) return;
-  const payload: TranscriptPayload = { transcript, ...(date ? { date } : {}) };
+  const payload: TranscriptPayload = { transcript, ...(date ? { date } : {}), ...(clientTime ? { clientTime } : {}) };
   const { error } = await supabase.from('sync_queue').insert({ device, kind: 'sun', payload, processed: false });
   if (error) throw new Error(error.message);
 }

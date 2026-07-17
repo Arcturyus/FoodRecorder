@@ -1,5 +1,5 @@
 import { useRef, useState } from 'react';
-import { useStore, useEffectiveFoods, recentFoodCounts } from '../store/store';
+import { useStore, useEffectiveFoods, recentFoodCounts, todayStr } from '../store/store';
 import { MicRecorder } from '../stt/recorder';
 import { isSttLoaded, loadStt, transcribe } from '../stt/whisper';
 import { NativeRecognizer } from '../stt/webspeech';
@@ -267,7 +267,10 @@ export function Capture({ date, title }: { date?: string; title?: string } = {})
         // silencieusement vers le parseur à règles.
         if (isSyncConfigured()) {
           try {
-            await pushTranscript(deviceId, clean, date);
+            // On estampille ICI le jour local (résolu, pas différé) et l'heure
+            // d'envoi : l'ordinateur qui traitera plus tard doit dater le repas
+            // de MAINTENANT, pas de son heure de traitement (cf. addEntry).
+            await pushTranscript(deviceId, clean, date ?? todayStr(), Date.now());
             setText('');
             setStatus('Pont Claude Code indisponible ici : mis en file d’attente, sera traité dès que l’ordinateur sera disponible.');
             return;
@@ -330,7 +333,7 @@ export function Capture({ date, title }: { date?: string; title?: string } = {})
           // de la photo réduite, pour analyse différée par l'ordinateur.
           if (isSyncConfigured()) {
             const { data, mediaType } = await downscaleImage(file);
-            await pushImage(deviceId, data, mediaType, date);
+            await pushImage(deviceId, data, mediaType, date ?? todayStr(), Date.now());
             setStatus('Pont Claude Code indisponible ici : photo mise en file d’attente, sera analysée dès que l’ordinateur sera disponible.');
           } else {
             setStatus(`Erreur photo : ${(bridgeErr as Error).message}`);

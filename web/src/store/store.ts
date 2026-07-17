@@ -223,8 +223,13 @@ interface AppState {
   setLastAutoSave: (day: string) => void;
 
   /** Enregistre automatiquement une entrée (auto-validation, plan §Phase 4). */
-  /** Ajoute un repas extrait (voix/texte/photo). `date` : jour ciblé (défaut aujourd'hui). */
-  addEntry: (transcript: string, items: ExtractedItem[], source: JournalEntry['source'], date?: string) => string;
+  /**
+   * Ajoute un repas extrait (voix/texte/photo). `date` : jour ciblé (défaut
+   * aujourd'hui). `createdAt` : heure de saisie (epoch ms) — passée par la synchro
+   * pour refléter l'heure d'ENVOI depuis l'appareil émetteur plutôt que l'heure de
+   * traitement différé ; défaut `Date.now()`.
+   */
+  addEntry: (transcript: string, items: ExtractedItem[], source: JournalEntry['source'], date?: string, createdAt?: number) => string;
   /** Ajout manuel d'un aliment choisi explicitement (pas de matching flou). `date` : jour ciblé (défaut aujourd'hui). */
   addFoodEntry: (food: Food, quantite: number, unite: Unit, date?: string) => string;
   updateItem: (entryId: string, itemId: string, patch: Partial<JournalItem>) => void;
@@ -263,8 +268,12 @@ interface AppState {
   removeWeightEntry: (id: string) => void;
   setWeightConfig: (patch: Partial<WeightConfig>) => void;
 
-  /** Enregistre une sortie au soleil (section « Soleil » du jour). */
-  addSunExposure: (e: Omit<SunExposure, 'id' | 'createdAt'>) => void;
+  /**
+   * Enregistre une sortie au soleil (section « Soleil » du jour). `createdAt` :
+   * heure de saisie (epoch ms), passée par la synchro pour l'heure d'envoi de
+   * l'appareil émetteur ; défaut `Date.now()`.
+   */
+  addSunExposure: (e: Omit<SunExposure, 'id' | 'createdAt'>, createdAt?: number) => void;
   /** Corrige une sortie déjà enregistrée (durée, ciel, peau… après une dictée auto-validée). */
   updateSunExposure: (id: string, patch: Partial<Omit<SunExposure, 'id' | 'createdAt'>>) => void;
   removeSunExposure: (id: string) => void;
@@ -301,7 +310,7 @@ export const useStore = create<AppState>()(
       setSyncCursor: (cursor) => set({ syncCursor: cursor }),
       setLastAutoSave: (day) => set({ lastAutoSave: day }),
 
-      addEntry: (transcript, items, source, date) => {
+      addEntry: (transcript, items, source, date, createdAt) => {
         const computed = computeItems(
           items,
           effectiveFoods(get().customFoods, get().foodOverrides),
@@ -310,7 +319,7 @@ export const useStore = create<AppState>()(
         const entry: JournalEntry = {
           id: uid(),
           date: date ?? todayStr(),
-          createdAt: Date.now(),
+          createdAt: createdAt ?? Date.now(),
           transcript,
           source,
           items: computed.map(toJournalItem),
@@ -558,8 +567,8 @@ export const useStore = create<AppState>()(
 
       setWeightConfig: (patch) => set((s) => ({ weightConfig: { ...s.weightConfig, ...patch } })),
 
-      addSunExposure: (e) =>
-        set((s) => ({ sunExposures: [{ ...e, id: uid(), createdAt: Date.now() }, ...s.sunExposures] })),
+      addSunExposure: (e, createdAt) =>
+        set((s) => ({ sunExposures: [{ ...e, id: uid(), createdAt: createdAt ?? Date.now() }, ...s.sunExposures] })),
 
       updateSunExposure: (id, patch) =>
         set((s) => ({

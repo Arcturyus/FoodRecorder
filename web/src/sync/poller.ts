@@ -65,13 +65,16 @@ export async function runSyncTick(): Promise<void> {
             const res = await extractWithClaudeCode(row.payload.transcript);
             if (res.items.length > 0) {
               const items = res.source === 'claudecode' ? await verify(res.items) : res.items;
-              addEntry(row.payload.transcript, items, res.source, row.payload.date);
+              // Heure/jour = ceux estampillés par l'émetteur à l'envoi (cf. supabase.ts),
+              // pas l'heure de CE traitement différé.
+              addEntry(row.payload.transcript, items, res.source, row.payload.date, row.payload.clientTime);
               if (res.source === 'claudecode') {
                 await pushEntry(deviceId, {
                   transcript: row.payload.transcript,
                   items,
                   source: 'claudecode',
                   ...(row.payload.date ? { date: row.payload.date } : {}),
+                  ...(row.payload.clientTime ? { clientTime: row.payload.clientTime } : {}),
                 });
               }
             }
@@ -88,12 +91,13 @@ export async function runSyncTick(): Promise<void> {
             const res = await extractImageWithClaudeCode(row.payload.imageBase64, row.payload.mediaType);
             if (res.items.length > 0) {
               const items = await verify(res.items);
-              addEntry('📷 Photo', items, res.source, row.payload.date);
+              addEntry('📷 Photo', items, res.source, row.payload.date, row.payload.clientTime);
               await pushEntry(deviceId, {
                 transcript: '📷 Photo',
                 items,
                 source: 'claudecode',
                 ...(row.payload.date ? { date: row.payload.date } : {}),
+                ...(row.payload.clientTime ? { clientTime: row.payload.clientTime } : {}),
               });
             }
           } catch {
@@ -111,11 +115,17 @@ export async function runSyncTick(): Promise<void> {
             if (sorties.length > 0 && source === 'claudecode') {
               // Ce poste n'a pas le formulaire de l'appareil qui a dicté : les
               // champs non dits prennent les valeurs de repli. Le jour ciblé est
-              // celui demandé par l'émetteur (sinon aujourd'hui).
+              // celui estampillé par l'émetteur (sinon aujourd'hui), et l'heure de
+              // saisie = son heure d'envoi, pas ce traitement différé.
               const defaults = { ...SUN_FALLBACK, date: row.payload.date ?? todayStr() };
               const complete = sorties.map((p) => completeSunExposure(p, defaults));
-              for (const e of complete) addSunExposure(e);
-              await pushSunEntry(deviceId, { transcript: row.payload.transcript, sorties: complete });
+              for (const e of complete) addSunExposure(e, row.payload.clientTime);
+              await pushSunEntry(deviceId, {
+                transcript: row.payload.transcript,
+                sorties: complete,
+                ...(row.payload.date ? { date: row.payload.date } : {}),
+                ...(row.payload.clientTime ? { clientTime: row.payload.clientTime } : {}),
+              });
             }
           } catch {
             // Échec ponctuel : on marque quand même la ligne traitée pour ne pas boucler dessus.
@@ -127,10 +137,12 @@ export async function runSyncTick(): Promise<void> {
 
     const newRows = await fetchNewEntries(deviceId, syncCursor);
     for (const row of newRows) {
+      // Rejeu d'un résultat traité par un AUTRE appareil : on réutilise l'heure/le
+      // jour d'origine (estampillés par l'émetteur), pas l'heure de réception ici.
       if (row.kind === 'sun-entry') {
-        for (const e of row.payload.sorties as SunPayloadExposure[]) addSunExposure(e);
+        for (const e of row.payload.sorties as SunPayloadExposure[]) addSunExposure(e, row.payload.clientTime);
       } else {
-        addEntry(row.payload.transcript, row.payload.items, row.payload.source, row.payload.date);
+        addEntry(row.payload.transcript, row.payload.items, row.payload.source, row.payload.date, row.payload.clientTime);
       }
     }
     if (newRows.length > 0) {

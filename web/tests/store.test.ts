@@ -175,6 +175,44 @@ describe('export / import (sauvegarde)', () => {
   });
 });
 
+describe('horodatage d’envoi propagé par la synchro (addEntry / addSunExposure)', () => {
+  it('addEntry date le repas de l’heure/jour d’envoi fournis, pas de maintenant', () => {
+    // Cas synchro : le téléphone a envoyé hier soir à 23:50, l’ordinateur traite aujourd’hui.
+    const sent = new Date(`${daysAgo(1)}T23:50:00`).getTime();
+    const id = useStore.getState().addEntry(
+      'banane',
+      [{ aliment: 'banane', quantite: 1, unite: 'piece', estimation: false }],
+      'claudecode',
+      daysAgo(1),
+      sent,
+    );
+    const entry = useStore.getState().entries.find((e) => e.id === id)!;
+    expect(entry.date).toBe(daysAgo(1)); // jour d’ENVOI, pas de traitement
+    expect(entry.createdAt).toBe(sent); // heure d’ENVOI, pas Date.now()
+  });
+
+  it('addEntry garde le comportement par défaut (aujourd’hui / maintenant) sans override', () => {
+    const before = Date.now();
+    const id = useStore.getState().addEntry(
+      'banane',
+      [{ aliment: 'banane', quantite: 1, unite: 'piece', estimation: false }],
+      'manuel',
+    );
+    const entry = useStore.getState().entries.find((e) => e.id === id)!;
+    expect(entry.date).toBe(today);
+    expect(entry.createdAt).toBeGreaterThanOrEqual(before);
+  });
+
+  it('addSunExposure respecte le createdAt d’envoi fourni', () => {
+    const sent = new Date(`${daysAgo(1)}T12:00:00`).getTime();
+    useStore.getState().addSunExposure(
+      { date: daysAgo(1), heure: '12:00', dureeMin: 20, ciel: 'ensoleille', peau: 'visage-bras', phenotype: 'blanc', creme: 'aucune' },
+      sent,
+    );
+    expect(useStore.getState().sunExposures[0].createdAt).toBe(sent);
+  });
+});
+
 describe('recalcul rétroactif des nutriments depuis la base (foodId résolu)', () => {
   const steak = FOOD_BY_ID.get('steak-hache-15')!;
 

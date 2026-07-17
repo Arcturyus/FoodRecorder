@@ -548,7 +548,10 @@ function SunDictation({ onSorties, date }: { onSorties: (sorties: SunPatch[]) =>
       // que de la perdre. Même repli que Capture.
       if (extractionMode === 'claudecode' && isSyncConfigured()) {
         try {
-          await pushSunTranscript(deviceId, clean, date);
+          // Jour local résolu (comme l'ajout direct) + heure d'envoi : l'ordinateur
+          // qui traitera plus tard datera la sortie de MAINTENANT, pas de son heure
+          // de traitement (cf. addSunExposure / poller).
+          await pushSunTranscript(deviceId, clean, date ?? todayStr(), Date.now());
           setText('');
           setStatus('Pont Claude Code indisponible ici : dictée mise en file d’attente, sera traitée dès que l’ordinateur sera disponible.');
           return;
