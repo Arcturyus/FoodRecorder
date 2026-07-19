@@ -143,3 +143,17 @@ export const UNITES_PROMPT = `Choix de l'unité — PRIVILÉGIE LES GRAMMES :
 export const FOURCHETTE_PROMPT = `Fourchette d'incertitude (optionnelle) : quand tu ESTIMES une quantité ("estimation": true), ajoute à l'item "quantiteMin" et "quantiteMax" (nombres, MÊME unité que "quantite") encadrant la fourchette plausible, quantiteMin < quantite < quantiteMax.
 Exemple : une assiette de riz estimée à 180 g → {"quantite":180,"unite":"g","estimation":true,"quantiteMin":120,"quantiteMax":250}.
 Sois honnête sur la largeur : étroite si le contexte est précis (« un yaourt » en pot standard), large si tu devines (volume vu de dessus sur une photo). Ne renseigne PAS ces champs quand la quantité est donnée explicitement par l'utilisateur.`;
+
+/**
+ * Consigne de DÉCOMPOSITION d'un assemblage d'aliments distincts en items
+ * séparés, commune aux IA fortes (texte et photo). Complète — sans la
+ * contredire — la règle « plat composé = un seul item » : le critère est la
+ * SÉPARABILITÉ des composants (une salade de crudités se pèse ingrédient par
+ * ingrédient ; un gâteau, non).
+ */
+export const DECOMPOSITION_PROMPT = `Décomposition d'un assemblage d'aliments distincts :
+Quand le repas est un ASSEMBLAGE d'aliments entiers reconnaissables et quantifiables séparément (salade composée, assiette mixte, mélange de légumes, salade de fruits, plateau de crudités, bowl…), émets UN ITEM DISTINCT PAR aliment, chacun avec sa propre quantité — n'en fais pas un unique item « salade » ou « assiette ».
+À NE PAS confondre avec le PLAT TRANSFORMÉ dont les ingrédients sont cuits/liés et non séparables (gâteau, tajine, quiche, soupe mixée, sauce, curry) : celui-là reste UN SEUL item estimé (cf. règle du plat composé). Critère : si chaque composant reste visible et pourrait être pesé à part, DÉCOMPOSE ; s'il forme une préparation homogène, garde un seul item.
+Si les quantités par composant ne sont pas précisées, estime une part plausible pour chacun ("estimation": true).
+Exemple : "une salade de tomates, poivrons et oignons"
+→ {"items":[{"aliment":"tomate","quantite":100,"unite":"g","estimation":true,"quantiteMin":60,"quantiteMax":150},{"aliment":"poivron","quantite":80,"unite":"g","estimation":true,"quantiteMin":50,"quantiteMax":120},{"aliment":"oignon","quantite":40,"unite":"g","estimation":true,"quantiteMin":20,"quantiteMax":70}]}`;

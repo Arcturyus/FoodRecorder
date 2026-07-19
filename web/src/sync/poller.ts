@@ -14,6 +14,7 @@ import {
   isSyncConfigured,
 } from './supabase';
 import type { SunPayloadExposure } from './supabase';
+import { useSyncStore } from './syncStore';
 
 let running = false;
 
@@ -135,18 +136,25 @@ export async function runSyncTick(): Promise<void> {
       }
     }
 
-    const newRows = await fetchNewEntries(deviceId, syncCursor);
-    for (const row of newRows) {
-      // Rejeu d'un résultat traité par un AUTRE appareil : on réutilise l'heure/le
-      // jour d'origine (estampillés par l'émetteur), pas l'heure de réception ici.
-      if (row.kind === 'sun-entry') {
-        for (const e of row.payload.sorties as SunPayloadExposure[]) addSunExposure(e, row.payload.clientTime);
-      } else {
-        addEntry(row.payload.transcript, row.payload.items, row.payload.source, row.payload.date, row.payload.clientTime);
+    // Quand un profil de synchro est actif, le rejeu des résultats est pris en
+    // charge par la sync d'état (profileSync) : chaque appareil recevrait sinon
+    // ces résultats avec un id local DIFFÉRENT, créant des doublons dans le
+    // profil. Le pont (ci-dessus) continue de traiter et son `addEntry` local
+    // remonte aux autres appareils par la sync d'état, avec un id unique.
+    if (useSyncStore.getState().profileId == null) {
+      const newRows = await fetchNewEntries(deviceId, syncCursor);
+      for (const row of newRows) {
+        // Rejeu d'un résultat traité par un AUTRE appareil : on réutilise l'heure/le
+        // jour d'origine (estampillés par l'émetteur), pas l'heure de réception ici.
+        if (row.kind === 'sun-entry') {
+          for (const e of row.payload.sorties as SunPayloadExposure[]) addSunExposure(e, row.payload.clientTime);
+        } else {
+          addEntry(row.payload.transcript, row.payload.items, row.payload.source, row.payload.date, row.payload.clientTime);
+        }
       }
-    }
-    if (newRows.length > 0) {
-      setSyncCursor(newRows[newRows.length - 1].created_at);
+      if (newRows.length > 0) {
+        setSyncCursor(newRows[newRows.length - 1].created_at);
+      }
     }
   } catch {
     // Réseau coupé, Supabase injoignable, projet en pause… : la synchro est un

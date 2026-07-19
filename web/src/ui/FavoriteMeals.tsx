@@ -39,7 +39,11 @@ export function FavoriteMeals({ date }: { date?: string } = {}) {
           <button className="primary small" onClick={() => add(f.id, f.nom)}>
             + Ajouter
           </button>
-          <button className="danger small" onClick={() => removeFavoriteMeal(f.id)} title="Supprimer ce favori">
+          <button
+            className="danger small"
+            title="Supprimer ce favori"
+            onClick={() => window.confirm(`Supprimer le repas favori « ${f.nom} » ?`) && removeFavoriteMeal(f.id)}
+          >
             ✕
           </button>
         </div>

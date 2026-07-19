@@ -84,7 +84,10 @@ function WeightRow({ entry, focus }: { entry: WeightEntry; focus?: number }) {
           <button className="ghost small" onClick={() => setEditing((v) => !v)}>
             {editing ? 'Terminer' : 'Modifier'}
           </button>
-          <button className="danger small" onClick={() => removeWeightEntry(entry.id)}>
+          <button
+            className="danger small"
+            onClick={() => window.confirm(`Supprimer la pesée du ${dateLabel} (${fmt(entry.poids, 1)} kg) ?`) && removeWeightEntry(entry.id)}
+          >
             Suppr.
           </button>
         </div>

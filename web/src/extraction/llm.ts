@@ -30,10 +30,14 @@ Réponds UNIQUEMENT avec un JSON {"items":[{"aliment","quantite","unite","estima
 - Si la quantité n'est pas donnée, choisis une quantité plausible et mets "estimation": true, sinon false.
 - PRIVILÉGIE l'unité "g" (ou "ml" pour un liquide) : convertis toi-même les contenants en grammes (un bol de riz → 200 g, une assiette de pâtes → 280 g, une cuillère à soupe d'huile → 14 g, une poignée d'amandes → 30 g). Utilise "mg"/"µg" pour un complément dosé (300 mg de magnésium). "piece" seulement pour un objet dénombrable standard (œuf, banane, yaourt, carré de chocolat).
 - N'invente JAMAIS de valeurs nutritionnelles. N'ajoute aucun aliment non mentionné.
+- DÉCOMPOSE un assemblage d'aliments distincts (salade composée, mélange de légumes, assiette mixte) en UN item par aliment, chacun avec sa quantité. Mais un PLAT transformé et lié (gâteau, tajine, soupe, quiche) reste UN SEUL item.
 
 Exemples :
 "j'ai mangé un bol de riz avec 150 g de poulet et un yaourt nature"
 → {"items":[{"aliment":"riz","quantite":200,"unite":"g","estimation":true},{"aliment":"poulet","quantite":150,"unite":"g","estimation":false},{"aliment":"yaourt nature","quantite":1,"unite":"piece","estimation":false}]}
+
+"une salade de tomates, poivrons et oignons"
+→ {"items":[{"aliment":"tomate","quantite":100,"unite":"g","estimation":true},{"aliment":"poivron","quantite":80,"unite":"g","estimation":true},{"aliment":"oignon","quantite":40,"unite":"g","estimation":true}]}
 
 "euh ce midi j'ai pris genre des pâtes avec du fromage râpé"
 → {"items":[{"aliment":"pâtes","quantite":280,"unite":"g","estimation":true},{"aliment":"fromage râpé","quantite":20,"unite":"g","estimation":true}]}

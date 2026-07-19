@@ -266,7 +266,11 @@ function SunRow({
           >
             {open ? 'Fermer' : '✎ Modifier'}
           </button>
-          <button className="ghost small" onClick={onRemove} title="Supprimer cette sortie">
+          <button
+            className="ghost small"
+            title="Supprimer cette sortie"
+            onClick={() => window.confirm(`Supprimer cette sortie au soleil (${e.heure}) ?`) && onRemove()}
+          >
             ✕
           </button>
         </span>

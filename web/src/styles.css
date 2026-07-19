@@ -361,6 +361,9 @@ header.app-head .sub { color: var(--muted); font-size: 13px; }
   .item-row-edit { grid-template-columns: 1fr 88px auto; }
   .item-row-edit .item-row-edit-food { grid-column: 1 / -1; }
 }
+/* Actions d'une ligne d'aliment (détail + suppression), regroupées dans la
+   dernière colonne pour ne pas élargir la grille. */
+.item-row-actions { display: flex; align-items: center; gap: 4px; justify-content: flex-end; }
 .item-name { display: flex; flex-direction: column; gap: 2px; }
 .item-name .kcal { color: var(--muted); font-size: 12px; }
 .badge {

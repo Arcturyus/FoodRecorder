@@ -21,6 +21,12 @@ export function EntryCard({ entry }: { entry: JournalEntry }) {
   const time = new Date(entry.createdAt).toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' });
   const isPast = entry.date !== todayStr();
 
+  function confirmRemoveEntry() {
+    const count = entry.items.length;
+    if (!window.confirm(`Supprimer ce repas (${count} aliment${count > 1 ? 's' : ''}, ${fmt(kcal)} kcal) ?`)) return;
+    removeEntry(entry.id);
+  }
+
   function saveAsFavorite() {
     const suggestion = entry.transcript.replace(/^⭐\s*/, '') || entry.items.map((it) => it.nomAffiche).join(', ');
     const nom = window.prompt('Nom du repas favori (ex. « petit-déj habituel ») :', suggestion);
@@ -61,9 +67,9 @@ export function EntryCard({ entry }: { entry: JournalEntry }) {
             ☆ Favori
           </button>
           <button className="ghost small" onClick={() => setEditing((e) => !e)}>
-            {editing ? 'Terminer' : 'Modifier'}
+            {editing ? 'Terminer' : 'Options'}
           </button>
-          <button className="danger small" onClick={() => removeEntry(entry.id)}>
+          <button className="danger small" onClick={confirmRemoveEntry}>
             Suppr.
           </button>
         </div>
@@ -71,7 +77,7 @@ export function EntryCard({ entry }: { entry: JournalEntry }) {
       {saved && <div className="status">{saved}</div>}
       {entry.transcript && <div className="entry-transcript">« {entry.transcript} »</div>}
       {entry.items.map((it) => (
-        <ItemRow key={it.id} entryId={entry.id} item={it} editing={editing} />
+        <ItemRow key={it.id} entryId={entry.id} item={it} canDeleteItem={entry.items.length > 1} />
       ))}
       {editing && (
         <div className="row" style={{ marginTop: 10, alignItems: 'flex-end' }}>
@@ -94,40 +100,100 @@ export function EntryCard({ entry }: { entry: JournalEntry }) {
   );
 }
 
-function ItemRow({ entryId, item, editing }: { entryId: string; item: JournalItem; editing: boolean }) {
+/**
+ * Une ligne d'aliment gère son PROPRE mode édition (indépendant des autres
+ * items du repas) : passer un seul élément en édition ne touche pas les autres.
+ */
+function ItemRow({ entryId, item, canDeleteItem }: { entryId: string; item: JournalItem; canDeleteItem: boolean }) {
   const updateItem = useStore((s) => s.updateItem);
   const removeItem = useStore((s) => s.removeItem);
   const foods = useEffectiveFoods();
   const [open, setOpen] = useState(false);
+  const [editingItem, setEditingItem] = useState(false);
 
-  if (!editing) {
-    // Une fois ajusté « pour cette fois », l'estimation IA est considérée vérifiée.
-    const isIa = item.iaEstime && !item.customN;
+  function confirmRemoveItem() {
+    if (!window.confirm(`Retirer « ${item.nomAffiche} » de ce repas ?`)) return;
+    removeItem(entryId, item.id);
+  }
+
+  if (editingItem) {
+    // Alternatives proposées par le matching pour corriger l'aliment.
+    const alts = matchFood(item.nomAffiche, foods).alternatives;
+    const options = dedupeFoods([
+      ...(item.foodId ? foods.filter((f) => f.id === item.foodId) : []),
+      ...alts,
+      ...foods,
+    ]);
+
     return (
-      <>
-        <div className={`item-row${isIa ? ' ia-estime' : ''}`}>
-          <div className="item-name">
-            <span>
-              {item.nomAffiche}
-              {isIa && (
-                <span className="badge ia" title="Valeurs nutritionnelles estimées par l'IA (aliment hors base) — ouvrez le détail pour les vérifier / ajuster">
-                  IA · à vérifier
-                </span>
-              )}
-              {item.customN && (
-                <span className="badge adj" title="Valeurs ajustées pour cette fois — l'aliment de la base n'est pas modifié">
-                  ajusté
-                </span>
-              )}
-              {item.estimation && <span className="badge est">estimé</span>}
-              {item.douteux && <span className="badge doubt">à vérifier</span>}
-            </span>
-            <span className="kcal">
-              {fmt(item.quantite, 2)} {UNIT_LABELS[item.unite]} · {fmt(item.grams)} g
-            </span>
-          </div>
-          <span className="mono" style={{ textAlign: 'right' }}>{fmt(item.nutrients.kcal)}</span>
-          <span className="small">kcal</span>
+      <div className="item-row item-row-edit">
+        <select
+          className="item-row-edit-food"
+          value={item.foodId ?? ''}
+          onChange={(e) => updateItem(entryId, item.id, { foodId: e.target.value || null })}
+        >
+          {!item.foodId && <option value="">{item.nomAffiche} (non trouvé)</option>}
+          {options.map((f) => (
+            <option key={f.id} value={f.id}>
+              {f.nom}
+            </option>
+          ))}
+        </select>
+        <NumberField
+          min={0}
+          step={1}
+          value={item.quantite}
+          onChange={(v) => updateItem(entryId, item.id, { quantite: parseFloat(v.replace(',', '.')) || 0 })}
+        />
+        <select value={item.unite} onChange={(e) => updateItem(entryId, item.id, { unite: e.target.value as JournalItem['unite'] })}>
+          {UNITS.map((u) => (
+            <option key={u} value={u}>
+              {UNIT_LABELS[u]}
+            </option>
+          ))}
+        </select>
+        <span className="item-row-actions">
+          <button className="ghost small" title="Terminer la modification de cet aliment" onClick={() => setEditingItem(false)}>
+            ✓
+          </button>
+          {canDeleteItem && (
+            <button className="danger small" title="Retirer seulement cet aliment du repas" onClick={confirmRemoveItem}>
+              ✕
+            </button>
+          )}
+        </span>
+      </div>
+    );
+  }
+
+  // Une fois ajusté « pour cette fois », l'estimation IA est considérée vérifiée.
+  const isIa = item.iaEstime && !item.customN;
+  return (
+    <>
+      <div className={`item-row${isIa ? ' ia-estime' : ''}`}>
+        <div className="item-name">
+          <span>
+            {item.nomAffiche}
+            {isIa && (
+              <span className="badge ia" title="Valeurs nutritionnelles estimées par l'IA (aliment hors base) — ouvrez le détail pour les vérifier / ajuster">
+                IA · à vérifier
+              </span>
+            )}
+            {item.customN && (
+              <span className="badge adj" title="Valeurs ajustées pour cette fois — l'aliment de la base n'est pas modifié">
+                ajusté
+              </span>
+            )}
+            {item.estimation && <span className="badge est">estimé</span>}
+            {item.douteux && <span className="badge doubt">à vérifier</span>}
+          </span>
+          <span className="kcal">
+            {fmt(item.quantite, 2)} {UNIT_LABELS[item.unite]} · {fmt(item.grams)} g
+          </span>
+        </div>
+        <span className="mono" style={{ textAlign: 'right' }}>{fmt(item.nutrients.kcal)}</span>
+        <span className="small">kcal</span>
+        <span className="item-row-actions">
           <button
             className={`ghost small item-detail-toggle${open ? ' on' : ''}`}
             aria-expanded={open}
@@ -136,51 +202,26 @@ function ItemRow({ entryId, item, editing }: { entryId: string; item: JournalIte
           >
             {open ? '▲ Détail' : '⌄ Détail'}
           </button>
-        </div>
-        {open && <ItemDetail entryId={entryId} item={item} />}
-      </>
-    );
-  }
-
-  // Alternatives proposées par le matching pour corriger l'aliment.
-  const alts = matchFood(item.nomAffiche, foods).alternatives;
-  const options = dedupeFoods([
-    ...(item.foodId ? foods.filter((f) => f.id === item.foodId) : []),
-    ...alts,
-    ...foods,
-  ]);
-
-  return (
-    <div className="item-row item-row-edit">
-      <select
-        className="item-row-edit-food"
-        value={item.foodId ?? ''}
-        onChange={(e) => updateItem(entryId, item.id, { foodId: e.target.value || null })}
-      >
-        {!item.foodId && <option value="">{item.nomAffiche} (non trouvé)</option>}
-        {options.map((f) => (
-          <option key={f.id} value={f.id}>
-            {f.nom}
-          </option>
-        ))}
-      </select>
-      <NumberField
-        min={0}
-        step={1}
-        value={item.quantite}
-        onChange={(v) => updateItem(entryId, item.id, { quantite: parseFloat(v.replace(',', '.')) || 0 })}
-      />
-      <select value={item.unite} onChange={(e) => updateItem(entryId, item.id, { unite: e.target.value as JournalItem['unite'] })}>
-        {UNITS.map((u) => (
-          <option key={u} value={u}>
-            {UNIT_LABELS[u]}
-          </option>
-        ))}
-      </select>
-      <button className="danger small" onClick={() => removeItem(entryId, item.id)}>
-        ✕
-      </button>
-    </div>
+          <button
+            className="ghost small"
+            title="Modifier seulement cet aliment (choix, quantité, unité)"
+            onClick={() => setEditingItem(true)}
+          >
+            ✎
+          </button>
+          {canDeleteItem && (
+            <button
+              className="danger small"
+              title="Retirer seulement cet aliment du repas (sans supprimer les autres)"
+              onClick={confirmRemoveItem}
+            >
+              ✕
+            </button>
+          )}
+        </span>
+      </div>
+      {open && <ItemDetail entryId={entryId} item={item} />}
+    </>
   );
 }
 

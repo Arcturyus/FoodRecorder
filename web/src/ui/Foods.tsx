@@ -198,7 +198,11 @@ function FoodRow({ food, modified, onEdit }: { food: Food; modified: boolean; on
         ✏️ Modifier
       </button>
       {f.custom ? (
-        <button className="danger small" onClick={() => removeCustomFood(f.id)} title="Supprimer cet aliment perso">
+        <button
+          className="danger small"
+          title="Supprimer cet aliment perso"
+          onClick={() => window.confirm(`Supprimer l'aliment personnalisé « ${f.nom} » ?`) && removeCustomFood(f.id)}
+        >
           ✕
         </button>
       ) : modified ? (

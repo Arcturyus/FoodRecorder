@@ -6,6 +6,8 @@ import { dayKcalUncertainty } from './nutrition/uncertainty';
 import { sunVitDForDate } from './sun/vitaminD';
 import { isSyncConfigured } from './sync/supabase';
 import { runSyncTick } from './sync/poller';
+import { runProfileSyncTick } from './sync/profileSync';
+import { initChangeTracker } from './sync/changeTracker';
 import { runAutoSaveTick } from './store/autosave';
 
 /** Intervalle entre deux vérifications de la file de synchro (30 s). */
@@ -86,10 +88,19 @@ export function App() {
   }, [entries, today, sunVitD]);
   const kcalUnc = useMemo(() => dayKcalUncertainty(todayEntries), [todayEntries]);
 
+  // Suit les changements locaux pour la sync par profil (no-op tant qu'aucun profil n'est joint).
+  useEffect(() => {
+    initChangeTracker();
+  }, []);
+
   useEffect(() => {
     if (!isSyncConfigured()) return;
-    runSyncTick();
-    const id = setInterval(runSyncTick, SYNC_INTERVAL_MS);
+    const tick = () => {
+      runSyncTick();
+      runProfileSyncTick();
+    };
+    tick();
+    const id = setInterval(tick, SYNC_INTERVAL_MS);
     return () => clearInterval(id);
   }, []);
 

@@ -585,7 +585,7 @@ export const useStore = create<AppState>()(
 );
 
 /** Complète un objet nutriments persisté avec les clés manquantes (nouveaux nutriments). */
-function normalizeNutrients(n: Partial<Nutrients> | undefined): Nutrients {
+export function normalizeNutrients(n: Partial<Nutrients> | undefined): Nutrients {
   return { ...EMPTY_NUTRIENTS, ...(n ?? {}) };
 }
 
@@ -606,7 +606,7 @@ export function resolveItemNutrients(
 }
 
 /** Recalcule les nutriments de tous les items résolus d'un journal, depuis `foods`. */
-function resyncEntries(entries: JournalEntry[], foods: Food[]): JournalEntry[] {
+export function resyncEntries(entries: JournalEntry[], foods: Food[]): JournalEntry[] {
   return entries.map((e) => ({
     ...e,
     items: e.items.map((it) => ({

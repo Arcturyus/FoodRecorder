@@ -111,7 +111,7 @@ async function askBridge(system: string, user: string): Promise<string> {
   const res = await fetch('/api/claude-code', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ prompt: `${system}\n\n${user}` }),
+    body: JSON.stringify({ prompt: `${system}\n\n${user}`, label: 'verify' }),
   });
   const data = (await res.json().catch(() => ({}))) as { text?: string; error?: string };
   if (!res.ok || data.error) throw new Error(data.error || `HTTP ${res.status}`);

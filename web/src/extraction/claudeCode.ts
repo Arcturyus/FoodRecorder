@@ -1,5 +1,5 @@
 import type { ExtractedItem } from '../nutrition/types';
-import { validateExtraction, ESTIMATION_PROMPT, FOURCHETTE_PROMPT, UNITES_PROMPT } from './schema';
+import { validateExtraction, ESTIMATION_PROMPT, FOURCHETTE_PROMPT, UNITES_PROMPT, DECOMPOSITION_PROMPT } from './schema';
 import { parseTranscript } from './ruleParser';
 
 /**
@@ -26,6 +26,8 @@ Aucun texte hors du JSON, pas de bloc de code.
 - Les déterminants et petits mots (un, une, en, le, des…) sont souvent mal transcrits : ne supprime PAS un aliment clairement nommé sous prétexte que son article semble bizarre (« une pêche en abricot » = « une pêche, un abricot »). Dans le doute, INCLUS l'aliment plutôt que de l'omettre.
 
 ${UNITES_PROMPT}
+
+${DECOMPOSITION_PROMPT}
 
 ${FOURCHETTE_PROMPT}
 
@@ -56,6 +58,8 @@ Aucun texte hors du JSON, pas de bloc de code.
 - Si aucun aliment n'est identifiable, réponds {"items":[]}.
 
 ${UNITES_PROMPT}
+
+${DECOMPOSITION_PROMPT}
 
 ${FOURCHETTE_PROMPT}
 Sur une photo, chaque quantité est une estimation visuelle : renseigne SYSTÉMATIQUEMENT "quantiteMin" et "quantiteMax" pour chaque item.
@@ -106,6 +110,7 @@ export async function extractImageWithClaudeCode(
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
         prompt: `${IMAGE_SYSTEM_PROMPT}\n\nJSON :`,
+        label: 'photo',
         image: { data: imageBase64, mediaType },
       }),
     });
@@ -125,7 +130,7 @@ export async function extractWithClaudeCode(
     const res = await fetch('/api/claude-code', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ prompt: buildPrompt(transcript) }),
+      body: JSON.stringify({ prompt: buildPrompt(transcript), label: 'repas' }),
     });
     const data = (await res.json().catch(() => ({}))) as { text?: string; error?: string };
     if (!res.ok || data.error) throw new Error(data.error || `HTTP ${res.status}`);

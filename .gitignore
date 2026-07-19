@@ -9,6 +9,9 @@ dist/
 # Sauvegardes automatiques du journal (npm run dev) : données perso, pas du code
 save/
 
+# Archives des réponses du CLI Claude (npm run dev) : prompts/photos perso, pas du code
+response/
+
 # Logs
 *.log
 npm-debug.log*
