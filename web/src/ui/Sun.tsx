@@ -160,7 +160,7 @@ export function Sun({ date }: { date?: string } = {}) {
                 key={o.value}
                 className={`small ${creme === o.value ? 'chip-active' : 'ghost'}`}
                 onClick={() => setCreme(o.value)}
-                title={
+                data-tip={
                   o.value === 'visage'
                     ? 'SPF 50 sur le visage seulement : le reste de la peau découverte synthétise normalement'
                     : o.value === 'complete'
@@ -181,7 +181,7 @@ export function Sun({ date }: { date?: string } = {}) {
           <span className="sun-label">Peau découverte</span>
           <div className="row" style={{ gap: 6, flexWrap: 'wrap' }}>
             {SKIN_OPTIONS.map((o) => (
-              <button key={o.value} className={`small ${peau === o.value ? 'chip-active' : 'ghost'}`} onClick={() => setPeau(o.value)} title={o.label}>
+              <button key={o.value} className={`small ${peau === o.value ? 'chip-active' : 'ghost'}`} onClick={() => setPeau(o.value)} data-tip={o.label}>
                 {o.short}
               </button>
             ))}
@@ -261,14 +261,14 @@ function SunRow({
           <button
             className={`ghost small ${open ? 'chip-active' : ''}`}
             onClick={() => setOpen((o) => !o)}
-            title="Corriger cette sortie"
+            data-tip="Corriger cette sortie"
             aria-expanded={open}
           >
             {open ? 'Fermer' : '✎ Modifier'}
           </button>
           <button
             className="ghost small"
-            title="Supprimer cette sortie"
+            data-tip="Supprimer cette sortie"
             onClick={() => window.confirm(`Supprimer cette sortie au soleil (${e.heure}) ?`) && onRemove()}
           >
             ✕
@@ -318,7 +318,7 @@ function SunRow({
                 key={o.value}
                 className={`small ${e.peau === o.value ? 'chip-active' : 'ghost'}`}
                 onClick={() => onUpdate({ peau: o.value })}
-                title={o.label}
+                data-tip={o.label}
               >
                 {o.short}
               </button>
@@ -339,7 +339,7 @@ function SunRow({
                 key={o.value}
                 className={`small ${creme === o.value ? 'chip-active' : 'ghost'}`}
                 onClick={() => onUpdate({ creme: o.value })}
-                title={o.label}
+                data-tip={o.label}
               >
                 {o.value === 'aucune' ? 'Sans crème' : o.short}
               </button>

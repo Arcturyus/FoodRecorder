@@ -365,7 +365,7 @@ export function WeightChart({ onEditEntry }: { onEditEntry?: (id: string) => voi
             key={m.key}
             className={mode === m.key ? 'chip-active' : 'ghost'}
             onClick={() => setMode(m.key)}
-            title={m.title}
+            data-tip={m.title}
           >
             {m.label}
           </button>
@@ -373,11 +373,11 @@ export function WeightChart({ onEditEntry }: { onEditEntry?: (id: string) => voi
       </div>
 
       <div className="row" style={{ gap: 14, flexWrap: 'wrap', alignItems: 'center', marginBottom: 6 }}>
-        <label className="small" style={{ display: 'flex', alignItems: 'center', gap: 6, cursor: 'pointer' }} title="Exclut les pesées non à jeun ou habillées, au lieu de simplement les griser">
+        <label className="small" style={{ display: 'flex', alignItems: 'center', gap: 6, cursor: 'pointer' }} data-tip="Exclut les pesées non à jeun ou habillées, au lieu de simplement les griser">
           <input type="checkbox" checked={comparableOnly} onChange={(e) => setComparableOnly(e.target.checked)} style={{ width: 'auto' }} />
           À jeun &amp; nu uniquement
         </label>
-        <span className="row" style={{ gap: 10 }} title="Filtrer par heure de pesée (aucune case cochée = toutes les heures)">
+        <span className="row" style={{ gap: 10 }} data-tip="Filtrer par heure de pesée (aucune case cochée = toutes les heures)">
           <label className="small" style={{ display: 'flex', alignItems: 'center', gap: 6, cursor: 'pointer' }}>
             <input
               type="checkbox"
@@ -402,7 +402,7 @@ export function WeightChart({ onEditEntry }: { onEditEntry?: (id: string) => voi
       {!isComposite && (
         <div className="row" style={{ gap: 14, flexWrap: 'wrap', alignItems: 'center', marginBottom: 6 }}>
           {mode === 'masseMusculaire' && (
-            <span className="row" style={{ gap: 0 }} title="kg = % mesuré × poids ; % = valeur brute de la balance">
+            <span className="row" style={{ gap: 0 }} data-tip="kg = % mesuré × poids ; % = valeur brute de la balance">
               <button className={`small ${muscleUnit === 'kg' ? 'chip-active' : 'ghost'}`} onClick={() => setMuscleUnit('kg')}>
                 kg
               </button>
@@ -441,7 +441,7 @@ export function WeightChart({ onEditEntry }: { onEditEntry?: (id: string) => voi
 
       {mode === 'metabolismes' && (
         <div className="row" style={{ gap: 14, flexWrap: 'wrap', alignItems: 'center', marginBottom: 6 }}>
-          <span className="row" style={{ gap: 0 }} title={`Multiplie les courbes par le multiplicateur d'activité (${fmt(weightConfig.activityMultiplier, 2)}, réglable dans les constantes)`}>
+          <span className="row" style={{ gap: 0 }} data-tip={`Multiplie les courbes par le multiplicateur d'activité (${fmt(weightConfig.activityMultiplier, 2)}, réglable dans les constantes)`}>
             <button className={`small ${!withActivity ? 'chip-active' : 'ghost'}`} onClick={() => setWithActivity(false)}>
               Basal
             </button>

@@ -299,7 +299,7 @@ export function Stats() {
           <label
             className="row small"
             style={{ gap: 6, alignItems: 'center', cursor: 'pointer' }}
-            title="Par défaut, la journée en cours (pas encore terminée) est exclue de toutes les moyennes ci-dessous, pour ne pas les tirer artificiellement vers le bas."
+            data-tip="Par défaut, la journée en cours (pas encore terminée) est exclue de toutes les moyennes ci-dessous, pour ne pas les tirer artificiellement vers le bas."
           >
             <input type="checkbox" checked={includeToday} onChange={(e) => setIncludeToday(e.target.checked)} />
             Inclure la journée en cours dans les moyennes
@@ -307,7 +307,7 @@ export function Stats() {
           <label
             className="row small"
             style={{ gap: 6, alignItems: 'center', cursor: 'pointer' }}
-            title="Retire créatine, whey, magnésium, vitamines, oméga 3… mais aussi le sel et le poivre (même catégorie) de toutes les analyses ci-dessous. Le gain de vitamine D du soleil, lui, est conservé."
+            data-tip="Retire créatine, whey, magnésium, vitamines, oméga 3… mais aussi le sel et le poivre (même catégorie) de toutes les analyses ci-dessous. Le gain de vitamine D du soleil, lui, est conservé."
           >
             <input
               type="checkbox"
@@ -340,7 +340,7 @@ export function Stats() {
             <label
               className="row small"
               style={{ gap: 6, alignItems: 'center', cursor: 'pointer' }}
-              title="Axe des % en échelle logarithmique : compare mieux des séries d'ordres de grandeur très différents (ne peut pas représenter 0)."
+              data-tip="Axe des % en échelle logarithmique : compare mieux des séries d'ordres de grandeur très différents (ne peut pas représenter 0)."
             >
               <input type="checkbox" checked={logY} onChange={(e) => setLogY(e.target.checked)} />
               Échelle log (Y)
@@ -699,7 +699,7 @@ function Chip({
     <button
       type="button"
       className={`series-chip${selected ? ' on' : ''}`}
-      title={title}
+      data-tip={title}
       onClick={() => onToggle(id)}
       style={selected && color ? { borderColor: color } : undefined}
     >

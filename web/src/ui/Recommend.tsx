@@ -31,7 +31,7 @@ function PartBadge({ p }: { p: ScorePart }) {
     <span
       className="reco-badge mono"
       style={{ color: neg ? 'var(--danger)' : 'var(--accent-2)' }}
-      title={`${p.target.label} : ${fmtAmount(p.amount)} ${p.target.unit}${p.reason ? ` (rapport ${p.reason})` : ''}`}
+      data-tip={`${p.target.label} : ${fmtAmount(p.amount)} ${p.target.unit}${p.reason ? ` (rapport ${p.reason})` : ''}`}
     >
       {neg ? '−' : '+'}{shortLabel(p.key, p.target.label)}
     </span>
@@ -61,7 +61,7 @@ function ScoredRow({
         <span className="reco-rank mono">{rank}</span>
         <span className="reco-nom">
           {s.food.nom}
-          {consumed && <span className="reco-known" title="Déjà présent dans votre journal">✓</span>}
+          {consumed && <span className="reco-known" data-tip="Déjà présent dans votre journal">✓</span>}
         </span>
         <span className="reco-badges">
           {s.parts.slice(0, 3).map((p) => (
@@ -179,12 +179,12 @@ export function Recommendations({
       {(topGaps.length > 0 || analysis.penalties.length > 0) && (
         <div className="row" style={{ gap: 6, flexWrap: 'wrap', margin: '4px 0 10px' }}>
           {topGaps.map((g) => (
-            <span key={g.key} className="reco-gap mono" title={`${g.target.label} : ${fmtAmount(g.avg)} ${g.target.unit}/j en moyenne, cible ${fmt(g.target.optimal)}${g.ratioBoost ? ` · renforcé par le rapport ${g.ratioBoost}` : ''}`}>
+            <span key={g.key} className="reco-gap mono" data-tip={`${g.target.label} : ${fmtAmount(g.avg)} ${g.target.unit}/j en moyenne, cible ${fmt(g.target.optimal)}${g.ratioBoost ? ` · renforcé par le rapport ${g.ratioBoost}` : ''}`}>
               {shortLabel(g.key, g.target.label)} −{fmt(g.missing * 100)} %{g.ratioBoost ? ' ⚖️' : ''}
             </span>
           ))}
           {analysis.penalties.map((p) => (
-            <span key={p.key} className="reco-gap bad mono" title={`${p.target.label} : ${fmtAmount(p.avg)} ${p.target.unit}/j en moyenne${p.reason === 'plafond' ? `, plafond ${fmt(p.cap)}` : ` · rapport ${p.reason}`}`}>
+            <span key={p.key} className="reco-gap bad mono" data-tip={`${p.target.label} : ${fmtAmount(p.avg)} ${p.target.unit}/j en moyenne${p.reason === 'plafond' ? `, plafond ${fmt(p.cap)}` : ` · rapport ${p.reason}`}`}>
               {shortLabel(p.key, p.target.label)} en excès
             </span>
           ))}
@@ -337,7 +337,7 @@ function ImportancePanel({
                   const v = Number(e.target.value);
                   for (const k of keys) setNutrientImportance(k, v);
                 }}
-                title="Applique cette importance à tout le groupe"
+                data-tip="Applique cette importance à tout le groupe"
                 aria-label={`Importance du groupe ${g.title}`}
               />
               <span className="mono small" style={{ width: 34, textAlign: 'right' }}>×{fmt(avg, 1)}</span>
@@ -348,7 +348,7 @@ function ImportancePanel({
               const overridden = overrides[k] !== undefined;
               return (
                 <div className="importance-row" key={k}>
-                  <span className="importance-label" title={t.role}>{t.label}</span>
+                  <span className="importance-label" data-tip={t.role}>{t.label}</span>
                   <input
                     type="range"
                     min={IMPORTANCE_BOUNDS.min}
@@ -365,7 +365,7 @@ function ImportancePanel({
                     className="ghost small importance-reset"
                     style={{ visibility: overridden ? 'visible' : 'hidden' }}
                     onClick={() => resetNutrientImportance(k)}
-                    title="Revenir au défaut"
+                    data-tip="Revenir au défaut"
                     aria-label={`Réinitialiser l'importance : ${t.label}`}
                   >
                     ↺

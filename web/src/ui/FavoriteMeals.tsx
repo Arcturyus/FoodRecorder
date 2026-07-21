@@ -41,7 +41,7 @@ export function FavoriteMeals({ date }: { date?: string } = {}) {
           </button>
           <button
             className="danger small"
-            title="Supprimer ce favori"
+            data-tip="Supprimer ce favori"
             onClick={() => window.confirm(`Supprimer le repas favori « ${f.nom} » ?`) && removeFavoriteMeal(f.id)}
           >
             ✕

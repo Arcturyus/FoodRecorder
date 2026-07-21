@@ -42,14 +42,14 @@ const PRIMARY_TABS: TabMeta[] = [
   { id: 'jour', label: "Aujourd'hui", short: 'Jour', icon: '🍽' },
   { id: 'historique', label: 'Historique', short: 'Historique', icon: '📅' },
   { id: 'stats', label: 'Stats', short: 'Stats', icon: '📊' },
-  { id: 'poids', label: 'Poids', short: 'Poids', icon: '⚖️' },
 ];
 
-/** Onglets secondaires : regroupés derrière « Plus » sur mobile. */
+/** Onglets secondaires : regroupés derrière « Plus » sur mobile. Poids et Guide au fond. */
 const SECONDARY_TABS: TabMeta[] = [
   { id: 'aliments', label: 'Aliments', short: 'Aliments', icon: '🥗' },
-  { id: 'guide', label: 'Guide', short: 'Guide', icon: '📖' },
   { id: 'reglages', label: 'Réglages', short: 'Réglages', icon: '⚙️' },
+  { id: 'poids', label: 'Poids', short: 'Poids', icon: '⚖️' },
+  { id: 'guide', label: 'Guide', short: 'Guide', icon: '📖' },
 ];
 
 const ALL_TABS: TabMeta[] = [...PRIMARY_TABS, ...SECONDARY_TABS];

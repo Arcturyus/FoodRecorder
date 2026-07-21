@@ -48,7 +48,7 @@ button {
   padding: 8px 14px;
   transition: background 0.15s, border-color 0.15s;
 }
-button:hover { background: #262b36; }
+button:hover { background: var(--border); }
 button:disabled { opacity: 0.5; cursor: not-allowed; }
 
 button.primary {
@@ -311,8 +311,11 @@ header.app-head .sub { color: var(--muted); font-size: 13px; }
   gap: 8px;
   margin-top: 10px;
 }
-/* Trois actions à parts égales, cibles tactiles confortables. */
-.capture-actions > button {
+/* Trois emplacements à parts égales, cibles tactiles confortables. Celui du
+   milieu (photo) est scindé en deux sous-boutons (Prendre / Choisir) via
+   .photo-group, sans changer la largeur totale de la rangée. */
+.capture-actions > button,
+.capture-actions .photo-group > button {
   flex: 1 1 0;
   min-width: 0;
   min-height: 46px;
@@ -323,6 +326,14 @@ header.app-head .sub { color: var(--muted); font-size: 13px; }
   gap: 6px;
   white-space: nowrap;
 }
+.capture-actions .photo-group {
+  flex: 1 1 0;
+  min-width: 0;
+  display: flex;
+  gap: 8px;
+}
+/* Place serrée à deux dans un tiers de rangée : padding horizontal réduit. */
+.capture-actions .photo-group > button { padding-left: 6px; padding-right: 6px; }
 /* « Dicter » au repos : accent chaud (gère déjà .primary) ; en cours : rouge pulsé. */
 .capture-actions .photo-btn { border-color: var(--accent); color: var(--accent); background: transparent; }
 /* « Ajouter » = valider : vert, distinct de la dictée. */
@@ -335,7 +346,12 @@ header.app-head .sub { color: var(--muted); font-size: 13px; }
 
 @media (max-width: 640px) {
   .capture-input { min-height: 96px; font-size: 16px; } /* 16px : évite le zoom auto iOS au focus */
-  .capture-actions > button { min-height: 50px; font-size: 14px; }
+  .capture-actions > button,
+  .capture-actions .photo-group > button { min-height: 50px; font-size: 14px; }
+  /* Place trop serrée pour deux libellés dans un tiers de rangée : on ne garde
+     que les icônes 📷 / 🖼 (le titre au survol/appui reste explicite). */
+  .capture-actions .photo-group > button { font-size: 18px; }
+  .capture-actions .photo-lbl { display: none; }
 }
 
 .hint { color: var(--muted); font-size: 12px; margin-top: 8px; }
@@ -589,14 +605,24 @@ button.chip-active:hover { filter: brightness(1.08); }
 .cal-legend.muted { background: var(--border); border: 1px dashed var(--muted); }
 .cal-legend.fasting { background: transparent; border: 1px solid var(--accent); }
 
-/* Action rapide de mute : révélée au survol de la case, toujours visible si le jour est marqué. */
-.cal-mute {
+/* Action rapide de mute : révélée au survol de la case, toujours visible si le jour est marqué.
+   Sélecteur `.cal-mute[data-tip]` (plutôt que `.cal-mute` seul) : spécificité volontairement
+   supérieure à la règle générique `[data-tip] { position: relative }` des info-bulles, pour ne
+   pas perdre le `position: absolute` nécessaire au coin haut-droit de la case.
+   Zone de clic élargie (18×18) malgré la petite icône visuelle : les cases du calendrier
+   font ~40 px sur mobile, un appui à côté doit quand même toucher le bon élément plutôt
+   que rouvrir la case par erreur. */
+.cal-mute[data-tip] {
   position: absolute;
   top: 1px;
-  right: 2px;
+  right: 1px;
+  width: 18px;
+  height: 18px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
   font-size: 11px;
   line-height: 1;
-  padding: 1px;
   border-radius: 5px;
   cursor: pointer;
   opacity: 0;
@@ -853,6 +879,38 @@ button.chip-active:hover { filter: brightness(1.08); }
   .cal-cell:hover:not(:disabled) { border-color: var(--border); }
   .series-chip:hover { border-color: var(--border); color: var(--muted); }
   .sun-term:hover { border-color: var(--border); background: var(--panel); }
+}
+
+/* ---- Info-bulles (remplace `title`, natif et non stylable, par une bulle
+   au style de l'app). Poser `data-tip="texte"` sur n'importe quel élément. */
+[data-tip] { position: relative; }
+[data-tip]::after {
+  content: attr(data-tip);
+  position: absolute;
+  bottom: calc(100% + 6px);
+  left: 50%;
+  transform: translateX(-50%);
+  background: var(--panel-2);
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 4px 8px;
+  font-size: 11.5px;
+  font-weight: 400;
+  line-height: 1.35;
+  white-space: normal;
+  max-width: 220px;
+  width: max-content;
+  text-align: center;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.35);
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.12s 0.35s;
+  z-index: 60;
+}
+[data-tip]:hover::after,
+[data-tip]:focus-visible::after {
+  opacity: 1;
 }
 
 /* ---- Recommandations (Conseils du jour + classement Stats) ---- */

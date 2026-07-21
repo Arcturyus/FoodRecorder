@@ -49,7 +49,7 @@ export function NumberField({
   };
 
   return (
-    <span className="number-field" style={style} title={title}>
+    <span className="number-field" style={style} data-tip={title}>
       <button type="button" tabIndex={-1} onClick={() => bump(-1)} aria-label="Diminuer">
         −
       </button>

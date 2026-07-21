@@ -311,6 +311,20 @@ export function Capture({ date, title }: { date?: string; title?: string } = {})
     }
   }
 
+  /**
+   * Ouvre le sélecteur de photo. `useCamera` bascule l'attribut `capture` :
+   * présent → l'appareil photo s'ouvre directement (mobile) ; absent → le
+   * sélecteur de fichiers / la pellicule s'ouvre pour choisir une image
+   * existante. Sur ordinateur, l'attribut est ignoré (même boîte de dialogue).
+   */
+  function openPhoto(useCamera: boolean) {
+    const input = photoInputRef.current;
+    if (!input) return;
+    if (useCamera) input.setAttribute('capture', 'environment');
+    else input.removeAttribute('capture');
+    input.click();
+  }
+
   async function handlePhoto(e: React.ChangeEvent<HTMLInputElement>) {
     const file = e.target.files?.[0];
     e.target.value = ''; // permet de re-sélectionner la même photo
@@ -381,9 +395,14 @@ export function Capture({ date, title }: { date?: string; title?: string } = {})
           {recording ? '⏹ Arrêter' : '🎙 Dicter'}
         </button>
         {photoSupported && (
-          <button className="photo-btn" onClick={() => photoInputRef.current?.click()} disabled={busy}>
-            📷 Photo
-          </button>
+          <div className="photo-group">
+            <button className="photo-btn" onClick={() => openPhoto(true)} disabled={busy}>
+              📷<span className="photo-lbl">Prendre</span>
+            </button>
+            <button className="photo-btn" onClick={() => openPhoto(false)} disabled={busy}>
+              🖼<span className="photo-lbl">Choisir</span>
+            </button>
+          </div>
         )}
         <button className="capture-add" onClick={handleTextSubmit} disabled={busy || !text.trim()}>
           Ajouter
@@ -393,7 +412,6 @@ export function Capture({ date, title }: { date?: string; title?: string } = {})
         ref={photoInputRef}
         type="file"
         accept="image/*"
-        capture="environment"
         onChange={handlePhoto}
         style={{ display: 'none' }}
       />

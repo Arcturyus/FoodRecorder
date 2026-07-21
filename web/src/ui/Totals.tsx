@@ -149,7 +149,7 @@ export function Totals({
                 </div>
                 <div className={`bar ${barClass}`}>
                   <span style={{ width: `${Math.min(100, pct)}%` }} />
-                  <i className="mark opti" style={{ left: `${optMark}%` }} title={`Idéal ≤ ${fmt(t.optimal)} ${t.unit}`} />
+                  <i className="mark opti" style={{ left: `${optMark}%` }} data-tip={`Idéal ≤ ${fmt(t.optimal)} ${t.unit}`} />
                 </div>
                 <div className="small mono">
                   {fmt(pct)}% du plafond · idéal ≤ {fmt(t.optimal)} / max {fmt(t.ajr)}
@@ -174,7 +174,7 @@ export function Totals({
               <div className={`bar ${barClass}`}>
                 <span style={{ width: `${Math.min(100, pctOpt)}%` }} />
                 {distinct && (
-                  <i className="mark ajr" style={{ left: `${ajrMark}%` }} title={`AJR ${fmt(t.ajr)} ${t.unit}`} />
+                  <i className="mark ajr" style={{ left: `${ajrMark}%` }} data-tip={`AJR ${fmt(t.ajr)} ${t.unit}`} />
                 )}
               </div>
               <div className="small mono">

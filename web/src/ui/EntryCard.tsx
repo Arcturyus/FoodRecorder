@@ -54,7 +54,7 @@ export function EntryCard({ entry }: { entry: JournalEntry }) {
           {isPast && (
             <button
               className="ghost small"
-              title="Recopie ce repas tel quel sur aujourd'hui"
+              data-tip="Recopie ce repas tel quel sur aujourd'hui"
               onClick={() => {
                 duplicateEntry(entry.id);
                 setSaved("Repas dupliqué sur aujourd'hui.");
@@ -63,7 +63,7 @@ export function EntryCard({ entry }: { entry: JournalEntry }) {
               ⧉ Auj.
             </button>
           )}
-          <button className="ghost small" title="Enregistrer comme repas favori réutilisable" onClick={saveAsFavorite}>
+          <button className="ghost small" data-tip="Enregistrer comme repas favori réutilisable" onClick={saveAsFavorite}>
             ☆ Favori
           </button>
           <button className="ghost small" onClick={() => setEditing((e) => !e)}>
@@ -153,11 +153,11 @@ function ItemRow({ entryId, item, canDeleteItem }: { entryId: string; item: Jour
           ))}
         </select>
         <span className="item-row-actions">
-          <button className="ghost small" title="Terminer la modification de cet aliment" onClick={() => setEditingItem(false)}>
+          <button className="ghost small" data-tip="Terminer la modification de cet aliment" onClick={() => setEditingItem(false)}>
             ✓
           </button>
           {canDeleteItem && (
-            <button className="danger small" title="Retirer seulement cet aliment du repas" onClick={confirmRemoveItem}>
+            <button className="danger small" data-tip="Retirer seulement cet aliment du repas" onClick={confirmRemoveItem}>
               ✕
             </button>
           )}
@@ -175,12 +175,12 @@ function ItemRow({ entryId, item, canDeleteItem }: { entryId: string; item: Jour
           <span>
             {item.nomAffiche}
             {isIa && (
-              <span className="badge ia" title="Valeurs nutritionnelles estimées par l'IA (aliment hors base) — ouvrez le détail pour les vérifier / ajuster">
+              <span className="badge ia" data-tip="Valeurs nutritionnelles estimées par l'IA (aliment hors base) — ouvrez le détail pour les vérifier / ajuster">
                 IA · à vérifier
               </span>
             )}
             {item.customN && (
-              <span className="badge adj" title="Valeurs ajustées pour cette fois — l'aliment de la base n'est pas modifié">
+              <span className="badge adj" data-tip="Valeurs ajustées pour cette fois — l'aliment de la base n'est pas modifié">
                 ajusté
               </span>
             )}
@@ -197,14 +197,14 @@ function ItemRow({ entryId, item, canDeleteItem }: { entryId: string; item: Jour
           <button
             className={`ghost small item-detail-toggle${open ? ' on' : ''}`}
             aria-expanded={open}
-            title="Voir tout ce que cet aliment apporte / l'ajuster pour cette fois"
+            data-tip="Voir tout ce que cet aliment apporte / l'ajuster pour cette fois"
             onClick={() => setOpen((o) => !o)}
           >
             {open ? '▲ Détail' : '⌄ Détail'}
           </button>
           <button
             className="ghost small"
-            title="Modifier seulement cet aliment (choix, quantité, unité)"
+            data-tip="Modifier seulement cet aliment (choix, quantité, unité)"
             onClick={() => setEditingItem(true)}
           >
             ✎
@@ -212,7 +212,7 @@ function ItemRow({ entryId, item, canDeleteItem }: { entryId: string; item: Jour
           {canDeleteItem && (
             <button
               className="danger small"
-              title="Retirer seulement cet aliment du repas (sans supprimer les autres)"
+              data-tip="Retirer seulement cet aliment du repas (sans supprimer les autres)"
               onClick={confirmRemoveItem}
             >
               ✕
@@ -294,7 +294,7 @@ function ItemDetail({ entryId, item }: { entryId: string; item: JournalItem }) {
               {item.customN && (
                 <button
                   className="ghost small"
-                  title="Rétablir les valeurs de l'aliment de la base"
+                  data-tip="Rétablir les valeurs de l'aliment de la base"
                   onClick={() => setItemNutrients(entryId, item.id, null)}
                 >
                   ↺ Rétablir

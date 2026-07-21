@@ -219,7 +219,7 @@ function CalCell({
       }${found ? ' found' : ''}${muted ? ' muted' : ''}${fasting ? ' fasting' : ''}`}
       onClick={onClick}
       disabled={isFuture}
-      title={found ? 'Contient l’aliment recherché' : undefined}
+      data-tip={found ? 'Contient l’aliment recherché' : undefined}
     >
       <span className="cal-day">{day}</span>
       {!isFuture && (
@@ -228,7 +228,7 @@ function CalCell({
           role="button"
           tabIndex={-1}
           aria-label={muteTitle}
-          title={muteTitle}
+          data-tip={muteTitle}
           onClick={(e) => {
             e.stopPropagation();
             onToggleMute();
@@ -358,7 +358,7 @@ function FoodSearch({
           </div>
           <div className="row" style={{ gap: 6, flexWrap: 'wrap', marginTop: 6 }}>
             {shown.map((d) => (
-              <button key={d} className="ghost small" onClick={() => onPickDate(d)} title="Ouvrir ce jour">
+              <button key={d} className="ghost small" onClick={() => onPickDate(d)} data-tip="Ouvrir ce jour">
                 {dayLabel(d, true)}
               </button>
             ))}
@@ -432,7 +432,7 @@ function DayEditor({
         {date !== today && dayEntries.length > 0 && (
           <button
             className="ghost small"
-            title="Recopie toutes les entrées de ce jour sur aujourd'hui (journées qui se ressemblent)"
+            data-tip="Recopie toutes les entrées de ce jour sur aujourd'hui (journées qui se ressemblent)"
             onClick={() => {
               duplicateDay(date);
               setFlash(`Journée du ${dayLabel(date, true)} dupliquée sur aujourd'hui (${dayEntries.length} repas).`);

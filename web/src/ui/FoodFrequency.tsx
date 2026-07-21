@@ -109,7 +109,7 @@ export function FoodConsumption() {
         <label
           className="row small"
           style={{ gap: 6, alignItems: 'center', cursor: 'pointer' }}
-          title="Retire les compléments et assaisonnements (créatine, whey, sel…) du classement : pris tous les jours, ils écraseraient le haut du tableau."
+          data-tip="Retire les compléments et assaisonnements (créatine, whey, sel…) du classement : pris tous les jours, ils écraseraient le haut du tableau."
         >
           <input
             type="checkbox"
@@ -221,7 +221,7 @@ function FoodFrequencyPanel({
             key={m.key}
             className={`small ${metric === m.key ? 'chip-active' : 'ghost'}`}
             onClick={() => setMetric(m.key)}
-            title={m.hint}
+            data-tip={m.hint}
           >
             {m.label}
           </button>
@@ -263,7 +263,7 @@ function FoodFrequencyPanel({
                 onMouseMove={(e) => setTip({ f, x: e.clientX, y: e.clientY })}
                 onMouseLeave={() => setTip((prev) => (prev?.f.key === f.key ? null : prev))}
               >
-                <span className="cov-label" title={f.nom}>
+                <span className="cov-label" data-tip={f.nom}>
                   {openKey === f.key && <span style={{ color: 'var(--accent)' }}>● </span>}
                   {f.nom}
                 </span>
@@ -316,7 +316,7 @@ function FoodPairsPanel({ entries, range }: { entries: JournalEntry[]; range: { 
     <>
       {shown.map((p) => (
         <div className="cov-row" key={p.key}>
-          <span className="cov-label" title={`${p.nomA} + ${p.nomB}`}>
+          <span className="cov-label" data-tip={`${p.nomA} + ${p.nomB}`}>
             {p.nomA} + {p.nomB}
           </span>
           <div className="bar">

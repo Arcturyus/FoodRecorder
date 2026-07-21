@@ -401,12 +401,17 @@ function ScatterView() {
   const xRange: [number, number] = hasZeroX ? [m.left + ZERO_LANE, W - m.right] : [m.left, W - m.right];
   const yRange: [number, number] = hasZeroY ? [H - m.bottom - ZERO_LANE, m.top] : [H - m.bottom, m.top];
 
+  // Marge par défaut autour des données : sans elle, l'aliment le plus extrême
+  // se retrouve pile sur le bord du cadre (coupé au survol/zoom). LOG_PAD est
+  // multiplicatif (échelle log), LIN_PAD s'applique avant `.nice()`.
+  const LOG_PAD = 1.15;
+  const LIN_PAD = 1.06;
   const xs = logX
-    ? scaleLog().domain([xPositives.length ? Math.min(...xPositives) : 0.01, d3max(xPositives) || 1]).range(xRange)
-    : scaleLinear().domain([0, x1 || 1]).nice().range(xRange);
+    ? scaleLog().domain([(xPositives.length ? Math.min(...xPositives) : 0.01) / LOG_PAD, (d3max(xPositives) || 1) * LOG_PAD]).range(xRange)
+    : scaleLinear().domain([0, (x1 || 1) * LIN_PAD]).nice().range(xRange);
   const ys = logY
-    ? scaleLog().domain([yPositives.length ? Math.min(...yPositives) : 0.01, d3max(yPositives) || 1]).range(yRange)
-    : scaleLinear().domain([0, y1 || 1]).nice().range(yRange);
+    ? scaleLog().domain([(yPositives.length ? Math.min(...yPositives) : 0.01) / LOG_PAD, (d3max(yPositives) || 1) * LOG_PAD]).range(yRange)
+    : scaleLinear().domain([0, (y1 || 1) * LIN_PAD]).nice().range(yRange);
 
   // Échelles « vue » : mêmes pixels, domaine visible ajusté par le zoom/pan courant.
   const vxs = rescaleAxis(xs, { k: zoomX.k, t: zoomX.x }, logX ? xs.domain()[0] : undefined);
@@ -459,10 +464,10 @@ function ScatterView() {
             </>
           )}
           <span style={{ flex: 1 }} />
-          <button className="ghost small" title="Zoomer" onClick={() => zoomAt(1.6, (m.left + W - m.right) / 2, (m.top + H - m.bottom) / 2)}>
+          <button className="ghost small" data-tip="Zoomer" onClick={() => zoomAt(1.6, (m.left + W - m.right) / 2, (m.top + H - m.bottom) / 2)}>
             🔍＋
           </button>
-          <button className="ghost small" title="Dézoomer" onClick={() => zoomAt(1 / 1.6, (m.left + W - m.right) / 2, (m.top + H - m.bottom) / 2)}>
+          <button className="ghost small" data-tip="Dézoomer" onClick={() => zoomAt(1 / 1.6, (m.left + W - m.right) / 2, (m.top + H - m.bottom) / 2)}>
             🔍−
           </button>
           <button className="ghost small" disabled={!zoomed} onClick={() => { setZoomX(ZOOM_IDENTITY); setZoomY(ZOOM_IDENTITY); }}>
@@ -497,6 +502,7 @@ function ScatterView() {
             viewBox={`0 0 ${W} ${H}`}
             style={{ width: '100%', display: 'block', touchAction: 'none', cursor: dragging ? 'grabbing' : 'grab' }}
             onMouseLeave={() => setHover(null)}
+            onClick={() => setHover(null)}
             onPointerDown={onPointerDown}
             onPointerMove={onPointerMove}
             onPointerUp={endDrag}
@@ -560,24 +566,44 @@ function ScatterView() {
               {points.map((p, i) => {
                 const onFront = pareto && frontierSet.has(p.f.id);
                 const isHover = hover?.i === i;
+                const r = radius(p.s);
+                // Zone de tap agrandie et invisible : sur mobile, les bulles réelles (souvent
+                // 3-8 px) sont trop petites pour viser précisément au doigt. Le survol (souris)
+                // continue de fonctionner sur cette même zone.
+                const hitR = Math.max(r + 10, 16);
                 return (
-                  <circle
-                    key={p.f.id}
-                    cx={cx(p.x)}
-                    cy={cy(p.y)}
-                    r={radius(p.s) * (isHover ? 1.35 : 1)}
-                    fill={COLOR_BY_CAT.get(p.f.categorie)}
-                    fillOpacity={onFront ? 0.95 : 0.72}
-                    stroke={onFront ? C.accent2 : isHover ? C.text : 'none'}
-                    strokeWidth={onFront ? 2 : isHover ? 1.5 : 0}
-                    style={{ cursor: 'pointer' }}
-                    onMouseEnter={(e) => {
-                      if (svgRef.current) {
-                        const v = toViewBox(e, svgRef.current, W, H);
-                        setHover({ i, px: v.px, py: v.py });
-                      }
-                    }}
-                  />
+                  <g key={p.f.id}>
+                    <circle
+                      cx={cx(p.x)}
+                      cy={cy(p.y)}
+                      r={r * (isHover ? 1.35 : 1)}
+                      fill={COLOR_BY_CAT.get(p.f.categorie)}
+                      fillOpacity={onFront ? 0.95 : 0.72}
+                      stroke={onFront ? C.accent2 : isHover ? C.text : 'none'}
+                      strokeWidth={onFront ? 2 : isHover ? 1.5 : 0}
+                      pointerEvents="none"
+                    />
+                    <circle
+                      cx={cx(p.x)}
+                      cy={cy(p.y)}
+                      r={hitR}
+                      fill="transparent"
+                      style={{ cursor: 'pointer' }}
+                      onMouseEnter={(e) => {
+                        if (svgRef.current) {
+                          const v = toViewBox(e, svgRef.current, W, H);
+                          setHover({ i, px: v.px, py: v.py });
+                        }
+                      }}
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        if (svgRef.current) {
+                          const v = toViewBox(e, svgRef.current, W, H);
+                          setHover((h) => (h?.i === i ? null : { i, px: v.px, py: v.py }));
+                        }
+                      }}
+                    />
+                  </g>
                 );
               })}
             </g>

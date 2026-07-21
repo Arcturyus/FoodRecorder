@@ -18,7 +18,7 @@ export function UncertaintyBadge({ kcal, unc }: { kcal: number; unc: KcalUncerta
         type="button"
         className={`unc-badge${open ? ' open' : ''}`}
         onClick={() => setOpen((o) => !o)}
-        title="Précision estimée — cliquez pour voir la fourchette"
+        data-tip="Précision estimée — cliquez pour voir la fourchette"
         aria-label="Afficher la fourchette d'incertitude des calories"
       >
         ~

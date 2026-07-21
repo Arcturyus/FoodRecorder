@@ -200,13 +200,13 @@ function FoodRow({ food, modified, onEdit }: { food: Food; modified: boolean; on
       {f.custom ? (
         <button
           className="danger small"
-          title="Supprimer cet aliment perso"
+          data-tip="Supprimer cet aliment perso"
           onClick={() => window.confirm(`Supprimer l'aliment personnalisé « ${f.nom} » ?`) && removeCustomFood(f.id)}
         >
           ✕
         </button>
       ) : modified ? (
-        <button className="ghost small" onClick={() => resetFood(f.id)} title="Rétablir les valeurs d'origine">
+        <button className="ghost small" onClick={() => resetFood(f.id)} data-tip="Rétablir les valeurs d'origine">
           ↺
         </button>
       ) : (
@@ -393,9 +393,9 @@ function NutrientRanking({ foods }: { foods: Food[] }) {
                 </div>
                 <div className="bar good">
                   <span style={{ width: `${Math.min(100, (value / scaleMax) * 100)}%` }} />
-                  <i className="mark ajr" style={{ left: `${ajrPos}%` }} title={`AJR ${fmt(t.ajr)} ${t.unit}`} />
+                  <i className="mark ajr" style={{ left: `${ajrPos}%` }} data-tip={`AJR ${fmt(t.ajr)} ${t.unit}`} />
                   {distinct && (
-                    <i className="mark opti" style={{ left: `${optPos}%` }} title={`Optimal ${fmt(t.optimal)} ${t.unit}`} />
+                    <i className="mark opti" style={{ left: `${optPos}%` }} data-tip={`Optimal ${fmt(t.optimal)} ${t.unit}`} />
                   )}
                 </div>
                 <div className="small mono">

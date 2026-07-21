@@ -15,7 +15,7 @@ const KIND_ICON: Record<DayAdviceItem['kind'], string> = {
 /** Une suggestion inline : « Sardines (100 g → 1,5 g) », marquée ✓ si déjà mangée. */
 function SuggestionChip({ s, unit, icon, known }: { s: Suggestion; unit: string; icon?: string; known: boolean }) {
   return (
-    <span className="advice-chip" title={known ? 'Déjà présent dans votre journal' : undefined}>
+    <span className="advice-chip" data-tip={known ? 'Déjà présent dans votre journal' : undefined}>
       {icon}{icon && ' '}{s.food.nom}{known && <span className="advice-known">✓</span>}
       <span className="mono small" style={{ opacity: 0.75 }}>
         {' '}({fmt(s.portionG, s.portionG < 10 ? 1 : 0)} g → {fmt(s.amount, s.amount < 10 ? 1 : 0)} {unit})
