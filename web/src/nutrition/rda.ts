@@ -29,6 +29,14 @@ export interface RdaEntry {
    * « performance » est nettement supérieur (vit C, vit D, oméga 3…). Défaut : 1.
    */
   optimalFactor?: number;
+  /**
+   * Poids d'IMPORTANCE par défaut du nutriment dans les recommandations et les
+   * conseils du jour (multiplie le poids d'un manque/excès). Défaut : 1. Plus bas
+   * pour les nutriments optionnels (créatine, collagène — surtout via complément),
+   * plus haut pour les manques fréquents et graves (oméga 3, vitamine D).
+   * Surchargeable par l'utilisateur (cf. `nutrientImportance` du store).
+   */
+  importance?: number;
   /** goal `limit` : cible basse idéale (« le plus bas raisonnable »), sous le plafond. */
   optimalLow?: number;
   /** Rôle physiologique — ce que le nutriment fait dans le corps. */
@@ -82,7 +90,7 @@ export const RDA: RdaEntry[] = [
     role: 'Contiennent les acides gras essentiels oméga 3 et 6 ; membranes cellulaires, signalisation.',
   },
   {
-    key: 'omega3', label: 'Oméga 3', unit: 'g', rda: 2, goal: 'atLeast', optimalFactor: 1.5,
+    key: 'omega3', label: 'Oméga 3', unit: 'g', rda: 2, goal: 'atLeast', optimalFactor: 1.5, importance: 1.5,
     role: 'Anti-inflammatoire ; EPA/DHA soutiennent cœur, cerveau et récupération musculaire.',
     optimalNote: 'Équivalent pondéré = ALA ÷ 10 + EPA + DHA (l\'ALA végétal est mal converti par le corps, ~10 % de rendement) ; c\'est cette valeur qui compte pour la cible, les rapports et le score. AS ALA brut ≈ 2 g ; optimal ~3 g d\'équivalent avec EPA+DHA relevés (250-500 mg) pour l\'effet anti-inflammatoire.',
   },
@@ -145,7 +153,7 @@ export const RDA: RdaEntry[] = [
     optimalNote: 'Hydrosoluble et sûre : cible sportive ~300 mg pour couvrir le stress oxydatif de l\'entraînement.',
   },
   {
-    key: 'vitD', label: 'Vitamine D', unit: 'µg', rda: 15, goal: 'atLeast', optimalFactor: 3.3,
+    key: 'vitD', label: 'Vitamine D', unit: 'µg', rda: 15, goal: 'atLeast', optimalFactor: 3.3, importance: 1.3,
     role: 'Absorption du calcium, santé osseuse, immunité et fonction musculaire.',
     optimalNote: 'Déficit très fréquent : cible ~50 µg (2000 UI/j), sous le plafond de 100 µg.',
   },
@@ -192,12 +200,12 @@ export const RDA: RdaEntry[] = [
     optimalNote: 'Présente presque uniquement dans les produits animaux : à surveiller en régime végétal.',
   },
   {
-    key: 'creatine', label: 'Créatine', unit: 'g', rda: 3, goal: 'atLeast', optimalFactor: 1,
+    key: 'creatine', label: 'Créatine', unit: 'g', rda: 3, goal: 'atLeast', optimalFactor: 1, importance: 0.4,
     role: 'Recharge rapide de l\'ATP : force, puissance et performances sur efforts brefs.',
     optimalNote: 'Pas d\'AJR officiel. ~3 g/j (synthèse ~1 g + apport) ; supplémenter jusqu\'à 3-5 g est courant et sûr.',
   },
   {
-    key: 'collagene', label: 'Collagène', unit: 'g', rda: 10, goal: 'atLeast', optimalFactor: 1,
+    key: 'collagene', label: 'Collagène', unit: 'g', rda: 10, goal: 'atLeast', optimalFactor: 1, importance: 0.6,
     role: 'Protéine structurale de la peau, des tendons, du cartilage et des os ; soutient les articulations.',
     optimalNote: 'Pas d\'AJR officiel : repère issu des études (~10 g/j de peptides). Sous-ensemble des protéines, présent uniquement dans les tissus conjonctifs animaux (peau, tendons, os, morceaux gélatineux) — nul dans les végétaux, les laitages et les œufs.',
   },

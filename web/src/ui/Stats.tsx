@@ -2,12 +2,13 @@ import { useMemo, useRef, useState } from 'react';
 import { scaleLinear, scaleLog } from 'd3-scale';
 import { line as d3line, arc as d3arc, pie as d3pie } from 'd3-shape';
 import { max as d3max } from 'd3-array';
-import { useStore, todayStr, useEffectiveFoods } from '../store/store';
+import { useStore, todayStr, useEffectiveFoods, isDayCounted } from '../store/store';
 import { computeTargets } from '../nutrition/targets';
 import type { Target } from '../nutrition/targets';
 import { RATIOS, computeRatio } from '../nutrition/ratios';
 import type { NutrientKey, Nutrients } from '../nutrition/types';
 import { EMPTY_NUTRIENTS } from '../nutrition/types';
+import { NUTRIENT_GROUPS } from '../nutrition/groups';
 import { sunVitDForDate } from '../sun/vitaminD';
 import { vitaminDFlux, VITD_LOW, VITD_OK } from '../sun/vitaminDStatus';
 import { HoverCard } from './HoverCard';
@@ -85,6 +86,7 @@ function fmtVal(v: number): string {
 export function Stats() {
   const entries = useStore((s) => s.entries);
   const sunExposures = useStore((s) => s.sunExposures);
+  const mutedDays = useStore((s) => s.mutedDays);
   const profile = useStore((s) => s.profile);
   const targets = useMemo(() => computeTargets(profile), [profile]);
   const targetByKey = useMemo(() => new Map(targets.map((t) => [t.key, t])), [targets]);
@@ -156,8 +158,15 @@ export function Stats() {
       const sun = sunVitDForDate(sunExposures, d);
       map.set(d, sun > 0 ? { ...t, vitD: t.vitD + sun } : t);
     }
+    // Jours de jeûne (vide mais démuté, override `false`) : apports à 0, soleil inclus.
+    // Ainsi tous les jours COMPTÉS ont un total ici (moyennes ET tendance).
+    for (const [d, muted] of Object.entries(mutedDays)) {
+      if (muted === false && !byDate.has(d)) {
+        map.set(d, { ...EMPTY_NUTRIENTS, vitD: sunVitDForDate(sunExposures, d) });
+      }
+    }
     return map;
-  }, [byDate, sunExposures]);
+  }, [byDate, sunExposures, mutedDays]);
 
   /** 1re date enregistrée (borne « Tout »). */
   const earliest = useMemo(() => {
@@ -172,13 +181,22 @@ export function Stats() {
     const all = datesInRange(range);
     return includeToday ? all : all.filter((d) => d !== today);
   }, [range, includeToday, today]);
-  const recorded = useMemo(() => windowDates.filter((d) => byDate.has(d)), [windowDates, byDate]);
+  /**
+   * Jours COMPTÉS de la fenêtre : jours remplis non mutés + jours de jeûne (vide
+   * démuté, override `false`). Un jour rempli muté et un jour vide « normal » sont
+   * exclus. `isDayCounted` centralise cette règle.
+   */
+  const recorded = useMemo(
+    () => windowDates.filter((d) => isDayCounted(mutedDays, byDate.has(d), d)),
+    [windowDates, byDate, mutedDays],
+  );
 
-  /** Moyenne journalière de chaque nutriment sur les jours enregistrés de la fenêtre. */
+  /** Moyenne journalière de chaque nutriment sur les jours comptés de la fenêtre. */
   const averages = useMemo(() => {
     const a = { ...EMPTY_NUTRIENTS };
     if (recorded.length === 0) return a;
     for (const d of recorded) {
+      // Tous les jours comptés (remplis ou jeûne) ont un total dans byDateVitD.
       const t = byDateVitD.get(d)!;
       for (const k of KEYS) a[k] += t[k];
     }
@@ -186,15 +204,19 @@ export function Stats() {
     return a;
   }, [recorded, byDateVitD]);
 
-  /** Apport vitamine D total par jour (alimentation + soleil), tous jours « connus ». */
+  /**
+   * Apport vitamine D total par jour (alimentation + soleil), tous jours « connus ».
+   * On exclut la vitamine D alimentaire des jours remplis mutés (jour mal rempli) ;
+   * le soleil, lui, reste compté (indépendant de la qualité de saisie du repas).
+   */
   const vitDByDate = useMemo(() => {
     const m = new Map<string, number>();
-    for (const [d, t] of byDate) m.set(d, t.vitD);
+    for (const [d, t] of byDate) if (isDayCounted(mutedDays, true, d)) m.set(d, t.vitD);
     for (const d of new Set(sunExposures.map((e) => e.date))) {
       m.set(d, (m.get(d) ?? 0) + sunVitDForDate(sunExposures, d));
     }
     return m;
-  }, [byDate, sunExposures]);
+  }, [byDate, sunExposures, mutedDays]);
 
   /** Ancre du flux vitamine D : hier par défaut (journée en cours non terminée), sinon aujourd'hui. */
   const vitDAnchor = includeToday ? today : todayStr(new Date(Date.now() - 86_400_000));
@@ -651,25 +673,12 @@ function MultiTrend({
 // Sélecteur unique d'éléments (nutriments + rapports), compact multi-colonnes
 // ---------------------------------------------------------------------------
 
-/** Groupes nommés du sélecteur : rapports en tête, puis nutriments par famille. */
-const NAMED_GROUPS: { title: string; keys: NutrientKey[] }[] = [
-  { title: 'Macros', keys: ['kcal', 'proteines', 'glucides', 'lipides', 'fibres'] },
-  { title: 'Lipides & oméga', keys: ['agSatures', 'agTrans', 'agMonoInsatures', 'agPolyInsatures', 'omega3', 'omega6', 'omega9'] },
-  { title: 'Minéraux', keys: ['fer', 'magnesium', 'potassium', 'calcium', 'zinc', 'sodium', 'selenium', 'iode'] },
-  { title: 'Vitamines', keys: ['vitA', 'vitC', 'vitD', 'vitE', 'vitK1', 'vitK2', 'vitB1', 'vitB2', 'vitB3', 'vitB5', 'vitB6', 'vitB9', 'vitB12'] },
-];
-
 /**
- * « Autres » est CALCULÉ : tout nutriment de `Nutrients` absent des groupes
- * nommés y tombe automatiquement. Un nouveau nutriment (créatine hier,
- * collagène aujourd'hui) apparaît ainsi dans le sélecteur sans qu'on ait à
- * penser à cette liste — c'est précisément l'oubli qui a fait « disparaître »
- * le collagène de la tendance à son ajout.
+ * Groupes du sélecteur (rapports en tête, puis nutriments par famille), issus du
+ * module partagé `nutrition/groups` : une seule source de vérité avec le panneau
+ * d'importance. Le groupe « Autres » y est calculé (nutriments non classés).
  */
-const PICKER_GROUPS: { title: string; keys: NutrientKey[] }[] = (() => {
-  const named = new Set(NAMED_GROUPS.flatMap((g) => g.keys));
-  return [...NAMED_GROUPS, { title: 'Autres', keys: KEYS.filter((k) => !named.has(k)) }];
-})();
+const PICKER_GROUPS = NUTRIENT_GROUPS;
 
 function Chip({
   id,

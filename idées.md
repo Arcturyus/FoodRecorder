@@ -2,4 +2,11 @@
 
 
 
-- [ ] Prise maintenant que tu me fasses un système où on puisse supprimer quand c'est un groupe, exempleune photo où il y a cinq éléments qu'on puisse supprimer un seul des éléments parmi cinq parce que là, le bouton supprimer, il supprime toute la photo à la fois. Ensuite, j'aimerais que quand il y a une, par exemple une salade composée, il décompose chaque élément. Ils mettent, prends une salade de tomates poivrons et oignons. Dans le prompt, tu indiques de séparer pour avoir : tomates tel quantité puis poivrons tel quantité puis ... . Et, voilà.
+- [x] Un système pour ne pas compter certains jour dans les moyennes, une sorte de mute sur le calendrier on peut mute entièrement des jours (par exemple parce qu'on sait qu'on a mal rempli).
+Les jours vident sont automatiquement mute sur le calendrier (il indiquent probablement un non remplissage ce jour là, et si c'est en fait un jeûne tu peux demute)
+
+- [x] La créatine est optionel : pas nécessaire d'avoir 3g en vérité et obtenable que par complément donc trop de conseil
+--> Tout ceci me donne pour idée d'ajouter des poids d'importance de chaque élements, ou de groupes d'élements pour que ce soit plus simple. Notamment pour les recommandations : il faut recommander comme là ce qui est peu obtenue par le user, mais aussi plus certains (si t'es en manque d'omega 3 plus grave qu'en manque de créatine)
+
+
+- [ ] Ordre des menus : mettre poids et guide au fond

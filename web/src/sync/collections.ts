@@ -20,7 +20,7 @@ export type EntityTable =
   | 'food_overrides';
 
 /** Singletons stockés dans `profile_kv` (clé = nom du champ). */
-export type KvKey = 'profile' | 'weightConfig';
+export type KvKey = 'profile' | 'weightConfig' | 'mutedDays' | 'nutrientImportance';
 
 /** Une entité : d'où lire ses lignes `[id, payload]` et sa référence brute (fast-path diff). */
 interface EntitySpec {
@@ -63,6 +63,8 @@ export const ENTITY_TABLES = Object.keys(ENTITY_SPECS) as EntityTable[];
 export const KV_SELECTORS: Record<KvKey, (s: StoreState) => unknown> = {
   profile: (s) => s.profile,
   weightConfig: (s) => s.weightConfig,
+  mutedDays: (s) => s.mutedDays,
+  nutrientImportance: (s) => s.nutrientImportance,
 };
 
 export const KV_KEYS = Object.keys(KV_SELECTORS) as KvKey[];

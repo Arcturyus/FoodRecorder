@@ -1,6 +1,7 @@
 import type { Food, Nutrients, NutrientKey } from './types';
 import type { Target } from './targets';
 import { RATIOS, computeRatio } from './ratios';
+import { RDA } from './rda';
 
 /**
  * Recommandations d'aliments et de suppléments à partir des manques observés.
@@ -33,6 +34,31 @@ export interface RecoParams {
 export const RECO_DEFAULTS: RecoParams = { gamma: 2, lambda: 1.5 };
 export const GAMMA_BOUNDS = { min: 1, max: 4, step: 0.5 } as const;
 export const LAMBDA_BOUNDS = { min: 0, max: 3, step: 0.25 } as const;
+export const IMPORTANCE_BOUNDS = { min: 0, max: 3, step: 0.1 } as const;
+
+/** Poids d'importance par défaut de chaque nutriment (métadonnée RDA, défaut 1). */
+export const DEFAULT_IMPORTANCE: Partial<Record<NutrientKey, number>> = Object.fromEntries(
+  RDA.filter((r) => r.importance != null && r.importance !== 1).map((r) => [r.key, r.importance!]),
+);
+
+/** Fonction d'importance : poids d'un nutriment dans les recommandations / conseils. */
+export type ImportanceFn = (key: NutrientKey) => number;
+
+/** Importance effective d'un nutriment = override utilisateur ?? défaut RDA ?? 1. */
+export function effectiveImportance(
+  key: NutrientKey,
+  overrides: Partial<Record<NutrientKey, number>> = {},
+): number {
+  return overrides[key] ?? DEFAULT_IMPORTANCE[key] ?? 1;
+}
+
+/** Construit une `ImportanceFn` à partir des overrides utilisateur (defaults RDA inclus). */
+export function makeImportanceFn(overrides: Partial<Record<NutrientKey, number>> = {}): ImportanceFn {
+  return (key) => effectiveImportance(key, overrides);
+}
+
+/** Importance neutre (tout à 1) — défaut quand aucune pondération n'est fournie. */
+const NEUTRAL_IMPORTANCE: ImportanceFn = () => 1;
 
 /** Manque moyen d'un nutriment « à couvrir », avec son poids dans le score. */
 export interface Gap {
@@ -81,7 +107,12 @@ function ratioSeverity(value: number | null, optimal: number, better: 'lower' | 
  * Analyse des moyennes journalières : manques pondérés et malus, rapports inclus.
  * `averages` = apports moyens/jour (vitamine D soleil incluse de préférence).
  */
-export function computeGaps(averages: Nutrients, targets: Target[], params: RecoParams): GapAnalysis {
+export function computeGaps(
+  averages: Nutrients,
+  targets: Target[],
+  params: RecoParams,
+  importance: ImportanceFn = NEUTRAL_IMPORTANCE,
+): GapAnalysis {
   const { gamma } = params;
   const byKey = new Map(targets.map((t) => [t.key, t]));
 
@@ -162,10 +193,18 @@ export function computeGaps(averages: Nutrients, targets: Target[], params: Reco
     }
   }
 
-  return {
-    gaps: [...gaps.values()].sort((a, b) => b.weight - a.weight),
-    penalties: [...penalties.values()].sort((a, b) => b.weight - a.weight),
-  };
+  // Pondération finale par importance : un nutriment à 0 disparaît (manque ET excès),
+  // sinon son poids est mis à l'échelle. Le manque restant (`need`) reste inchangé.
+  const gapList = [...gaps.values()]
+    .map((g) => ({ ...g, weight: g.weight * importance(g.key) }))
+    .filter((g) => g.weight > 1e-6)
+    .sort((a, b) => b.weight - a.weight);
+  const penaltyList = [...penalties.values()]
+    .map((p) => ({ ...p, weight: p.weight * importance(p.key) }))
+    .filter((p) => p.weight > 1e-6)
+    .sort((a, b) => b.weight - a.weight);
+
+  return { gaps: gapList, penalties: penaltyList };
 }
 
 // ---------------------------------------------------------------------------
@@ -367,7 +406,13 @@ function foodOpts(consumedIds: Set<string>, extra: Partial<Parameters<typeof top
  * les 6 plus parlantes si tout ne tient pas. Renvoie [] tant que la journée est
  * trop peu avancée.
  */
-export function dayAdvice(totals: Nutrients, targets: Target[], foods: Food[], consumedIds: Set<string> = new Set()): DayAdviceItem[] {
+export function dayAdvice(
+  totals: Nutrients,
+  targets: Target[],
+  foods: Food[],
+  consumedIds: Set<string> = new Set(),
+  importance: ImportanceFn = NEUTRAL_IMPORTANCE,
+): DayAdviceItem[] {
   const kcalT = targets.find((t) => t.key === 'kcal');
   if (!kcalT || kcalT.optimal <= 0) return [];
   const progress = totals.kcal / kcalT.optimal;
@@ -379,10 +424,12 @@ export function dayAdvice(totals: Nutrients, targets: Target[], foods: Food[], c
   // 1. Plafonds déjà dépassés (sodium, AG saturés, AG trans) — le plus « choquant ».
   for (const t of targets) {
     if (t.goal !== 'limit' || t.ajr <= 0) continue;
+    const imp = importance(t.key);
+    if (imp <= 0) continue; // nutriment mis en sourdine : aucun conseil
     const v = totals[t.key];
     if (v <= t.ajr) continue;
     scored.push({
-      rank: 300 + Math.min(2, v / t.ajr),
+      rank: (300 + Math.min(2, v / t.ajr)) * imp,
       item: {
         kind: 'excess',
         target: t,
@@ -430,14 +477,14 @@ export function dayAdvice(totals: Nutrients, targets: Target[], foods: Food[], c
 
   // 3. Nutriments en retard sur le rythme de la journée (tous, triés par sévérité).
   const lagging = targets
-    .filter((t) => t.goal === 'atLeast' && t.key !== 'kcal' && t.optimal > 0)
+    .filter((t) => t.goal === 'atLeast' && t.key !== 'kcal' && t.optimal > 0 && importance(t.key) > 0)
     .map((t) => ({ t, relCov: totals[t.key] / t.optimal / p }))
     .filter(({ relCov }) => relCov < DAY_LAG_THRESHOLD);
 
   for (const { t, relCov } of lagging) {
     const need = t.optimal - totals[t.key];
     scored.push({
-      rank: 100 * (1 - relCov),
+      rank: 100 * (1 - relCov) * importance(t.key),
       item: {
         kind: 'deficit',
         target: t,

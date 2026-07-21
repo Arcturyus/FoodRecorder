@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
-import { useStore, todayStr, useEffectiveFoods } from '../store/store';
+import { useStore, todayStr, useEffectiveFoods, isDayCounted } from '../store/store';
 import { computeTargets } from '../nutrition/targets';
 import { foodFrequencies, frequencyKey } from '../nutrition/frequency';
 import type { FoodFrequency } from '../nutrition/frequency';
@@ -38,6 +38,8 @@ function dayLabel(date: string, short = false): string {
 export function History() {
   const entries = useStore((s) => s.entries);
   const profile = useStore((s) => s.profile);
+  const mutedDays = useStore((s) => s.mutedDays);
+  const toggleDayMute = useStore((s) => s.toggleDayMute);
   const targets = useMemo(() => computeTargets(profile), [profile]);
   const kcalTarget = targets.find((t) => t.key === 'kcal')?.optimal ?? 2000;
 
@@ -111,10 +113,11 @@ export function History() {
           ))}
         </div>
         <div className="cal-grid">
-          {cells.map((date, i) =>
-            date === null ? (
-              <div key={`e${i}`} className="cal-cell empty" />
-            ) : (
+          {cells.map((date, i) => {
+            if (date === null) return <div key={`e${i}`} className="cal-cell empty" />;
+            const hasEntries = kcalByDate.has(date);
+            const counted = isDayCounted(mutedDays, hasEntries, date);
+            return (
               <CalCell
                 key={date}
                 date={date}
@@ -124,10 +127,14 @@ export function History() {
                 isFuture={date > today}
                 selected={date === editDate}
                 found={foundDates.has(date)}
+                muted={hasEntries && !counted}
+                fasting={!hasEntries && counted}
+                counted={counted}
                 onClick={() => setEditDate(date)}
+                onToggleMute={() => toggleDayMute(date)}
               />
-            ),
-          )}
+            );
+          })}
         </div>
         <div className="row small" style={{ gap: 14, marginTop: 10, flexWrap: 'wrap' }}>
           <span>
@@ -139,11 +146,21 @@ export function History() {
           <span>
             <i className="cal-legend over" /> au-dessus
           </span>
+          <span>
+            <i className="cal-legend muted" /> non compté (mal rempli)
+          </span>
+          <span>
+            <i className="cal-legend fasting" /> jeûne (compté 0)
+          </span>
           {foundDates.size > 0 && (
             <span>
               <i className="cal-legend found" /> contient l'aliment recherché
             </span>
           )}
+        </div>
+        <div className="hint" style={{ marginTop: 6 }}>
+          Astuce : 🔇 sur une case exclut ce jour des moyennes (jour mal rempli) ; sur un jour vide, le marque comme
+          jeûne (compté comme 0). Les jours vides « normaux » ne comptent pas.
         </div>
       </div>
 
@@ -161,7 +178,11 @@ function CalCell({
   isFuture,
   selected,
   found,
+  muted,
+  fasting,
+  counted,
   onClick,
+  onToggleMute,
 }: {
   date: string;
   kcal: number | undefined;
@@ -171,22 +192,51 @@ function CalCell({
   selected: boolean;
   /** Jour contenant l'aliment recherché (mis en évidence). */
   found: boolean;
+  /** Jour rempli mais exclu des moyennes (mal rempli). */
+  muted: boolean;
+  /** Jour vide marqué comme jeûne (compté comme 0). */
+  fasting: boolean;
+  /** Jour actuellement compté dans les moyennes. */
+  counted: boolean;
   onClick: () => void;
+  onToggleMute: () => void;
 }) {
   const day = Number(date.slice(8, 10));
   const ratio = kcal != null && target > 0 ? kcal / target : 0;
   const level = kcal == null ? '' : ratio < 0.7 ? 'under' : ratio <= 1.1 ? 'ok' : 'over';
 
+  // Libellé de l'action de mute selon l'état courant du jour.
+  const muteTitle = counted
+    ? 'Ne pas compter ce jour dans les moyennes'
+    : muted
+      ? 'Recompter ce jour dans les moyennes'
+      : 'Marquer comme jeûne (compté comme 0)';
+
   return (
     <button
       className={`cal-cell${isToday ? ' today' : ''}${selected ? ' selected' : ''}${isFuture ? ' future' : ''}${
         kcal != null ? ' filled' : ''
-      }${found ? ' found' : ''}`}
+      }${found ? ' found' : ''}${muted ? ' muted' : ''}${fasting ? ' fasting' : ''}`}
       onClick={onClick}
       disabled={isFuture}
       title={found ? 'Contient l’aliment recherché' : undefined}
     >
       <span className="cal-day">{day}</span>
+      {!isFuture && (
+        <span
+          className="cal-mute"
+          role="button"
+          tabIndex={-1}
+          aria-label={muteTitle}
+          title={muteTitle}
+          onClick={(e) => {
+            e.stopPropagation();
+            onToggleMute();
+          }}
+        >
+          {counted ? '🔇' : '🔊'}
+        </span>
+      )}
       {kcal != null && (
         <>
           <span className="cal-kcal">{fmt(kcal)}</span>
@@ -195,6 +245,7 @@ function CalCell({
           </span>
         </>
       )}
+      {fasting && <span className="cal-fasting-tag">jeûne</span>}
     </button>
   );
 }
@@ -348,11 +399,15 @@ function DayEditor({
 }) {
   const entries = useStore((s) => s.entries);
   const duplicateDay = useStore((s) => s.duplicateDay);
+  const mutedDays = useStore((s) => s.mutedDays);
+  const toggleDayMute = useStore((s) => s.toggleDayMute);
   const [flash, setFlash] = useState('');
   const today = todayStr();
   const dayEntries = entries.filter((e) => e.date === date).sort((a, b) => b.createdAt - a.createdAt);
   const kcal = dayEntries.reduce((a, e) => a + e.items.reduce((b, it) => b + it.nutrients.kcal, 0), 0);
   const kcalUnc = dayKcalUncertainty(dayEntries);
+  const hasEntries = dayEntries.length > 0;
+  const counted = isDayCounted(mutedDays, hasEntries, date);
 
   return (
     <div className="panel" style={{ borderLeft: '3px solid var(--accent)' }}>
@@ -396,6 +451,14 @@ function DayEditor({
         jour. « ⧉ Auj. » sur une entrée recopie ce repas sur aujourd'hui. L'ajout ci-dessous enregistre directement
         sur ce jour.
       </div>
+
+      <label className="row small" style={{ gap: 8, alignItems: 'center', cursor: 'pointer', marginTop: 4 }}>
+        <input type="checkbox" checked={!counted} onChange={() => toggleDayMute(date)} />
+        {hasEntries
+          ? 'Ne pas compter ce jour dans les moyennes (jour mal rempli)'
+          : 'Jeûne ce jour — le compter comme une journée à 0'}
+      </label>
+
       {flash && <div className="status">{flash}</div>}
 
       {dayEntries.length === 0 ? (

@@ -128,13 +128,15 @@ function mergeRecord(local: Record<string, unknown>, rows: DbRow[]): Record<stri
   return out;
 }
 
-/** Champs singletons (`profile`, `weightConfig`) à écraser depuis le distant. */
+/** Champs singletons (`profile`, `weightConfig`, `mutedDays`…) à écraser depuis le distant. */
 function kvUpdates(rows: DbRow[]): Partial<StoreState> {
   const out: Record<string, unknown> = {};
   for (const r of rows) {
     if (r.deleted || !r.payload) continue; // on ne supprime jamais un singleton
     if (r.key === 'profile') out.profile = r.payload;
     if (r.key === 'weightConfig') out.weightConfig = r.payload;
+    if (r.key === 'mutedDays') out.mutedDays = r.payload;
+    if (r.key === 'nutrientImportance') out.nutrientImportance = r.payload;
   }
   return out as Partial<StoreState>;
 }

@@ -208,6 +208,11 @@ describe('jonction et création', () => {
     expect(useSyncStore.getState().profileId).toBe('pid-nouveau');
     expect(Object.keys(useSyncStore.getState().pending)).toHaveLength(0);
     // Les singletons sont aussi poussés.
-    expect((db.rows.profile_kv ?? []).map((r) => r.key).sort()).toEqual(['profile', 'weightConfig']);
+    expect((db.rows.profile_kv ?? []).map((r) => r.key).sort()).toEqual([
+      'mutedDays',
+      'nutrientImportance',
+      'profile',
+      'weightConfig',
+    ]);
   });
 });

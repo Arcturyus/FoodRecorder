@@ -586,9 +586,47 @@ button.chip-active:hover { filter: brightness(1.08); }
 .cal-legend.ok { background: var(--accent-2); }
 .cal-legend.over { background: var(--danger); }
 .cal-legend.found { background: var(--accent-2); border-radius: 50%; width: 6px; height: 6px; }
+.cal-legend.muted { background: var(--border); border: 1px dashed var(--muted); }
+.cal-legend.fasting { background: transparent; border: 1px solid var(--accent); }
+
+/* Action rapide de mute : révélée au survol de la case, toujours visible si le jour est marqué. */
+.cal-mute {
+  position: absolute;
+  top: 1px;
+  right: 2px;
+  font-size: 11px;
+  line-height: 1;
+  padding: 1px;
+  border-radius: 5px;
+  cursor: pointer;
+  opacity: 0;
+  transition: opacity 0.12s;
+}
+.cal-cell:hover:not(:disabled) .cal-mute { opacity: 0.7; }
+.cal-mute:hover { opacity: 1 !important; background: var(--panel); }
+
+/* Jour rempli mais exclu des moyennes (mal rempli). */
+.cal-cell.muted { border-style: dashed; opacity: 0.55; }
+.cal-cell.muted .cal-kcal { text-decoration: line-through; color: var(--muted); }
+.cal-cell.muted .cal-mute { opacity: 1; }
+
+/* Jour vide marqué comme jeûne (compté comme 0). */
+.cal-cell.fasting { border-color: var(--accent); border-style: dashed; background: transparent; }
+.cal-cell.fasting .cal-mute { opacity: 1; }
+.cal-fasting-tag {
+  font-size: 10px;
+  font-weight: 600;
+  color: var(--accent);
+  margin-top: auto;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
 @media (max-width: 560px) {
   .cal-cell { min-height: 46px; padding: 3px; }
   .cal-kcal { font-size: 11px; }
+  /* Pas de survol au tactile : on montre discrètement l'action sur chaque case. */
+  .cal-mute { opacity: 0.5; }
 }
 
 /* ---- Puces de séries (tendance multi-nutriments, Stats) ---- */
@@ -851,6 +889,35 @@ button.chip-active:hover { filter: brightness(1.08); }
 .reco-sliders { display: flex; flex-direction: column; gap: 14px; margin-top: 10px; }
 .reco-sliders label { display: flex; flex-direction: column; gap: 4px; }
 .reco-sliders input[type="range"] { width: 100%; max-width: 380px; }
+
+/* Panneau d'importance des nutriments (curseurs ×0→3, groupés). */
+.importance-group { margin-top: 12px; }
+.importance-group-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding-bottom: 4px;
+  border-bottom: 1px solid var(--border);
+  margin-bottom: 4px;
+}
+.importance-group-head .gh {
+  flex: 0 0 auto;
+  min-width: 96px;
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--muted);
+}
+.importance-group-head input[type="range"] { flex: 1; opacity: 0.6; }
+.importance-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 2px 0;
+}
+.importance-label { flex: 0 0 auto; min-width: 96px; font-size: 13px; }
+.importance-row input[type="range"] { flex: 1; }
+.importance-reset { flex: 0 0 auto; padding: 0 6px; }
 
 /* Mobile : les badges passent sous le nom pour ne pas l'écraser. */
 @media (max-width: 520px) {

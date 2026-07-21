@@ -2,7 +2,7 @@ import { useMemo } from 'react';
 import type { Nutrients } from '../nutrition/types';
 import { useStore, useEffectiveFoods } from '../store/store';
 import { computeTargets } from '../nutrition/targets';
-import { dayAdvice, DAY_MIN_PROGRESS } from '../nutrition/recommend';
+import { dayAdvice, DAY_MIN_PROGRESS, makeImportanceFn } from '../nutrition/recommend';
 import type { DayAdviceItem, Suggestion } from '../nutrition/recommend';
 import { fmt } from './format';
 
@@ -34,8 +34,10 @@ function SuggestionChip({ s, unit, icon, known }: { s: Suggestion; unit: string;
 export function DayAdviceCard({ totals }: { totals: Nutrients }) {
   const profile = useStore((s) => s.profile);
   const entries = useStore((s) => s.entries);
+  const nutrientImportance = useStore((s) => s.nutrientImportance);
   const foods = useEffectiveFoods();
   const targets = useMemo(() => computeTargets(profile), [profile]);
+  const importance = useMemo(() => makeImportanceFn(nutrientImportance), [nutrientImportance]);
 
   /** Aliments déjà mangés (tout l'historique) : priorité aux suggestions déjà connues. */
   const consumedIds = useMemo(() => {
@@ -46,7 +48,10 @@ export function DayAdviceCard({ totals }: { totals: Nutrients }) {
 
   const kcalT = targets.find((t) => t.key === 'kcal');
   const progress = kcalT && kcalT.optimal > 0 ? totals.kcal / kcalT.optimal : 0;
-  const items = useMemo(() => dayAdvice(totals, targets, foods, consumedIds), [totals, targets, foods, consumedIds]);
+  const items = useMemo(
+    () => dayAdvice(totals, targets, foods, consumedIds, importance),
+    [totals, targets, foods, consumedIds, importance],
+  );
 
   if (progress < DAY_MIN_PROGRESS) return null;
 

@@ -12,6 +12,7 @@ import type { Profile } from '../nutrition/targets';
 import type { WeightEntry, WeightConfig } from '../weight/types';
 import { WEIGHT_METRICS } from '../weight/types';
 import type { SunExposure } from '../sun/vitaminD';
+import type { NutrientKey } from '../nutrition/types';
 
 export interface BackupData {
   app: 'foodrecorder';
@@ -26,6 +27,10 @@ export interface BackupData {
   weightConfig: WeightConfig;
   /** Absent des sauvegardes antérieures à la fonctionnalité (import tolérant). */
   sunExposures?: SunExposure[];
+  /** Jours exclus des moyennes / forcés comptés (jeûne). Absent des vieilles sauvegardes. */
+  mutedDays?: Record<string, boolean>;
+  /** Overrides d'importance des nutriments. Absent des vieilles sauvegardes. */
+  nutrientImportance?: Partial<Record<NutrientKey, number>>;
 }
 
 /** Construit l'objet de sauvegarde depuis l'état courant du store. */
@@ -43,6 +48,8 @@ export function buildBackup(): BackupData {
     weightEntries: s.weightEntries,
     weightConfig: s.weightConfig,
     sunExposures: s.sunExposures,
+    mutedDays: s.mutedDays,
+    nutrientImportance: s.nutrientImportance,
   };
 }
 
@@ -70,6 +77,8 @@ export function importBackup(text: string): string {
     weightEntries: b.weightEntries,
     ...(b.weightConfig ? { weightConfig: b.weightConfig } : {}),
     sunExposures: b.sunExposures ?? [],
+    mutedDays: b.mutedDays ?? {},
+    nutrientImportance: b.nutrientImportance ?? {},
   });
   const days = new Set(b.entries.map((e) => e.date)).size;
   return `Import réussi : ${b.entries.length} entrée(s) sur ${days} jour(s), ${b.weightEntries.length} pesée(s), ${

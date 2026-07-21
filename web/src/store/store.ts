@@ -1,7 +1,7 @@
 import { useMemo } from 'react';
 import { create } from 'zustand';
 import { persist } from 'zustand/middleware';
-import type { ComputedItem, ExtractedItem, Food, Nutrients, Unit } from '../nutrition/types';
+import type { ComputedItem, ExtractedItem, Food, Nutrients, NutrientKey, Unit } from '../nutrition/types';
 import { EMPTY_NUTRIENTS } from '../nutrition/types';
 import { computeItems, totalNutrients, toGrams, scaleNutrients } from '../nutrition/compute';
 import { FOODS, FOOD_BY_ID } from '../nutrition/foods';
@@ -211,6 +211,18 @@ interface AppState {
   syncCursor: string | null;
   /** Jour (YYYY-MM-DD) de la dernière sauvegarde automatique écrite sur le disque. */
   lastAutoSave: string | null;
+  /**
+   * Overrides explicites du « mute » par jour (YYYY-MM-DD). `true` = jour exclu des
+   * moyennes (mal rempli). `false` = jour vide forcé compté (jeûne à 0). Une date
+   * absente suit le défaut : un jour rempli compte, un jour vide ne compte pas.
+   */
+  mutedDays: Record<string, boolean>;
+  /**
+   * Overrides d'importance par nutriment (multiplie le poids d'un manque/excès dans
+   * les recommandations et conseils). Sparse : seuls les nutriments réglés par
+   * l'utilisateur y figurent ; le reste suit le défaut RDA (cf. `effectiveImportance`).
+   */
+  nutrientImportance: Partial<Record<NutrientKey, number>>;
 
   setSttEngine: (e: SttEngine) => void;
   setSttModel: (id: string) => void;
@@ -221,6 +233,22 @@ interface AppState {
   setProfile: (patch: Partial<Profile>) => void;
   setSyncCursor: (cursor: string) => void;
   setLastAutoSave: (day: string) => void;
+
+  /**
+   * Fixe le « mute » d'un jour. `muted` true = exclu des moyennes ; false = jour vide
+   * compté comme jeûne (0). L'override est effacé s'il rejoint le défaut du jour
+   * (rempli → compté, vide → non compté) pour garder la map compacte.
+   */
+  setDayMute: (date: string, muted: boolean) => void;
+  /** Bascule le « compté / non compté » d'un jour (utilise le défaut selon son remplissage). */
+  toggleDayMute: (date: string) => void;
+
+  /** Fixe l'importance d'un nutriment (multiplie son poids dans les reco/conseils). */
+  setNutrientImportance: (key: NutrientKey, value: number) => void;
+  /** Efface l'override d'importance d'un nutriment (retour au défaut RDA). */
+  resetNutrientImportance: (key: NutrientKey) => void;
+  /** Efface tous les overrides d'importance (retour aux défauts RDA). */
+  resetAllNutrientImportance: () => void;
 
   /** Enregistre automatiquement une entrée (auto-validation, plan §Phase 4). */
   /**
@@ -299,6 +327,8 @@ export const useStore = create<AppState>()(
       deviceId: uid(),
       syncCursor: null,
       lastAutoSave: null,
+      mutedDays: {},
+      nutrientImportance: {},
 
       setSttEngine: (e) => set({ sttEngine: e }),
       setSttModel: (id) => set({ sttModel: id }),
@@ -309,6 +339,34 @@ export const useStore = create<AppState>()(
       setProfile: (patch) => set((s) => ({ profile: { ...s.profile, ...patch } })),
       setSyncCursor: (cursor) => set({ syncCursor: cursor }),
       setLastAutoSave: (day) => set({ lastAutoSave: day }),
+
+      setDayMute: (date, muted) =>
+        set((s) => {
+          const hasEntries = s.entries.some((e) => e.date === date);
+          const next = { ...s.mutedDays };
+          // Si l'override rejoint le défaut du jour, on l'efface (map compacte).
+          if (muted === !hasEntries) delete next[date];
+          else next[date] = muted;
+          return { mutedDays: next };
+        }),
+
+      toggleDayMute: (date) => {
+        const s = get();
+        const hasEntries = s.entries.some((e) => e.date === date);
+        // Compté actuellement ? → on le mute. Non compté ? → on le compte (jeûne).
+        get().setDayMute(date, isDayCounted(s.mutedDays, hasEntries, date));
+      },
+
+      setNutrientImportance: (key, value) =>
+        set((s) => ({ nutrientImportance: { ...s.nutrientImportance, [key]: value } })),
+
+      resetNutrientImportance: (key) =>
+        set((s) => {
+          const { [key]: _drop, ...rest } = s.nutrientImportance;
+          return { nutrientImportance: rest };
+        }),
+
+      resetAllNutrientImportance: () => set({ nutrientImportance: {} }),
 
       addEntry: (transcript, items, source, date, createdAt) => {
         const computed = computeItems(
@@ -640,6 +698,8 @@ function mergePersisted(persisted: unknown, current: AppState): AppState {
     // Le seed de pesées ne s'applique qu'à la 1re utilisation (clé absente du persisté).
     weightEntries: p.weightEntries ?? current.weightEntries,
     weightConfig: { ...current.weightConfig, ...(p.weightConfig ?? {}) },
+    mutedDays: p.mutedDays ?? {},
+    nutrientImportance: p.nutrientImportance ?? {},
   };
 }
 
@@ -699,6 +759,17 @@ function recomputeItem(item: JournalItem, foods: Food[]): JournalItem {
     nutrients: ci.nutrients ?? item.nutrients,
     douteux: ci.match.douteux || ci.match.food === null,
   };
+}
+
+/**
+ * Un jour est-il COMPTÉ dans les moyennes/stats ? Un override explicite prime
+ * (`mutedDays[date]` : true = muté/exclu, false = jeûne forcé compté) ; sinon le
+ * défaut est : jour rempli → compté, jour vide → non compté (probable non-remplissage).
+ */
+export function isDayCounted(mutedDays: Record<string, boolean>, hasEntries: boolean, date: string): boolean {
+  const ov = mutedDays[date];
+  if (ov !== undefined) return !ov;
+  return hasEntries;
 }
 
 /** Totaux d'une journée donnée. */
