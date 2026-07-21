@@ -22,11 +22,11 @@ import { DayAdviceCard } from './ui/DayAdvice';
 import { Foods } from './ui/Foods';
 import { Stats } from './ui/Stats';
 import { Weight } from './ui/Weight';
-import { Guide } from './ui/Guide';
+import { Nutrients } from './ui/Nutrients';
 import { History } from './ui/History';
 import { Settings } from './ui/Settings';
 
-type Tab = 'jour' | 'historique' | 'stats' | 'poids' | 'aliments' | 'guide' | 'reglages';
+type Tab = 'jour' | 'historique' | 'stats' | 'poids' | 'aliments' | 'nutriments' | 'reglages';
 
 interface TabMeta {
   id: Tab;
@@ -44,12 +44,12 @@ const PRIMARY_TABS: TabMeta[] = [
   { id: 'stats', label: 'Stats', short: 'Stats', icon: '📊' },
 ];
 
-/** Onglets secondaires : regroupés derrière « Plus » sur mobile. Poids et Guide au fond. */
+/** Onglets secondaires : regroupés derrière « Plus » sur mobile. Réglages et Poids au fond. */
 const SECONDARY_TABS: TabMeta[] = [
-  { id: 'aliments', label: 'Aliments', short: 'Aliments', icon: '🥗' },
+  { id: 'aliments', label: 'Banque d\'aliments', short: 'Banque', icon: '🥗' },
+  { id: 'nutriments', label: 'Nutriments', short: 'Nutriments', icon: '🧬' },
   { id: 'reglages', label: 'Réglages', short: 'Réglages', icon: '⚙️' },
   { id: 'poids', label: 'Poids', short: 'Poids', icon: '⚖️' },
-  { id: 'guide', label: 'Guide', short: 'Guide', icon: '📖' },
 ];
 
 const ALL_TABS: TabMeta[] = [...PRIMARY_TABS, ...SECONDARY_TABS];
@@ -147,7 +147,7 @@ export function App() {
       {tab === 'stats' && <Stats />}
       {tab === 'poids' && <Weight />}
       {tab === 'aliments' && <Foods />}
-      {tab === 'guide' && <Guide />}
+      {tab === 'nutriments' && <Nutrients />}
       {tab === 'reglages' && <Settings />}
 
       {/* Feuille « Plus » (mobile) : onglets secondaires. */}

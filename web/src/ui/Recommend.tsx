@@ -1,5 +1,5 @@
 import { useMemo, useState } from 'react';
-import type { Nutrients, NutrientKey } from '../nutrition/types';
+import type { Nutrients } from '../nutrition/types';
 import type { Target } from '../nutrition/targets';
 import { useStore, useEffectiveFoods } from '../store/store';
 import {
@@ -7,14 +7,11 @@ import {
   rankFoods,
   shortLabel,
   makeImportanceFn,
-  effectiveImportance,
   RECO_DEFAULTS,
   GAMMA_BOUNDS,
   LAMBDA_BOUNDS,
-  IMPORTANCE_BOUNDS,
 } from '../nutrition/recommend';
 import type { ScoredFood, ScorePart } from '../nutrition/recommend';
-import { NUTRIENT_GROUPS } from '../nutrition/groups';
 import { fmt } from './format';
 
 /** Nombre de lignes affichées par défaut, et pas du bouton « voir plus ». */
@@ -275,107 +272,6 @@ export function Recommendations({
           </label>
         </div>
       </details>
-
-      <ImportancePanel targets={targets} overrides={nutrientImportance} />
     </div>
-  );
-}
-
-/**
- * Réglage de l'importance des nutriments : un curseur ×0→3 par nutriment, groupés
- * par famille, avec un réglage rapide au niveau du groupe. À 0, un nutriment
- * disparaît des recommandations et des conseils (utile pour la créatine, optionnelle) ;
- * plus haut, ses manques pèsent davantage (ex. oméga 3). Défauts intelligents
- * pré-remplis (créatine/collagène ↓, oméga 3/vitamine D ↑).
- */
-function ImportancePanel({
-  targets,
-  overrides,
-}: {
-  targets: Target[];
-  overrides: Partial<Record<NutrientKey, number>>;
-}) {
-  const setNutrientImportance = useStore((s) => s.setNutrientImportance);
-  const resetNutrientImportance = useStore((s) => s.resetNutrientImportance);
-  const resetAllNutrientImportance = useStore((s) => s.resetAllNutrientImportance);
-  const targetByKey = useMemo(() => new Map(targets.map((t) => [t.key, t])), [targets]);
-
-  const hasOverrides = Object.keys(overrides).length > 0;
-
-  return (
-    <details className="reco-settings" style={{ marginTop: 8 }}>
-      <summary className="small">⚖️ Importance des nutriments</summary>
-      <div className="hint" style={{ marginTop: 4 }}>
-        Pondère chaque nutriment dans les recommandations et les conseils du jour. <strong>×0</strong> = ignoré (aucun
-        conseil), <strong>×1</strong> = normal, <strong>×3</strong> = prioritaire. Réglez tout un groupe d'un coup avec
-        le curseur du groupe.
-        {hasOverrides && (
-          <>
-            {' '}
-            <button className="ghost small" style={{ marginLeft: 4 }} onClick={resetAllNutrientImportance}>
-              Tout réinitialiser
-            </button>
-          </>
-        )}
-      </div>
-
-      {NUTRIENT_GROUPS.map((g) => {
-        const keys = g.keys.filter((k) => k !== 'kcal' && targetByKey.has(k));
-        if (keys.length === 0) return null;
-        const avg = keys.reduce((a, k) => a + effectiveImportance(k, overrides), 0) / keys.length;
-        return (
-          <div className="importance-group" key={g.title}>
-            <div className="importance-group-head">
-              <span className="gh">{g.title}</span>
-              <input
-                type="range"
-                min={IMPORTANCE_BOUNDS.min}
-                max={IMPORTANCE_BOUNDS.max}
-                step={IMPORTANCE_BOUNDS.step}
-                value={avg}
-                onChange={(e) => {
-                  const v = Number(e.target.value);
-                  for (const k of keys) setNutrientImportance(k, v);
-                }}
-                data-tip="Applique cette importance à tout le groupe"
-                aria-label={`Importance du groupe ${g.title}`}
-              />
-              <span className="mono small" style={{ width: 34, textAlign: 'right' }}>×{fmt(avg, 1)}</span>
-            </div>
-            {keys.map((k) => {
-              const t = targetByKey.get(k)!;
-              const val = effectiveImportance(k, overrides);
-              const overridden = overrides[k] !== undefined;
-              return (
-                <div className="importance-row" key={k}>
-                  <span className="importance-label" data-tip={t.role}>{t.label}</span>
-                  <input
-                    type="range"
-                    min={IMPORTANCE_BOUNDS.min}
-                    max={IMPORTANCE_BOUNDS.max}
-                    step={IMPORTANCE_BOUNDS.step}
-                    value={val}
-                    onChange={(e) => setNutrientImportance(k, Number(e.target.value))}
-                    aria-label={`Importance : ${t.label}`}
-                  />
-                  <span className="mono small" style={{ width: 34, textAlign: 'right', color: val === 0 ? 'var(--muted)' : undefined }}>
-                    ×{fmt(val, 1)}
-                  </span>
-                  <button
-                    className="ghost small importance-reset"
-                    style={{ visibility: overridden ? 'visible' : 'hidden' }}
-                    onClick={() => resetNutrientImportance(k)}
-                    data-tip="Revenir au défaut"
-                    aria-label={`Réinitialiser l'importance : ${t.label}`}
-                  >
-                    ↺
-                  </button>
-                </div>
-              );
-            })}
-          </div>
-        );
-      })}
-    </details>
   );
 }

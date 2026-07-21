@@ -1,0 +1,272 @@
+import { useMemo, useState } from 'react';
+import { useStore, dayTotals, todayStr } from '../store/store';
+import type { Target } from '../nutrition/targets';
+import { computeRatios } from '../nutrition/ratios';
+import type { RatioResult } from '../nutrition/ratios';
+import type { NutrientKey } from '../nutrition/types';
+import { NUTRIENT_GROUPS } from '../nutrition/groups';
+import { effectiveImportance, IMPORTANCE_BOUNDS } from '../nutrition/recommend';
+import { PeriodSelector } from './PeriodSelector';
+import { usePeriodNutrition } from './usePeriodNutrition';
+import { Recommendations } from './Recommend';
+import { VitaminDPanel } from './VitaminD';
+import { fmt } from './format';
+
+const STATUS_COLOR: Record<string, string> = {
+  good: 'var(--accent-2)',
+  warn: 'var(--warn)',
+  bad: 'var(--danger)',
+  na: 'var(--muted)',
+};
+
+/**
+ * Onglet « Nutriments » : la page « comprendre + régler + agir ». De haut en bas :
+ *  - un sélecteur de période propre (qui pilote recommandations et vitamine D) ;
+ *  - les rapports optimaux (valeur d'aujourd'hui) ;
+ *  - le cœur : l'importance de chaque nutriment (curseur ×0→3) fusionnée avec son
+ *    rôle et sa cible, dépliables au clic ;
+ *  - les recommandations d'aliments/suppléments sur la période ;
+ *  - le statut de carence en vitamine D.
+ */
+export function Nutrients() {
+  const entries = useStore((s) => s.entries);
+  const today = todayStr();
+  const {
+    period,
+    setPeriod,
+    includeToday,
+    setIncludeToday,
+    excludeSupplements,
+    setExcludeSupplements,
+    targets,
+    days,
+    recorded,
+    averages,
+    vitDStatus,
+  } = usePeriodNutrition();
+
+  // Rapports : équilibre du jour (snapshot de la balance actuelle), comme dans l'ancien Guide.
+  const totals = useMemo(() => dayTotals(entries, today), [entries, today]);
+  const ratios = useMemo(() => computeRatios(totals), [totals]);
+
+  return (
+    <>
+      <div className="panel">
+        <div className="row" style={{ justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: 8 }}>
+          <h2 style={{ margin: 0 }}>Nutriments — {days} jours</h2>
+          <PeriodSelector value={period} onChange={setPeriod} />
+        </div>
+        <div className="row" style={{ alignItems: 'center', marginTop: 4, gap: 16, flexWrap: 'wrap' }}>
+          <label
+            className="row small"
+            style={{ gap: 6, alignItems: 'center', cursor: 'pointer' }}
+            data-tip="Par défaut, la journée en cours (pas encore terminée) est exclue des moyennes qui pilotent recommandations et vitamine D."
+          >
+            <input type="checkbox" checked={includeToday} onChange={(e) => setIncludeToday(e.target.checked)} />
+            Inclure la journée en cours
+          </label>
+          <label
+            className="row small"
+            style={{ gap: 6, alignItems: 'center', cursor: 'pointer' }}
+            data-tip="Retire créatine, whey, magnésium, vitamines, oméga 3… mais aussi le sel et le poivre (même catégorie) des moyennes. Le gain de vitamine D du soleil, lui, est conservé."
+          >
+            <input
+              type="checkbox"
+              checked={excludeSupplements}
+              onChange={(e) => setExcludeSupplements(e.target.checked)}
+            />
+            Sans les suppléments
+          </label>
+        </div>
+        <div className="hint">
+          Réglez l'importance de chaque nutriment ci-dessous : elle pilote les recommandations et les conseils du jour.
+          Recommandations et vitamine D sont calculées sur {recorded.length} jour(s) enregistré(s)
+          {!includeToday && ", aujourd'hui exclu"}.
+        </div>
+      </div>
+
+      <div className="panel">
+        <h2>Rapports optimaux</h2>
+        <p className="small" style={{ marginTop: -6 }}>
+          La valeur affichée est celle d'aujourd'hui. Ce sont souvent ces équilibres, plus que les quantités,
+          qui pilotent l'inflammation, la tension et la santé osseuse.
+        </p>
+        {ratios.map((r) => (
+          <RatioCard key={r.def.key} r={r} />
+        ))}
+      </div>
+
+      <NutrientImportancePanel targets={targets} />
+
+      <Recommendations averages={averages} targets={targets} hasData={recorded.length > 0} />
+
+      <VitaminDPanel status={vitDStatus} />
+    </>
+  );
+}
+
+function RatioCard({ r }: { r: RatioResult }) {
+  const dir =
+    r.def.better === 'higher'
+      ? `idéal ≥ ${fmt(r.def.optimal)}${r.def.suffix}`
+      : r.def.better === 'lower'
+        ? `idéal ≤ ${fmt(r.def.optimal)}${r.def.suffix}`
+        : `idéal ≈ ${fmt(r.def.optimal)}${r.def.suffix}`;
+  return (
+    <div className="guide-item">
+      <div className="row" style={{ justifyContent: 'space-between', gap: 10, alignItems: 'baseline' }}>
+        <strong>{r.def.label}</strong>
+        <span className="mono" style={{ color: STATUS_COLOR[r.status] }}>
+          {r.text} <span className="small" style={{ color: 'var(--muted)' }}>· {dir}</span>
+        </span>
+      </div>
+      <div className="small" style={{ marginTop: 4 }}>{r.def.role}</div>
+      <div className="small" style={{ marginTop: 4, color: 'var(--muted)' }}>{r.def.note}</div>
+    </div>
+  );
+}
+
+/** Cible lisible d'un nutriment (AJR / optimal, ou plafond pour une limite). */
+function targetLine(t: Target): string {
+  if (t.goal === 'limit') return `Idéal ≤ ${fmt(t.optimal)} ${t.unit} · plafond ${fmt(t.ajr)} ${t.unit}`;
+  if (t.optimal !== t.ajr) return `AJR ${fmt(t.ajr)} ${t.unit} → optimal ${fmt(t.optimal)} ${t.unit}`;
+  return `AJR ${fmt(t.ajr)} ${t.unit}`;
+}
+
+/**
+ * Cœur de la page : l'importance de chaque nutriment (curseur ×0→3, groupé par
+ * famille avec réglage rapide du groupe) FUSIONNÉE avec son rôle et sa cible.
+ * Un clic sur le nom déplie le détail (cible + rôle complet + note) ; un survol
+ * du nom montre un rappel court (le rôle). À ×0, un nutriment disparaît des
+ * recommandations et des conseils ; plus haut, ses manques pèsent davantage.
+ */
+function NutrientImportancePanel({ targets }: { targets: Target[] }) {
+  const overrides = useStore((s) => s.nutrientImportance);
+  const setNutrientImportance = useStore((s) => s.setNutrientImportance);
+  const resetNutrientImportance = useStore((s) => s.resetNutrientImportance);
+  const resetAllNutrientImportance = useStore((s) => s.resetAllNutrientImportance);
+  const targetByKey = useMemo(() => new Map(targets.map((t) => [t.key, t])), [targets]);
+  const [expanded, setExpanded] = useState<NutrientKey | null>(null);
+
+  const hasOverrides = Object.keys(overrides).length > 0;
+
+  return (
+    <div className="panel">
+      <div className="row" style={{ justifyContent: 'space-between', alignItems: 'baseline', flexWrap: 'wrap', gap: 8 }}>
+        <h2 style={{ margin: 0 }}>Importance &amp; rôle des nutriments</h2>
+        {hasOverrides && (
+          <button className="ghost small" onClick={resetAllNutrientImportance}>
+            Tout réinitialiser
+          </button>
+        )}
+      </div>
+      <details className="reco-settings" style={{ marginTop: 8 }}>
+        <summary className="small">Comprendre AJR &amp; optimal</summary>
+        <div className="hint" style={{ marginTop: 6 }}>
+          Deux repères accompagnent chaque nutriment. L'<strong>AJR</strong> (apport journalier de référence,
+          d'après les valeurs européennes et l'ANSES) est le seuil à couvrir pour éviter une carence.
+          L'<strong>optimal</strong> est une cible « santé / sport » : souvent plus <em>haute</em> que l'AJR,
+          mais parfois c'est l'inverse.
+          <ul className="guide-list">
+            <li>
+              <strong>Viser haut</strong> — la plupart des vitamines et minéraux : atteindre voire dépasser l'AJR
+              jusqu'à la cible optimale (vitamine D, C, magnésium, protéines).
+            </li>
+            <li>
+              <strong>Viser bas</strong> — quelques nutriments où l'excès nuit : l'optimal est <em>le plus bas
+              possible</em>, l'AJR devient un plafond (sodium, AG saturés).
+            </li>
+            <li>
+              <strong>Viser juste (rapports)</strong> — pour certains couples, c'est l'équilibre qui compte, pas la
+              quantité absolue (oméga-6/3, potassium/sodium, calcium/magnésium).
+            </li>
+          </ul>
+        </div>
+      </details>
+      <div className="hint" style={{ marginTop: 8 }}>
+        Pondère chaque nutriment. <strong>×0</strong> = ignoré (aucun conseil), <strong>×1</strong> = normal,
+        <strong> ×3</strong> = prioritaire. Réglez tout un groupe d'un coup avec le curseur du groupe, ou cliquez un
+        nom pour lire son rôle et sa cible.
+      </div>
+
+      {NUTRIENT_GROUPS.map((g) => {
+        const keys = g.keys.filter((k) => k !== 'kcal' && targetByKey.has(k));
+        if (keys.length === 0) return null;
+        const avg = keys.reduce((a, k) => a + effectiveImportance(k, overrides), 0) / keys.length;
+        return (
+          <div className="importance-group" key={g.title}>
+            <div className="importance-group-head">
+              <span className="gh">{g.title}</span>
+              <input
+                type="range"
+                min={IMPORTANCE_BOUNDS.min}
+                max={IMPORTANCE_BOUNDS.max}
+                step={IMPORTANCE_BOUNDS.step}
+                value={avg}
+                onChange={(e) => {
+                  const v = Number(e.target.value);
+                  for (const k of keys) setNutrientImportance(k, v);
+                }}
+                data-tip="Applique cette importance à tout le groupe"
+                aria-label={`Importance du groupe ${g.title}`}
+              />
+              <span className="mono small" style={{ width: 34, textAlign: 'right' }}>×{fmt(avg, 1)}</span>
+            </div>
+            {keys.map((k) => {
+              const t = targetByKey.get(k)!;
+              const val = effectiveImportance(k, overrides);
+              const overridden = overrides[k] !== undefined;
+              const isOpen = expanded === k;
+              return (
+                <div key={k}>
+                  <div className="importance-row">
+                    <button
+                      className="importance-label nutrient-toggle"
+                      data-tip={t.role}
+                      aria-expanded={isOpen}
+                      onClick={() => setExpanded((cur) => (cur === k ? null : k))}
+                    >
+                      <span className="nutrient-caret">{isOpen ? '▾' : '▸'}</span> {t.label}
+                    </button>
+                    <input
+                      type="range"
+                      min={IMPORTANCE_BOUNDS.min}
+                      max={IMPORTANCE_BOUNDS.max}
+                      step={IMPORTANCE_BOUNDS.step}
+                      value={val}
+                      onChange={(e) => setNutrientImportance(k, Number(e.target.value))}
+                      aria-label={`Importance : ${t.label}`}
+                    />
+                    <span className="mono small" style={{ width: 34, textAlign: 'right', color: val === 0 ? 'var(--muted)' : undefined }}>
+                      ×{fmt(val, 1)}
+                    </span>
+                    <button
+                      className="ghost small importance-reset"
+                      style={{ visibility: overridden ? 'visible' : 'hidden' }}
+                      onClick={() => resetNutrientImportance(k)}
+                      data-tip="Revenir au défaut"
+                      aria-label={`Réinitialiser l'importance : ${t.label}`}
+                    >
+                      ↺
+                    </button>
+                  </div>
+                  {isOpen && (
+                    <div className="nutrient-detail small">
+                      <div className="mono" style={{ color: t.goal === 'limit' ? 'var(--warn)' : 'var(--text)' }}>
+                        {targetLine(t)}
+                      </div>
+                      <div style={{ marginTop: 4 }}>{t.role}</div>
+                      {t.optimalNote && (
+                        <div style={{ marginTop: 4, color: 'var(--muted)' }}>{t.optimalNote}</div>
+                      )}
+                    </div>
+                  )}
+                </div>
+              );
+            })}
+          </div>
+        );
+      })}
+    </div>
+  );
+}

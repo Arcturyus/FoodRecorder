@@ -28,7 +28,7 @@ const C = {
 };
 
 /** Couleur par catégorie d'aliment (encodage constant sur toutes les vues). */
-const CATS: { key: FoodCategory; label: string; color: string }[] = [
+export const CATS: { key: FoodCategory; label: string; color: string }[] = [
   { key: 'fruit', label: 'Fruits', color: '#ef6f6f' },
   { key: 'legume', label: 'Légumes', color: '#3ecf8e' },
   { key: 'feculent', label: 'Féculents', color: '#f5a623' },
@@ -41,7 +41,7 @@ const CATS: { key: FoodCategory; label: string; color: string }[] = [
   { key: 'plat', label: 'Plats', color: '#a58bff' },
   { key: 'autre', label: 'Autres', color: '#9aa2b1' },
 ];
-const COLOR_BY_CAT = new Map(CATS.map((c) => [c.key, c.color]));
+export const COLOR_BY_CAT = new Map(CATS.map((c) => [c.key, c.color]));
 
 /**
  * Aliments explorables : on retire les compléments (produits purs très concentrés,

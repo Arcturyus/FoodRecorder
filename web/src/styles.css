@@ -977,9 +977,69 @@ button.chip-active:hover { filter: brightness(1.08); }
 .importance-row input[type="range"] { flex: 1; }
 .importance-reset { flex: 0 0 auto; padding: 0 6px; }
 
+/* Nom de nutriment cliquable (déplie le rôle + la cible sous la ligne). */
+button.nutrient-toggle {
+  background: none;
+  border: none;
+  padding: 0;
+  text-align: left;
+  color: var(--text);
+  font-size: 13px;
+  cursor: pointer;
+}
+button.nutrient-toggle:hover { background: none; color: var(--accent); }
+.nutrient-caret { color: var(--muted); font-size: 10px; }
+.nutrient-detail {
+  margin: 2px 0 8px 108px;
+  padding: 8px 10px;
+  border-left: 2px solid var(--border);
+  background: var(--panel-2);
+  border-radius: 6px;
+}
+@media (max-width: 520px) {
+  .nutrient-detail { margin-left: 16px; }
+}
+
 /* Mobile : les badges passent sous le nom pour ne pas l'écraser. */
 @media (max-width: 520px) {
   .reco-line { flex-wrap: wrap; }
   .reco-nom { flex: 1 1 auto; }
   .reco-badges { margin-left: 30px; order: 3; flex-basis: 100%; }
+}
+
+/* Mode « Comparer » : sélecteur d'aliment et listes voisins/compléments. */
+.compare-dropdown {
+  position: absolute;
+  top: 100%;
+  left: 0;
+  right: 0;
+  z-index: 10;
+  margin-top: 4px;
+  background: var(--panel-2);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  overflow: hidden;
+  box-shadow: 0 6px 18px rgba(0, 0, 0, 0.4);
+}
+.compare-option,
+.compare-neighbor {
+  display: flex;
+  width: 100%;
+  justify-content: space-between;
+  gap: 8px;
+  background: none;
+  border: none;
+  border-radius: 0;
+  text-align: left;
+  padding: 7px 10px;
+  color: var(--text);
+  cursor: pointer;
+}
+.compare-option:hover,
+.compare-neighbor:hover { background: var(--border); }
+.compare-neighbor {
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  margin-bottom: 4px;
+  background: var(--panel-2);
 }

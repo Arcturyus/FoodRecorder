@@ -8,6 +8,7 @@ import { EMPTY_NUTRIENTS } from '../nutrition/types';
 import type { Food, FoodCategory, NutrientKey, Nutrients } from '../nutrition/types';
 import { fmt, UNIT_LABELS, CATEGORY_LABELS } from './format';
 import { FoodExplorer } from './FoodExplorer';
+import { FoodCompare } from './FoodCompare';
 import { FoodConsumption } from './FoodFrequency';
 
 const LABEL_BY_KEY = new Map(CATEGORY_LABELS.map((c) => [c.key, c.label]));
@@ -25,28 +26,36 @@ const OPTIONAL_MICROS: { key: keyof Nutrients; label: string }[] = RDA.filter(
   (r: RdaEntry) => !BASE_MACRO_KEYS.has(r.key),
 ).map((r) => ({ key: r.key, label: `${r.label} (${r.unit})` }));
 
-type Mode = 'liste' | 'classement' | 'consommation' | 'explorer';
+type Mode = 'liste' | 'classement' | 'consommation' | 'explorer' | 'comparer';
 
 /**
- * Onglet « Aliments » : fusion de l'ancienne banque et des aliments perso.
- * Tout aliment (banque ou perso) est modifiable. Quatre modes :
+ * Onglet « Banque d'aliments » : fusion de l'ancienne banque et des aliments perso.
+ * Tout aliment (banque ou perso) est modifiable. Cinq modes :
  *  - « Liste » : recherche/filtre, ajout perso et édition en place de chaque aliment ;
  *  - « Classement » : aliments les plus riches en un nutriment choisi (pour 100 g) ;
  *  - « Consommation » : ce que VOUS mangez le plus (fréquences sur le journal) ;
- *  - « Explorer visuel » : atelier de visualisations D3.
+ *  - « Explorer visuel » : atelier de visualisations D3 ;
+ *  - « Comparer » : deux aliments face à face + carte ACP de toute la banque.
  */
 export function Foods() {
   const [mode, setMode] = useState<Mode>('liste');
+  const [compareIds, setCompareIds] = useState<[string | null, string | null]>([null, null]);
   const foods = useEffectiveFoods();
+
+  /** Depuis la liste : « comparer » charge l'aliment en emplacement A et bascule sur le mode. */
+  const startCompare = (id: string) => {
+    setCompareIds(([, b]) => [id, b === id ? null : b]);
+    setMode('comparer');
+  };
 
   return (
     <>
       <div className="panel">
-        <h2>Aliments ({foods.length})</h2>
+        <h2>Banque d'aliments ({foods.length})</h2>
         <p className="small" style={{ marginTop: -6 }}>
           Banque curée (approximations CIQUAL 2020 / USDA) + vos aliments perso. Valeurs pour 100 g. Tout est modifiable.
         </p>
-        <div className="row" style={{ gap: 6 }}>
+        <div className="row" style={{ gap: 6, flexWrap: 'wrap' }}>
           <button className={`ghost small ${mode === 'liste' ? 'chip-active' : ''}`} onClick={() => setMode('liste')}>
             Liste
           </button>
@@ -68,13 +77,20 @@ export function Foods() {
           >
             Explorer visuel
           </button>
+          <button
+            className={`ghost small ${mode === 'comparer' ? 'chip-active' : ''}`}
+            onClick={() => setMode('comparer')}
+          >
+            ⚖️ Comparer
+          </button>
         </div>
       </div>
 
-      {mode === 'liste' && <FoodList foods={foods} />}
+      {mode === 'liste' && <FoodList foods={foods} onCompare={startCompare} />}
       {mode === 'classement' && <NutrientRanking foods={foods} />}
       {mode === 'consommation' && <FoodConsumption />}
       {mode === 'explorer' && <FoodExplorer foods={foods} />}
+      {mode === 'comparer' && <FoodCompare foods={foods} ids={compareIds} setIds={setCompareIds} />}
     </>
   );
 }
@@ -83,7 +99,7 @@ export function Foods() {
 // Mode « Liste » : recherche + filtres + ajout perso + édition en place
 // ---------------------------------------------------------------------------
 
-function FoodList({ foods }: { foods: Food[] }) {
+function FoodList({ foods, onCompare }: { foods: Food[]; onCompare: (id: string) => void }) {
   const overrides = useStore((s) => s.foodOverrides);
   const [query, setQuery] = useState('');
   const [cat, setCat] = useState<FoodCategory | 'all'>('all');
@@ -166,7 +182,13 @@ function FoodList({ foods }: { foods: Food[] }) {
               editId === f.id ? (
                 <FoodForm key={f.id} food={f} submitLabel="Enregistrer" onDone={() => setEditId(null)} />
               ) : (
-                <FoodRow key={f.id} food={f} modified={!!overrides[f.id]} onEdit={() => setEditId(f.id)} />
+                <FoodRow
+                  key={f.id}
+                  food={f}
+                  modified={!!overrides[f.id]}
+                  onEdit={() => setEditId(f.id)}
+                  onCompare={() => onCompare(f.id)}
+                />
               ),
             )}
           </div>
@@ -176,13 +198,13 @@ function FoodList({ foods }: { foods: Food[] }) {
   );
 }
 
-/** Ligne d'un aliment (lecture) avec actions éditer / réinitialiser / supprimer. */
-function FoodRow({ food, modified, onEdit }: { food: Food; modified: boolean; onEdit: () => void }) {
+/** Ligne d'un aliment (lecture) avec actions comparer / éditer / réinitialiser / supprimer. */
+function FoodRow({ food, modified, onEdit, onCompare }: { food: Food; modified: boolean; onEdit: () => void; onCompare: () => void }) {
   const removeCustomFood = useStore((s) => s.removeCustomFood);
   const resetFood = useStore((s) => s.resetFood);
   const f = food;
   return (
-    <div className="item-row" style={{ gridTemplateColumns: '1fr auto auto' }}>
+    <div className="item-row" style={{ gridTemplateColumns: '1fr auto auto auto' }}>
       <div className="item-name">
         <span>
           {f.nom}
@@ -194,6 +216,9 @@ function FoodRow({ food, modified, onEdit }: { food: Food; modified: boolean; on
           {f.n.fibres ? ` · Fibres ${fmt(f.n.fibres, 1)}` : ''} /100 g{portionLabel(f)}
         </span>
       </div>
+      <button className="ghost small" onClick={onCompare} data-tip="Comparer cet aliment">
+        ⚖️
+      </button>
       <button className="ghost small" onClick={onEdit}>
         ✏️ Modifier
       </button>

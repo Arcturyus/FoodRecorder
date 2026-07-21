@@ -2,26 +2,14 @@ import { useMemo, useRef, useState } from 'react';
 import { scaleLinear, scaleLog } from 'd3-scale';
 import { line as d3line, arc as d3arc, pie as d3pie } from 'd3-shape';
 import { max as d3max } from 'd3-array';
-import { useStore, todayStr, useEffectiveFoods, isDayCounted } from '../store/store';
-import { computeTargets } from '../nutrition/targets';
 import type { Target } from '../nutrition/targets';
 import { RATIOS, computeRatio } from '../nutrition/ratios';
 import type { NutrientKey, Nutrients } from '../nutrition/types';
 import { EMPTY_NUTRIENTS } from '../nutrition/types';
 import { NUTRIENT_GROUPS } from '../nutrition/groups';
-import { sunVitDForDate } from '../sun/vitaminD';
-import { vitaminDFlux, VITD_LOW, VITD_OK } from '../sun/vitaminDStatus';
-import { HoverCard } from './HoverCard';
-import { Recommendations } from './Recommend';
 import { Omega3Breakdown } from './Totals';
-import {
-  PeriodSelector,
-  resolveRange,
-  datesInRange,
-  rangeDays,
-  defaultPeriodState,
-} from './PeriodSelector';
-import type { PeriodState } from './PeriodSelector';
+import { PeriodSelector } from './PeriodSelector';
+import { usePeriodNutrition } from './usePeriodNutrition';
 import { fmt } from './format';
 
 /** Palette alignée sur les variables CSS du thème. */
@@ -38,8 +26,6 @@ const C = {
 
 /** Couleurs de séries (tendance multi-nutriments), encodage stable par ordre de sélection. */
 const SERIES_COLORS = ['#5b8cff', '#3ecf8e', '#f5a623', '#ef5d5d', '#a58bff', '#4dc9d0', '#e3c65b', '#d16ba5'];
-
-const KEYS = Object.keys(EMPTY_NUTRIENTS) as NutrientKey[];
 
 /** Fenêtres proposées pour la moyenne mobile (en jours). */
 const MA_WINDOWS = [3, 7, 14, 30];
@@ -84,14 +70,23 @@ function fmtVal(v: number): string {
  *  - Radar micros (moyenne/jour) et donut macros (moyenne/jour).
  */
 export function Stats() {
-  const entries = useStore((s) => s.entries);
-  const sunExposures = useStore((s) => s.sunExposures);
-  const mutedDays = useStore((s) => s.mutedDays);
-  const profile = useStore((s) => s.profile);
-  const targets = useMemo(() => computeTargets(profile), [profile]);
-  const targetByKey = useMemo(() => new Map(targets.map((t) => [t.key, t])), [targets]);
+  // Chaîne « période → moyennes » partagée avec l'onglet Nutriments (état propre à Stats).
+  const {
+    period,
+    setPeriod,
+    includeToday,
+    setIncludeToday,
+    excludeSupplements,
+    setExcludeSupplements,
+    targets,
+    targetByKey,
+    byDateVitD,
+    days,
+    windowDates,
+    recorded,
+    averages,
+  } = usePeriodNutrition();
 
-  const [period, setPeriod] = useState<PeriodState>(defaultPeriodState);
   // Sélection unifiée : ids de nutriments (NutrientKey) ET de rapports (clé RatioDef,
   // sans collision avec les nutriments). Une seule tendance, une seule moyenne mobile.
   const [selected, setSelected] = useState<string[]>(['kcal', 'proteines']);
@@ -103,124 +98,6 @@ export function Stats() {
    * sodium à 300 %). Le log rend leurs variations relatives comparables.
    */
   const [logY, setLogY] = useState(false);
-  /**
-   * Par défaut, les moyennes ignorent la journée en cours (non terminée) : sinon
-   * un total encore partiel (ex. peu de repas saisis, vitamine D pas encore
-   * reçue) tire artificiellement les moyennes vers le bas en début de journée.
-   */
-  const [includeToday, setIncludeToday] = useState(false);
-  /**
-   * Retire les compléments et assaisonnements (catégorie « supplement ») de
-   * toutes les analyses : ce que l'alimentation seule apporte vraiment, donc
-   * quels suppléments sont réellement utiles.
-   */
-  const [excludeSupplements, setExcludeSupplements] = useState(false);
-  const today = todayStr();
-
-  const foods = useEffectiveFoods();
-  /** Ids des aliments « supplement » (banque + perso), pour le filtre ci-dessous. */
-  const supplementIds = useMemo(
-    () => new Set(foods.filter((f) => f.categorie === 'supplement').map((f) => f.id)),
-    [foods],
-  );
-
-  /**
-   * Totaux par jour (tous nutriments) pour tout l'historique. Un jour n'apparaît
-   * que s'il reste au moins un item après filtrage : sinon une journée ne
-   * contenant QUE des suppléments compterait comme un jour enregistré à zéro et
-   * tirerait toutes les moyennes vers le bas.
-   */
-  const byDate = useMemo(() => {
-    const map = new Map<string, Nutrients>();
-    for (const e of entries) {
-      for (const it of e.items) {
-        if (excludeSupplements && it.foodId && supplementIds.has(it.foodId)) continue;
-        let t = map.get(e.date);
-        if (!t) {
-          t = { ...EMPTY_NUTRIENTS };
-          map.set(e.date, t);
-        }
-        for (const k of KEYS) t[k] += it.nutrients[k] ?? 0;
-      }
-    }
-    return map;
-  }, [entries, excludeSupplements, supplementIds]);
-
-  /**
-   * Totaux par jour avec la vitamine D du SOLEIL intégrée (mêmes jours que `byDate`).
-   * La couverture moyenne et la tendance doivent refléter l'apport TOTAL de vitamine D
-   * (alimentation + soleil), comme la carte « carence ? » — sinon la vitamine D paraît
-   * artificiellement basse et fausse l'interprétation. Seule la clé `vitD` change.
-   */
-  const byDateVitD = useMemo(() => {
-    const map = new Map<string, Nutrients>();
-    for (const [d, t] of byDate) {
-      const sun = sunVitDForDate(sunExposures, d);
-      map.set(d, sun > 0 ? { ...t, vitD: t.vitD + sun } : t);
-    }
-    // Jours de jeûne (vide mais démuté, override `false`) : apports à 0, soleil inclus.
-    // Ainsi tous les jours COMPTÉS ont un total ici (moyennes ET tendance).
-    for (const [d, muted] of Object.entries(mutedDays)) {
-      if (muted === false && !byDate.has(d)) {
-        map.set(d, { ...EMPTY_NUTRIENTS, vitD: sunVitDForDate(sunExposures, d) });
-      }
-    }
-    return map;
-  }, [byDate, sunExposures, mutedDays]);
-
-  /** 1re date enregistrée (borne « Tout »). */
-  const earliest = useMemo(() => {
-    let min: string | undefined;
-    for (const d of byDate.keys()) if (min === undefined || d < min) min = d;
-    return min;
-  }, [byDate]);
-
-  const range = useMemo(() => resolveRange(period, earliest), [period, earliest]);
-  const days = rangeDays(range);
-  const windowDates = useMemo(() => {
-    const all = datesInRange(range);
-    return includeToday ? all : all.filter((d) => d !== today);
-  }, [range, includeToday, today]);
-  /**
-   * Jours COMPTÉS de la fenêtre : jours remplis non mutés + jours de jeûne (vide
-   * démuté, override `false`). Un jour rempli muté et un jour vide « normal » sont
-   * exclus. `isDayCounted` centralise cette règle.
-   */
-  const recorded = useMemo(
-    () => windowDates.filter((d) => isDayCounted(mutedDays, byDate.has(d), d)),
-    [windowDates, byDate, mutedDays],
-  );
-
-  /** Moyenne journalière de chaque nutriment sur les jours comptés de la fenêtre. */
-  const averages = useMemo(() => {
-    const a = { ...EMPTY_NUTRIENTS };
-    if (recorded.length === 0) return a;
-    for (const d of recorded) {
-      // Tous les jours comptés (remplis ou jeûne) ont un total dans byDateVitD.
-      const t = byDateVitD.get(d)!;
-      for (const k of KEYS) a[k] += t[k];
-    }
-    for (const k of KEYS) a[k] /= recorded.length;
-    return a;
-  }, [recorded, byDateVitD]);
-
-  /**
-   * Apport vitamine D total par jour (alimentation + soleil), tous jours « connus ».
-   * On exclut la vitamine D alimentaire des jours remplis mutés (jour mal rempli) ;
-   * le soleil, lui, reste compté (indépendant de la qualité de saisie du repas).
-   */
-  const vitDByDate = useMemo(() => {
-    const m = new Map<string, number>();
-    for (const [d, t] of byDate) if (isDayCounted(mutedDays, true, d)) m.set(d, t.vitD);
-    for (const d of new Set(sunExposures.map((e) => e.date))) {
-      m.set(d, (m.get(d) ?? 0) + sunVitDForDate(sunExposures, d));
-    }
-    return m;
-  }, [byDate, sunExposures, mutedDays]);
-
-  /** Ancre du flux vitamine D : hier par défaut (journée en cours non terminée), sinon aujourd'hui. */
-  const vitDAnchor = includeToday ? today : todayStr(new Date(Date.now() - 86_400_000));
-  const vitDStatus = useMemo(() => vitaminDFlux(vitDByDate, vitDAnchor), [vitDByDate, vitDAnchor]);
 
   const toggle = (id: string) =>
     setSelected((prev) => (prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id]));
@@ -385,88 +262,9 @@ export function Stats() {
         <CoverageList averages={averages} targets={targets} selected={selected} onToggle={toggle} />
       </div>
 
-      <Recommendations averages={averages} targets={targets} hasData={recorded.length > 0} />
-
       <div className="panel">
         <h2>Répartition des calories (macros, moyenne/jour)</h2>
         <MacroDonut totals={averages} />
-      </div>
-
-      <div className="panel">
-        <h2>☀️ Vitamine D : carence ?</h2>
-        <p className="small" style={{ marginTop: -6 }}>
-          Flux moyen d'entrée (alimentation + soleil), lissé sur ~4 semaines et pondéré par la récence — cohérent avec
-          la demi-vie de la 25(OH)D (~2–3 semaines).
-        </p>
-        <VitaminDCard status={vitDStatus} />
-      </div>
-    </>
-  );
-}
-
-// ---------------------------------------------------------------------------
-// Carence vitamine D (flux moyen soleil + alimentation)
-// ---------------------------------------------------------------------------
-
-function VitaminDCard({ status }: { status: ReturnType<typeof vitaminDFlux> }) {
-  if (!status) {
-    return <div className="empty">Enregistrez des repas ou des expositions au soleil pour estimer votre flux de vitamine D.</div>;
-  }
-
-  const zoneClass = status.zone === 'ok' ? 'ok' : status.zone === 'low' ? 'low' : 'mid';
-  const arrow = status.trend === 'up' ? '↑' : status.trend === 'down' ? '↓' : '→';
-  const trendWord = status.trend === 'up' ? 'en hausse' : status.trend === 'down' ? 'en baisse' : 'stable';
-  const weeks = Math.round(status.windowDays / 7);
-  // Repère sur l'échelle 0 → ~25 µg (au-delà = confortable).
-  const markPct = Math.min(100, (status.weightedAvg / 25) * 100);
-
-  return (
-    <>
-      <div className="vitd-card">
-        <div>
-          <span className="vitd-big" style={{ color: `var(--${status.zone === 'ok' ? 'accent-2' : status.zone === 'low' ? 'danger' : 'warn'})` }}>
-            {fmt(status.weightedAvg, 1)}
-          </span>
-          <span className="small"> µg/j</span>
-          <div className="small" style={{ marginTop: 2 }}>
-            {arrow} {trendWord} sur {weeks} semaines · {status.nDays} jour(s) de données
-          </div>
-        </div>
-        <div style={{ flex: 1, minWidth: 180 }}>
-          <div className="vitd-scale">
-            <i style={{ left: `${markPct}%` }} />
-          </div>
-          <div className="row" style={{ justifyContent: 'space-between' }}>
-            <span className="small">carence &lt; {VITD_LOW}</span>
-            <span className="small">suffisant ≥ {VITD_OK} µg</span>
-          </div>
-        </div>
-        <HoverCard
-          align="right"
-          card={
-            <div style={{ maxWidth: 250 }}>
-              <strong>Comment lire ce statut</strong>
-              <div className="hc-zones">
-                <div className={status.zone === 'low' ? 'on' : ''}><i className="z low" /> &lt; {VITD_LOW} µg/j — risque de carence</div>
-                <div className={status.zone === 'mid' ? 'on' : ''}><i className="z mid" /> {VITD_LOW}–{VITD_OK} µg/j — zone intermédiaire</div>
-                <div className={status.zone === 'ok' ? 'on' : ''}><i className="z ok" /> ≥ {VITD_OK} µg/j — apport suffisant</div>
-              </div>
-              <div className="small" style={{ marginTop: 8 }}>
-                Moyenne pondérée sur {Math.round(status.windowDays / 7)} semaines ({status.nDays} jour(s) de données).
-                Le lissage long (demi-vie ~3 semaines) évite les sauts de statut d'un jour à l'autre.
-              </div>
-            </div>
-          }
-        >
-          <span className={`vitd-status ${zoneClass}`}>{status.statusLabel}</span>
-        </HoverCard>
-      </div>
-      <div className="hint" style={{ marginTop: 10 }}>
-        <strong>
-          {fmt(status.weightedAvg, 1)} µg/j ({arrow} {trendWord}) → {status.statusLabel}
-        </strong>
-        <br />
-        {status.advice}
       </div>
     </>
   );

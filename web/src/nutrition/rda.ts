@@ -97,7 +97,7 @@ export const RDA: RdaEntry[] = [
   {
     key: 'omega6', label: 'Oméga 6', unit: 'g', rda: 10, goal: 'atLeast', optimalFactor: 1,
     role: 'Acide gras essentiel (acide linoléique) ; en excès relatif, favorise l\'inflammation.',
-    optimalNote: 'Essentiel mais rarement en déficit. Ce qui compte est le rapport oméga-6/oméga-3 (voir Guide).',
+    optimalNote: 'Essentiel mais rarement en déficit. Ce qui compte est le rapport oméga-6/oméga-3 (voir Nutriments).',
   },
   {
     key: 'omega9', label: 'Oméga 9', unit: 'g', rda: 20, goal: 'atLeast', optimalFactor: 1,
@@ -116,7 +116,7 @@ export const RDA: RdaEntry[] = [
   {
     key: 'potassium', label: 'Potassium', unit: 'mg', rda: 3500, goal: 'atLeast', optimalFactor: 1.15,
     role: 'Équilibre hydrique, tension artérielle et transmission nerveuse/musculaire.',
-    optimalNote: 'AS ≈ 3500 mg ; viser ~4000 mg soutient une tension basse. Le rapport avec le sodium compte (voir Guide).',
+    optimalNote: 'AS ≈ 3500 mg ; viser ~4000 mg soutient une tension basse. Le rapport avec le sodium compte (voir Nutriments).',
   },
   {
     key: 'calcium', label: 'Calcium', unit: 'mg', rda: 950, goal: 'atLeast', optimalFactor: 1,

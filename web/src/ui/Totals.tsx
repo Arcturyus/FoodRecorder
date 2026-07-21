@@ -254,7 +254,7 @@ function RatioRow({ ratios }: { ratios: RatioResult[] }) {
   return (
     <div className="ratio-row" style={{ marginTop: 16 }}>
       <div className="small" style={{ marginBottom: 8, opacity: 0.8 }}>
-        Rapports du jour · survolez pour le détail (aussi dans l'onglet Guide)
+        Rapports du jour · survolez pour le détail (aussi dans l'onglet Nutriments)
       </div>
       <div className="totals-grid">
         {ratios.map((r) => {
