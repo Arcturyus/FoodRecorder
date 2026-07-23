@@ -1042,4 +1042,34 @@ button.nutrient-toggle:hover { background: none; color: var(--accent); }
   border-radius: 6px;
   margin-bottom: 4px;
   background: var(--panel-2);
+  flex: 1;
+}
+/* Ligne d'une suggestion : le bouton « charger » + l'icône ⓘ de détail. */
+.compare-neighbor-row {
+  display: flex;
+  align-items: stretch;
+  gap: 4px;
+  margin-bottom: 4px;
+}
+.compare-neighbor-row .compare-neighbor {
+  margin-bottom: 0;
+}
+.compare-detail-toggle {
+  flex: 0 0 auto;
+  padding: 0 9px;
+}
+/* Détail du score : nutriments qui portent la similarité / comblent les manques. */
+.compare-detail {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  align-items: center;
+  padding: 2px 4px 8px;
+}
+.compare-detail-chip {
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 2px 7px;
+  background: var(--panel-2);
+  white-space: nowrap;
 }

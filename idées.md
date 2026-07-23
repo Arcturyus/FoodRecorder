@@ -1,5 +1,5 @@
 
-
+- [ ] ERREUR : parfois le système en pont claude code sur tel prend bien une photo mais je recois une erreur la photo ne passe peut être pas sur supabase ? que voir ? faisons un diagnostic parce que
 
 
 - [x] Un système pour ne pas compter certains jour dans les moyennes, une sorte de mute sur le calendrier on peut mute entièrement des jours (par exemple parce qu'on sait qu'on a mal rempli).
@@ -10,4 +10,17 @@ Les jours vident sont automatiquement mute sur le calendrier (il indiquent proba
 
 
 - [x] Ordre des menus : mettre poids et guide au fond
-- [ ] Comparaison d'aliments avec l'explorer visuel : l'idée c'est de voir les points/éléments où ces deux aliments sont proches (quantité similaires en x micro macro) et les element ou ils sont le plus distants. Pourquoi pas graphs viseulles interactif en plus, exemple graph PCA de proximité all aliments, plot différents aliments sur ce graph ou aussi plot des elements (micro macro nutriments) ... propose d'autres idées
+- [~] Comparaison d'aliments avec l'explorer visuel : rework comment faire les subsitutus, les compléments ? actuellement comment est le score. ACP beaucoup plus visuelle : zoom possibles, ... ensuite ecart nutriments inverser le sens car là c'est pas clair (les barres partent cote de l'autre aliments), radar et même ecart plus pouvoir choisir des nutriments à enlever rajouter tout en restant UI non surchargé
+Interprétation ACP revoir comment bien l'interpréter sans erreur...
+  - [x] Écarts : sens inversé (A à gauche / B à droite) + en-têtes de côté
+  - [x] Nutriments choisis indépendamment par graphe (sélecteur replié + retrait au clic sur le libellé)
+  - [x] ACP interactive : zoom/pan/pincement + boutons +/−/reset + surlignage par recherche
+  - [x] Écarts : quantité brute + % AJR au bout de la barre (du côté du plus riche) — un ×50 sur une trace reste une trace
+  - [x] Substituts = similarité cosinus en % (profil/forme, indep. concentration) ; compléments = cosinus manque↔richesse en % (spécifique, plus « toujours épinards »)
+  - [x] Échelle robuste p95 (au lieu du max) pour substituts/compléments — moins sensible aux outliers
+  - [x] Détail du score au clic (ⓘ) : nutriments qui portent la similarité / comblent les manques
+  - [x] Substituts + ACP : tous les nutriments par défaut
+  - [x] ACP : clic sur un point → menu « mettre en A / mettre en B » (zone de tap élargie pour mobile ; capture pointeur retirée pour que le clic passe)
+  - [ ] Interprétation ACP « sans erreur » (version légère : avertissement variance faible déjà posé ; reste explications au survol) estompage des points mal représentés en 2D (cos²), pour que ces pièges soient visibles dans l'outil
+  - [x] Notebook de révision ACP externe (`analysis/pca_course.ipynb`) : reproduit la carte (PC1 23 % + PC2 17 %, = app), loadings PC1-4, scree, biplot, cos², réponse « aliments au centre sauf épinards » + section t-SNE/MDS
+  - [x] Carte : sélecteur de projection ACP / t-SNE / MDS (embed.ts en TS pur ; flèches+variance limitées à l'ACP) + dézoom débloqué (ZOOM_MIN 0.2)

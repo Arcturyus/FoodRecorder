@@ -1,0 +1,12 @@
+# Cours ACP — dépendances Python (Python 3.10+)
+numpy
+pandas
+matplotlib
+scikit-learn      # t-SNE et MDS (section 8)
+
+# Pour ouvrir/relancer le notebook (au choix) :
+jupyterlab        # interface web classique
+# ... ou exécution « headless » via run.py :
+nbformat
+nbclient
+ipykernel

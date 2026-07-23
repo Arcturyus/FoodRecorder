@@ -74,24 +74,58 @@ interface SyncRow<T> {
   created_at: string;
 }
 
+/** Tentatives et délai de base (ms) du backoff pour les dépôts sur Supabase. */
+const MAX_ATTEMPTS = 3;
+const BASE_DELAY_MS = 400;
+
+const sleep = (ms: number): Promise<void> => new Promise((r) => setTimeout(r, ms));
+
+/**
+ * Exécute un dépôt Supabase avec quelques tentatives et un backoff exponentiel.
+ * Vise surtout le « TypeError: Failed to fetch » des connexions mobiles qui
+ * flottent : le `fetch` échoue AVANT toute réponse (le POST n'est jamais arrivé),
+ * donc rejouer la même requête un instant plus tard aboutit souvent. Un échec
+ * PostgREST renvoyé dans `{ error }` (droits, colonne…) est déterministe : on le
+ * rejoue aussi mais il finira par remonter, avec `label` pour situer l'appel.
+ */
+async function withRetry(
+  label: string,
+  op: () => PromiseLike<{ error: { message: string } | null }>,
+): Promise<void> {
+  let lastMessage = 'échec inconnu';
+  for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
+    try {
+      const { error } = await op();
+      if (!error) return;
+      lastMessage = error.message;
+    } catch (e) {
+      // fetch rejeté (réseau coupé/instable) → TypeError « Failed to fetch ».
+      lastMessage = (e as Error).message;
+    }
+    if (attempt < MAX_ATTEMPTS) {
+      console.warn(`[sync] ${label} : échec tentative ${attempt}/${MAX_ATTEMPTS} (${lastMessage}), nouvelle tentative…`);
+      await sleep(BASE_DELAY_MS * 2 ** (attempt - 1));
+    }
+  }
+  throw new Error(`${label} : ${lastMessage} (après ${MAX_ATTEMPTS} tentatives)`);
+}
+
 /** Dépose une transcription en attente de traitement par un autre appareil. */
 export async function pushTranscript(device: string, transcript: string, date?: string, clientTime?: number): Promise<void> {
   if (!supabase) return;
   const payload: TranscriptPayload = { transcript, ...(date ? { date } : {}), ...(clientTime ? { clientTime } : {}) };
-  const { error } = await supabase
-    .from('sync_queue')
-    .insert({ device, kind: 'transcript', payload, processed: false });
-  if (error) throw new Error(error.message);
+  await withRetry('envoi de la dictée', () =>
+    supabase!.from('sync_queue').insert({ device, kind: 'transcript', payload, processed: false }),
+  );
 }
 
 /** Dépose une photo (réduite) en attente d'analyse par un autre appareil. */
 export async function pushImage(device: string, imageBase64: string, mediaType: string, date?: string, clientTime?: number): Promise<void> {
   if (!supabase) return;
   const payload: ImagePayload = { imageBase64, mediaType, ...(date ? { date } : {}), ...(clientTime ? { clientTime } : {}) };
-  const { error } = await supabase
-    .from('sync_queue')
-    .insert({ device, kind: 'image', payload, processed: false });
-  if (error) throw new Error(error.message);
+  await withRetry('envoi de la photo', () =>
+    supabase!.from('sync_queue').insert({ device, kind: 'image', payload, processed: false }),
+  );
 }
 
 /** Lignes en attente d'un kind donné (tous appareils confondus), plus anciennes d'abord. */
@@ -126,17 +160,17 @@ export function fetchPendingSun(): Promise<SyncRow<TranscriptPayload>[]> {
 export async function pushSunTranscript(device: string, transcript: string, date?: string, clientTime?: number): Promise<void> {
   if (!supabase) return;
   const payload: TranscriptPayload = { transcript, ...(date ? { date } : {}), ...(clientTime ? { clientTime } : {}) };
-  const { error } = await supabase.from('sync_queue').insert({ device, kind: 'sun', payload, processed: false });
-  if (error) throw new Error(error.message);
+  await withRetry('envoi de la dictée soleil', () =>
+    supabase!.from('sync_queue').insert({ device, kind: 'sun', payload, processed: false }),
+  );
 }
 
 /** Dépose des sorties au soleil analysées, pour que les autres appareils les rejouent. */
 export async function pushSunEntry(device: string, entry: SunEntryPayload): Promise<void> {
   if (!supabase) return;
-  const { error } = await supabase
-    .from('sync_queue')
-    .insert({ device, kind: 'sun-entry', payload: entry, processed: true });
-  if (error) throw new Error(error.message);
+  await withRetry('publication des sorties soleil', () =>
+    supabase!.from('sync_queue').insert({ device, kind: 'sun-entry', payload: entry, processed: true }),
+  );
 }
 
 /** Marque une ligne en attente (transcription ou photo) comme traitée, pour ne pas boucler dessus. */
@@ -148,10 +182,9 @@ export async function markProcessed(id: string): Promise<void> {
 /** Dépose le résultat d'une extraction, pour que les autres appareils l'ajoutent à leur journal. */
 export async function pushEntry(device: string, entry: EntryPayload): Promise<void> {
   if (!supabase) return;
-  const { error } = await supabase
-    .from('sync_queue')
-    .insert({ device, kind: 'entry', payload: entry, processed: true });
-  if (error) throw new Error(error.message);
+  await withRetry('publication du repas', () =>
+    supabase!.from('sync_queue').insert({ device, kind: 'entry', payload: entry, processed: true }),
+  );
 }
 
 /** Une ligne de résultat à rejouer : repas (`entry`) ou sorties au soleil (`sun-entry`). */

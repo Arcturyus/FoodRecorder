@@ -63,12 +63,21 @@ function fileToBase64(file: File): Promise<{ data: string; mediaType: string }> 
   });
 }
 
+/** Image réduite prête à envoyer, avec de quoi diagnostiquer un envoi qui rate. */
+interface Downscaled {
+  data: string;
+  mediaType: string;
+  /** Dimensions après réduction (px). */
+  width: number;
+  height: number;
+}
+
 /**
  * Réduit une image via un canvas (max `maxDim` px sur le grand côté, JPEG) pour
  * un envoi léger en file d'attente Supabase. Une photo de repas reste largement
  * exploitable à 1024 px, pour un poids ~10× moindre qu'un original de smartphone.
  */
-function downscaleImage(file: File, maxDim = 1024, quality = 0.72): Promise<{ data: string; mediaType: string }> {
+function downscaleImage(file: File, maxDim = 1024, quality = 0.72): Promise<Downscaled> {
   return new Promise((resolve, reject) => {
     const url = URL.createObjectURL(file);
     const img = new Image();
@@ -88,7 +97,7 @@ function downscaleImage(file: File, maxDim = 1024, quality = 0.72): Promise<{ da
       ctx.drawImage(img, 0, 0, w, h);
       const dataUrl = canvas.toDataURL('image/jpeg', quality);
       const comma = dataUrl.indexOf(',');
-      resolve({ data: dataUrl.slice(comma + 1), mediaType: 'image/jpeg' });
+      resolve({ data: dataUrl.slice(comma + 1), mediaType: 'image/jpeg', width: w, height: h });
     };
     img.onerror = () => {
       URL.revokeObjectURL(url);
@@ -96,6 +105,16 @@ function downscaleImage(file: File, maxDim = 1024, quality = 0.72): Promise<{ da
     };
     img.src = url;
   });
+}
+
+/** Formate un nombre d'octets en Ko/Mo lisible (« 234 Ko », « 3.1 Mo »). */
+function formatBytes(bytes: number): string {
+  return bytes >= 1024 * 1024 ? `${(bytes / (1024 * 1024)).toFixed(1)} Mo` : `${Math.round(bytes / 1024)} Ko`;
+}
+
+/** Poids réel (octets) d'une charge base64 nue (4 caractères ≈ 3 octets). */
+function base64Bytes(b64: string): number {
+  return Math.round((b64.length * 3) / 4);
 }
 
 /**
@@ -346,9 +365,23 @@ export function Capture({ date, title }: { date?: string; title?: string } = {})
           // Pont indisponible ici (tel, ou site déployé) : mise en file d'attente
           // de la photo réduite, pour analyse différée par l'ordinateur.
           if (isSyncConfigured()) {
-            const { data, mediaType } = await downscaleImage(file);
-            await pushImage(deviceId, data, mediaType, date ?? todayStr(), Date.now());
-            setStatus('Pont Claude Code indisponible ici : photo mise en file d’attente, sera analysée dès que l’ordinateur sera disponible.');
+            // Résumé affiché à l'écran (diagnostic sans débogueur sur tel) :
+            // poids envoyé · dimensions réduites · poids d'origine. Renseigné dès
+            // la réduction faite, pour l'inclure aussi dans un éventuel échec.
+            let info = '';
+            try {
+              const img = await downscaleImage(file);
+              info = `${formatBytes(base64Bytes(img.data))} · ${img.width}×${img.height} · orig ${formatBytes(file.size)}`;
+              console.info(`[photo] mise en file d’attente : ${info}`);
+              await pushImage(deviceId, img.data, img.mediaType, date ?? todayStr(), Date.now());
+              setStatus(`✓ Photo en file d’attente (${info}). Analyse dès que l’ordinateur est disponible.`);
+            } catch (queueErr) {
+              // Échec de l'ENVOI à Supabase (≠ échec d'analyse) : message distinct,
+              // avec le poids tenté pour écarter/confirmer la piste « trop lourde ».
+              console.error('[photo] échec de la mise en file d’attente', queueErr);
+              const detail = info ? ` (${info})` : '';
+              setStatus(`Échec de l’envoi de la photo${detail} : ${(queueErr as Error).message}`);
+            }
           } else {
             setStatus(`Erreur photo : ${(bridgeErr as Error).message}`);
           }

@@ -1,0 +1,36 @@
+key,label,unit,rda,goal,importance,group
+kcal,Calories,kcal,2200,atLeast,1,Macros
+proteines,Protéines,g,60,atLeast,1,Macros
+glucides,Glucides,g,260,atLeast,1,Macros
+lipides,Lipides,g,80,atLeast,1,Macros
+fibres,Fibres,g,30,atLeast,1,Macros
+agSatures,AG saturés,g,22,limit,1,Lipides & oméga
+agTrans,AG trans,g,2,limit,1,Lipides & oméga
+agMonoInsatures,AG mono-insaturés,g,35,atLeast,1,Lipides & oméga
+agPolyInsatures,AG poly-insaturés,g,15,atLeast,1,Lipides & oméga
+omega3,Oméga 3,g,2,atLeast,1.5,Lipides & oméga
+omega6,Oméga 6,g,10,atLeast,1,Lipides & oméga
+omega9,Oméga 9,g,20,atLeast,1,Lipides & oméga
+fer,Fer,mg,14,atLeast,1,Minéraux
+magnesium,Magnésium,mg,375,atLeast,1,Minéraux
+potassium,Potassium,mg,3500,atLeast,1,Minéraux
+calcium,Calcium,mg,950,atLeast,1,Minéraux
+zinc,Zinc,mg,11,atLeast,1,Minéraux
+sodium,Sodium,mg,2000,limit,1,Minéraux
+selenium,Sélénium,µg,70,atLeast,1,Minéraux
+iode,Iode,µg,150,atLeast,1,Minéraux
+vitA,Vitamine A,µg,750,atLeast,1,Vitamines
+vitC,Vitamine C,mg,110,atLeast,1,Vitamines
+vitD,Vitamine D,µg,15,atLeast,1.3,Vitamines
+vitE,Vitamine E,mg,12,atLeast,1,Vitamines
+vitK1,Vitamine K1,µg,79,atLeast,1,Vitamines
+vitK2,Vitamine K2,µg,100,atLeast,1,Vitamines
+vitB1,Vitamine B1,mg,1.1,atLeast,1,Vitamines
+vitB2,Vitamine B2,mg,1.4,atLeast,1,Vitamines
+vitB3,Vitamine B3 (PP),mg,16,atLeast,1,Vitamines
+vitB5,Vitamine B5,mg,6,atLeast,1,Vitamines
+vitB6,Vitamine B6,mg,1.4,atLeast,1,Vitamines
+vitB9,Vitamine B9,µg,330,atLeast,1,Vitamines
+vitB12,Vitamine B12,µg,4,atLeast,1,Vitamines
+creatine,Créatine,g,3,atLeast,0.4,Autres
+collagene,Collagène,g,10,atLeast,0.6,Autres

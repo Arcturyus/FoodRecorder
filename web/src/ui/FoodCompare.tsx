@@ -1,14 +1,15 @@
-import { useMemo, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { scaleLinear } from 'd3-scale';
-import { extent } from 'd3-array';
+import { extent, quantile } from 'd3-array';
 import { RDA } from '../nutrition/rda';
 import { NUTRIENT_GROUPS } from '../nutrition/groups';
 import { portionGrams, effectiveImportance } from '../nutrition/recommend';
 import { pca2 } from '../nutrition/pca';
+import { tsne, mds } from '../nutrition/embed';
 import { normalize } from '../nutrition/normalize';
 import { useStore } from '../store/store';
 import type { Food, FoodCategory, NutrientKey } from '../nutrition/types';
-import { CATS, COLOR_BY_CAT } from './FoodExplorer';
+import { CATS, COLOR_BY_CAT, rescaleAxis } from './FoodExplorer';
 import { fmt } from './format';
 
 /**
@@ -16,6 +17,10 @@ import { fmt } from './format';
  * voisins/substituts) et les situe dans une carte ACP de toute la banque. Trois
  * normalisations (100 kcal, 100 g, portion) et une pondération optionnelle par
  * l'importance des nutriments (les mêmes curseurs que l'onglet Nutriments).
+ *
+ * Chaque graphe choisit ses propres nutriments (sélecteur compact, replié par
+ * défaut, + retrait direct en cliquant un libellé sur les barres / le radar) : les
+ * vues ne partagent que la base de comparaison et la pondération.
  */
 
 const C = {
@@ -36,6 +41,7 @@ const SLOT_COLOR = ['#5b8cff', '#f5a623'] as const;
 const NUT = RDA.filter((r) => r.key !== 'kcal').map((r) => ({ key: r.key, label: r.label, unit: r.unit }));
 const NUT_LABEL = new Map(NUT.map((n) => [n.key, n.label]));
 const NUT_UNIT = new Map(NUT.map((n) => [n.key, n.unit]));
+const NUT_RDA = new Map(RDA.map((r) => [r.key, r.rda]));
 const COMPARABLE_KEYS = NUT.map((n) => n.key);
 
 /** Jeu de nutriments actifs par défaut : un représentant lisible par famille. */
@@ -62,6 +68,79 @@ function normalizedValue(food: Food, key: NutrientKey, mode: NormMode): number {
   return per100g * (portionGrams(food) / 100);
 }
 
+// ---------------------------------------------------------------------------
+// Sélection de nutriments par graphique (état local + sélecteur compact)
+// ---------------------------------------------------------------------------
+
+/** État d'une sélection de nutriments propre à un graphe (+ ouverture du sélecteur). */
+function useNutrientSelection(initial: NutrientKey[]) {
+  const [active, setActive] = useState<NutrientKey[]>(initial);
+  const [pickerOpen, setPickerOpen] = useState(false);
+  const activeSet = useMemo(() => new Set(active), [active]);
+  const activeKeys = useMemo(() => COMPARABLE_KEYS.filter((k) => activeSet.has(k)), [activeSet]);
+  const toggle = (k: NutrientKey) =>
+    setActive((prev) => (prev.includes(k) ? prev.filter((x) => x !== k) : [...prev, k]));
+  return { active, activeSet, activeKeys, setActive, toggle, pickerOpen, setPickerOpen };
+}
+type NutSel = ReturnType<typeof useNutrientSelection>;
+
+/** Bouton « Choisir les nutriments (n) » à poser dans l'en-tête d'un graphe (mis en avant). */
+function NutrientToggle({ sel }: { sel: NutSel }) {
+  return (
+    <button
+      className={`ghost ${sel.pickerOpen ? 'chip-active' : ''}`}
+      onClick={() => sel.setPickerOpen(!sel.pickerOpen)}
+      style={sel.pickerOpen ? undefined : { borderColor: C.accent, color: C.accent, fontWeight: 600 }}
+    >
+      ⚙ Choisir les nutriments ({sel.active.length}) {sel.pickerOpen ? '▴' : '▾'}
+    </button>
+  );
+}
+
+/** Bloc de chips groupées par famille, affiché quand le sélecteur du graphe est ouvert. */
+function NutrientChipsBlock({ sel, defaultKeys }: { sel: NutSel; defaultKeys: NutrientKey[] }) {
+  if (!sel.pickerOpen) return null;
+  return (
+    <div style={{ marginTop: 8, padding: 10, border: `1px solid ${C.border}`, borderRadius: 8 }}>
+      <div className="row" style={{ gap: 6, marginBottom: 4 }}>
+        <button className="ghost small" onClick={() => sel.setActive(defaultKeys)}>Défaut</button>
+        <button className="ghost small" onClick={() => sel.setActive(COMPARABLE_KEYS)}>Tout</button>
+        <button className="ghost small" onClick={() => sel.setActive([])}>Aucun</button>
+      </div>
+      {NUTRIENT_GROUPS.map((g) => {
+        const keys = g.keys.filter((k) => k !== 'kcal' && NUT_LABEL.has(k));
+        if (keys.length === 0) return null;
+        return (
+          <div key={g.title} style={{ marginTop: 8 }}>
+            <div className="small" style={{ color: C.muted, marginBottom: 4 }}>{g.title}</div>
+            <div className="row" style={{ gap: 6, flexWrap: 'wrap' }}>
+              {keys.map((k) => (
+                <button
+                  key={k}
+                  className={`ghost small ${sel.activeSet.has(k) ? 'chip-active' : ''}`}
+                  onClick={() => sel.toggle(k)}
+                >
+                  {NUT_LABEL.get(k)}
+                </button>
+              ))}
+            </div>
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
+/** En-tête standard d'un graphe : titre à gauche, bouton nutriments à droite. */
+function ChartHeader({ title, sel }: { title: string; sel: NutSel }) {
+  return (
+    <div className="row" style={{ justifyContent: 'space-between', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+      <h2 style={{ margin: 0, fontSize: 15 }}>{title}</h2>
+      <NutrientToggle sel={sel} />
+    </div>
+  );
+}
+
 export function FoodCompare({
   foods,
   ids,
@@ -74,7 +153,6 @@ export function FoodCompare({
   const overrides = useStore((s) => s.nutrientImportance);
   const [mode, setMode] = useState<NormMode>('100kcal');
   const [weighted, setWeighted] = useState(true);
-  const [active, setActive] = useState<NutrientKey[]>(DEFAULT_ACTIVE);
   const [showArrows, setShowArrows] = useState(true);
   const [hideCats, setHideCats] = useState<Set<FoodCategory>>(new Set());
 
@@ -82,10 +160,7 @@ export function FoodCompare({
   const foodA = ids[0] ? byId.get(ids[0]) ?? null : null;
   const foodB = ids[1] ? byId.get(ids[1]) ?? null : null;
 
-  const activeSet = useMemo(() => new Set(active), [active]);
-  const activeKeys = useMemo(() => COMPARABLE_KEYS.filter((k) => activeSet.has(k)), [activeSet]);
-
-  /** Poids par nutriment actif : importance si pondération activée, sinon 1. */
+  /** Poids par nutriment : importance si pondération activée, sinon 1. */
   const weightFor = useMemo(
     () => (k: NutrientKey) => (weighted ? effectiveImportance(k, overrides) : 1),
     [weighted, overrides],
@@ -97,15 +172,13 @@ export function FoodCompare({
     setIds(next);
   };
 
-  const toggleKey = (k: NutrientKey) =>
-    setActive((prev) => (prev.includes(k) ? prev.filter((x) => x !== k) : [...prev, k]));
-
   return (
     <>
       <div className="panel">
         <p className="small" style={{ marginTop: 0 }}>
           Comparez deux aliments nutriment par nutriment, puis situez-les dans la carte de toute la banque. Choisissez la
           base de comparaison et, si vous voulez, laissez vos <strong>importances</strong> pondérer proximité et carte.
+          Chaque graphe a son propre choix de nutriments.
         </p>
         <div className="row" style={{ gap: 10, flexWrap: 'wrap' }}>
           <FoodPicker slot={0} food={foodA} foods={foods} onPick={(id) => setSlot(0, id)} />
@@ -132,27 +205,17 @@ export function FoodCompare({
         </div>
       ) : (
         <>
-          <NutrientChips active={activeSet} onToggle={toggleKey} setActive={setActive} />
-          <DivergentBars a={foodA} b={foodB} keys={activeKeys} mode={mode} />
-          <RadarCompare a={foodA} b={foodB} keys={activeKeys} mode={mode} />
+          <DivergentBars a={foodA} b={foodB} mode={mode} />
+          <RadarCompare a={foodA} b={foodB} mode={mode} />
         </>
       )}
 
       {(foodA || foodB) && (
-        <NeighborsPanel
-          foods={foods}
-          a={foodA}
-          b={foodB}
-          activeKeys={activeKeys}
-          mode={mode}
-          weightFor={weightFor}
-          onPick={setSlot}
-        />
+        <NeighborsPanel foods={foods} a={foodA} b={foodB} mode={mode} weightFor={weightFor} onPick={setSlot} />
       )}
 
       <PcaBiplot
         foods={foods}
-        activeKeys={activeKeys}
         mode={mode}
         weightFor={weightFor}
         selected={[foodA, foodB]}
@@ -238,66 +301,16 @@ function FoodPicker({
 }
 
 // ---------------------------------------------------------------------------
-// Chips de sélection des nutriments actifs (groupés par famille)
-// ---------------------------------------------------------------------------
-
-function NutrientChips({
-  active,
-  onToggle,
-  setActive,
-}: {
-  active: Set<NutrientKey>;
-  onToggle: (k: NutrientKey) => void;
-  setActive: (keys: NutrientKey[]) => void;
-}) {
-  const [open, setOpen] = useState(false);
-  return (
-    <div className="panel">
-      <div className="row" style={{ justifyContent: 'space-between', alignItems: 'center' }}>
-        <h2 style={{ margin: 0, fontSize: 15 }}>Nutriments comparés ({active.size})</h2>
-        <div className="row" style={{ gap: 6 }}>
-          <button className="ghost small" onClick={() => setActive(DEFAULT_ACTIVE)}>Défaut</button>
-          <button className="ghost small" onClick={() => setActive(COMPARABLE_KEYS)}>Tout</button>
-          <button className="ghost small" onClick={() => setActive([])}>Aucun</button>
-          <button className="ghost small" onClick={() => setOpen((v) => !v)}>{open ? 'Réduire' : 'Choisir'}</button>
-        </div>
-      </div>
-      {open && (
-        <div style={{ marginTop: 8 }}>
-          {NUTRIENT_GROUPS.map((g) => {
-            const keys = g.keys.filter((k) => k !== 'kcal' && NUT_LABEL.has(k));
-            if (keys.length === 0) return null;
-            return (
-              <div key={g.title} style={{ marginTop: 8 }}>
-                <div className="small" style={{ color: C.muted, marginBottom: 4 }}>{g.title}</div>
-                <div className="row" style={{ gap: 6, flexWrap: 'wrap' }}>
-                  {keys.map((k) => (
-                    <button
-                      key={k}
-                      className={`ghost small ${active.has(k) ? 'chip-active' : ''}`}
-                      onClick={() => onToggle(k)}
-                    >
-                      {NUT_LABEL.get(k)}
-                    </button>
-                  ))}
-                </div>
-              </div>
-            );
-          })}
-        </div>
-      )}
-    </div>
-  );
-}
-
-// ---------------------------------------------------------------------------
 // Barres divergentes : écart A vs B nutriment par nutriment (log-ratio)
 // ---------------------------------------------------------------------------
 
 /** Rapport max affiché avant de basculer sur « présent d'un seul côté » (log2 = 4 → ×16). */
 const RATIO_CAP = 4;
 
-function DivergentBars({ a, b, keys, mode }: { a: Food; b: Food; keys: NutrientKey[]; mode: NormMode }) {
+function DivergentBars({ a, b, mode }: { a: Food; b: Food; mode: NormMode }) {
+  const sel = useNutrientSelection(DEFAULT_ACTIVE);
+  const keys = sel.activeKeys;
+
   const rows = useMemo(() => {
     const eps = 1e-6;
     return keys
@@ -309,68 +322,104 @@ function DivergentBars({ a, b, keys, mode }: { a: Food; b: Food; keys: NutrientK
         // log2 du rapport : 0 = égalité, +1 = A double de B, −1 = B double de A.
         const ratio = Math.log2((va + eps) / (vb + eps));
         const clamped = Math.max(-RATIO_CAP, Math.min(RATIO_CAP, ratio));
-        return { k, va, vb, ratio, clamped, onlyOne, both: va + vb };
+        // Valeur absolue du plus riche + % AJR : dit si l'écart porte sur une quantité
+        // significative ou négligeable (×50 sur une trace de magnésium reste une trace).
+        const rich = Math.max(va, vb);
+        const rda = NUT_RDA.get(k) ?? 0;
+        const pct = rda > 0 ? (rich / rda) * 100 : null;
+        return { k, va, vb, ratio, clamped, onlyOne, both: va + vb, rich, pct };
       })
       .filter((r) => r.both > 0)
+      // A (plus riche, ratio>0) en haut : on lit la liste du plus « pro-A » au plus « pro-B ».
       .sort((x, y) => y.ratio - x.ratio);
   }, [a, b, keys, mode]);
 
-  if (rows.length === 0) {
-    return (
-      <div className="panel">
-        <div className="empty">Aucun nutriment actif avec des données pour ces deux aliments.</div>
-      </div>
-    );
-  }
-
   const W = 680;
   const rowH = 22;
-  const H = rows.length * rowH + 16;
+  const H = Math.max(rowH + 16, rows.length * rowH + 16);
   const mid = W / 2;
-  const half = W / 2 - 130;
+  // Marge élargie côté barre : la valeur brute + % AJR s'affichent avec le ×N, du
+  // côté de l'aliment le plus riche (pas du côté opposé), d'où des barres un peu plus courtes.
+  const half = W / 2 - 165;
   // Échelle fixe (plafond) : une différence « infinie » ne compresse plus les écarts finis lisibles.
   const scale = (r: number) => (r / RATIO_CAP) * half;
 
   return (
     <div className="panel">
-      <h2 style={{ fontSize: 15 }}>Écarts nutriment par nutriment</h2>
-      <p className="small" style={{ marginTop: -4 }}>
-        Barre vers <span style={{ color: SLOT_COLOR[0] }}>■ {a.nom}</span> ou{' '}
-        <span style={{ color: SLOT_COLOR[1] }}>■ {b.nom}</span> selon qui est le plus riche ({NORM_LABELS[mode]}).
-        Les nutriments proches du centre sont similaires ; les extrêmes marquent les grosses différences. Échelle en
-        log₂ du rapport (un cran = ×2).
+      <ChartHeader title="Écarts nutriment par nutriment" sel={sel} />
+      <NutrientChipsBlock sel={sel} defaultKeys={DEFAULT_ACTIVE} />
+      <p className="small" style={{ marginTop: 6 }}>
+        La barre s'étire du côté de l'aliment le plus riche ({NORM_LABELS[mode]}) :{' '}
+        <span style={{ color: SLOT_COLOR[0] }}>◀ {a.nom}</span> à gauche,{' '}
+        <span style={{ color: SLOT_COLOR[1] }}>{b.nom} ▶</span> à droite. Les nutriments proches du centre sont
+        similaires ; les extrêmes marquent les grosses différences. Échelle en log₂ du rapport (un cran = ×2). Au bout
+        de la barre, côté de l'aliment le plus riche : le rapport (×N), la quantité brute et le % AJR (selon la base) —
+        un ×50 sur une trace reste une trace. Cliquez un libellé pour le retirer.
       </p>
-      <svg viewBox={`0 0 ${W} ${H}`} style={{ width: '100%', display: 'block' }}>
-        <line x1={mid} x2={mid} y1={8} y2={H - 8} stroke={C.border} strokeWidth={1} />
-        {rows.map((r, i) => {
-          const y = 8 + i * rowH + rowH / 2;
-          const len = scale(r.clamped);
-          const toA = r.clamped >= 0;
-          const color = toA ? SLOT_COLOR[0] : SLOT_COLOR[1];
-          const unit = NUT_UNIT.get(r.k);
-          const mult = r.onlyOne ? 'seul' : `×${fmt(Math.pow(2, Math.abs(r.ratio)), 1)}`;
-          return (
-            <g key={r.k}>
-              <rect
-                x={toA ? mid : mid + len}
-                y={y - 6}
-                width={Math.abs(len)}
-                height={12}
-                fill={color}
-                opacity={r.onlyOne ? 0.55 : 0.85}
-                rx={2}
-                data-tip={`${NUT_LABEL.get(r.k)} — ${a.nom} : ${fmt(r.va, r.va < 10 ? 2 : 0)} ${unit} · ${b.nom} : ${fmt(r.vb, r.vb < 10 ? 2 : 0)} ${unit}`}
-              />
-              <text x={mid + (toA ? -8 : 8)} y={y} fontSize={11} fill={C.text} textAnchor={toA ? 'end' : 'start'} dominantBaseline="middle">
-                {NUT_LABEL.get(r.k)}
-              </text>
-              <text x={toA ? mid + len + 6 : mid + len - 6} y={y} fontSize={10} fill={C.muted} textAnchor={toA ? 'start' : 'end'} dominantBaseline="middle">
-                {mult}
-              </text>
-            </g>
-          );
-        })}
-      </svg>
+
+      {rows.length === 0 ? (
+        <div className="empty">Aucun nutriment actif avec des données pour ces deux aliments.</div>
+      ) : (
+        <>
+          <div className="row" style={{ justifyContent: 'space-between', marginBottom: 2 }}>
+            <span className="small" style={{ color: SLOT_COLOR[0], fontWeight: 600 }}>◀ plus riche en {a.nom}</span>
+            <span className="small" style={{ color: SLOT_COLOR[1], fontWeight: 600 }}>plus riche en {b.nom} ▶</span>
+          </div>
+          <svg viewBox={`0 0 ${W} ${H}`} style={{ width: '100%', display: 'block' }}>
+            <line x1={mid} x2={mid} y1={8} y2={H - 8} stroke={C.border} strokeWidth={1} />
+            {rows.map((r, i) => {
+              const y = 8 + i * rowH + rowH / 2;
+              const len = Math.abs(scale(r.clamped));
+              const toA = r.clamped >= 0; // A plus riche → barre à gauche
+              const color = toA ? SLOT_COLOR[0] : SLOT_COLOR[1];
+              const unit = NUT_UNIT.get(r.k);
+              const mult = r.onlyOne ? 'seul' : `×${fmt(Math.pow(2, Math.abs(r.ratio)), 1)}`;
+              const valueLabel = `${fmt(r.rich, r.rich < 10 ? 1 : 0)} ${unit}${r.pct != null ? ` · ${fmt(r.pct)} % AJR` : ''}`;
+              // ×N + quantité brute + % AJR, ensemble, du côté de l'aliment le plus riche.
+              const tipLabel = `${mult} · ${valueLabel}`;
+              return (
+                <g key={r.k}>
+                  <rect
+                    x={toA ? mid - len : mid}
+                    y={y - 6}
+                    width={len}
+                    height={12}
+                    fill={color}
+                    opacity={r.onlyOne ? 0.55 : 0.85}
+                    rx={2}
+                    data-tip={`${NUT_LABEL.get(r.k)} — ${a.nom} : ${fmt(r.va, r.va < 10 ? 2 : 0)} ${unit} · ${b.nom} : ${fmt(r.vb, r.vb < 10 ? 2 : 0)} ${unit}`}
+                  />
+                  {/* Libellé du nutriment : côté opposé à la barre, cliquable pour le retirer. */}
+                  <text
+                    x={mid + (toA ? 8 : -8)}
+                    y={y}
+                    fontSize={11}
+                    fill={C.text}
+                    textAnchor={toA ? 'start' : 'end'}
+                    dominantBaseline="middle"
+                    style={{ cursor: 'pointer' }}
+                    onClick={() => sel.toggle(r.k)}
+                    data-tip="Retirer ce nutriment"
+                  >
+                    {NUT_LABEL.get(r.k)}
+                  </text>
+                  {/* ×N + quantité brute + % AJR, au bout de la barre, côté aliment le plus riche. */}
+                  <text
+                    x={toA ? mid - len - 6 : mid + len + 6}
+                    y={y}
+                    fontSize={10}
+                    fill={C.muted}
+                    textAnchor={toA ? 'end' : 'start'}
+                    dominantBaseline="middle"
+                  >
+                    {tipLabel}
+                  </text>
+                </g>
+              );
+            })}
+          </svg>
+        </>
+      )}
     </div>
   );
 }
@@ -379,7 +428,10 @@ function DivergentBars({ a, b, keys, mode }: { a: Food; b: Food; keys: NutrientK
 // Radar : profils superposés (chaque axe normalisé au max des deux aliments)
 // ---------------------------------------------------------------------------
 
-function RadarCompare({ a, b, keys, mode }: { a: Food; b: Food; keys: NutrientKey[]; mode: NormMode }) {
+function RadarCompare({ a, b, mode }: { a: Food; b: Food; mode: NormMode }) {
+  const sel = useNutrientSelection(DEFAULT_ACTIVE);
+  const keys = sel.activeKeys;
+
   const axes = useMemo(() => {
     return keys
       .map((k) => {
@@ -390,14 +442,6 @@ function RadarCompare({ a, b, keys, mode }: { a: Food; b: Food; keys: NutrientKe
       })
       .filter((x) => x.max > 0);
   }, [a, b, keys, mode]);
-
-  if (axes.length < 3) {
-    return (
-      <div className="panel">
-        <div className="empty">Activez au moins 3 nutriments avec des données pour tracer le radar.</div>
-      </div>
-    );
-  }
 
   const size = 460;
   const cx = size / 2;
@@ -411,37 +455,53 @@ function RadarCompare({ a, b, keys, mode }: { a: Food; b: Food; keys: NutrientKe
 
   return (
     <div className="panel">
-      <h2 style={{ fontSize: 15 }}>Radar des profils</h2>
-      <p className="small" style={{ marginTop: -4 }}>
+      <ChartHeader title="Radar des profils" sel={sel} />
+      <NutrientChipsBlock sel={sel} defaultKeys={DEFAULT_ACTIVE} />
+      <p className="small" style={{ marginTop: 6 }}>
         Chaque axe est mis à l'échelle sur le plus riche des deux ({NORM_LABELS[mode]}) : la forme montre d'un coup
         d'œil où chacun domine. <span style={{ color: SLOT_COLOR[0] }}>■ {a.nom}</span>{' '}
-        <span style={{ color: SLOT_COLOR[1] }}>■ {b.nom}</span>.
+        <span style={{ color: SLOT_COLOR[1] }}>■ {b.nom}</span>. Cliquez un libellé d'axe pour le retirer.
       </p>
-      <svg viewBox={`0 0 ${size} ${size}`} style={{ width: '100%', maxWidth: 460, display: 'block', margin: '0 auto' }}>
-        {[0.25, 0.5, 0.75, 1].map((f) => (
-          <polygon
-            key={f}
-            points={axes.map((_, i) => point(i, f).join(',')).join(' ')}
-            fill="none"
-            stroke={C.border}
-            strokeWidth={1}
-          />
-        ))}
-        {axes.map((ax, i) => {
-          const [x, y] = point(i, 1);
-          const [lx, ly] = point(i, 1.16);
-          return (
-            <g key={ax.k}>
-              <line x1={cx} y1={cy} x2={x} y2={y} stroke={C.border} strokeWidth={1} />
-              <text x={lx} y={ly} fontSize={10} fill={C.muted} textAnchor="middle" dominantBaseline="middle">
-                {NUT_LABEL.get(ax.k)}
-              </text>
-            </g>
-          );
-        })}
-        <polygon points={polygon((ax) => ax.va)} fill={SLOT_COLOR[0]} fillOpacity={0.25} stroke={SLOT_COLOR[0]} strokeWidth={2} />
-        <polygon points={polygon((ax) => ax.vb)} fill={SLOT_COLOR[1]} fillOpacity={0.2} stroke={SLOT_COLOR[1]} strokeWidth={2} />
-      </svg>
+
+      {axes.length < 3 ? (
+        <div className="empty">Activez au moins 3 nutriments avec des données pour tracer le radar.</div>
+      ) : (
+        <svg viewBox={`0 0 ${size} ${size}`} style={{ width: '100%', maxWidth: 460, display: 'block', margin: '0 auto' }}>
+          {[0.25, 0.5, 0.75, 1].map((f) => (
+            <polygon
+              key={f}
+              points={axes.map((_, i) => point(i, f).join(',')).join(' ')}
+              fill="none"
+              stroke={C.border}
+              strokeWidth={1}
+            />
+          ))}
+          {axes.map((ax, i) => {
+            const [x, y] = point(i, 1);
+            const [lx, ly] = point(i, 1.16);
+            return (
+              <g key={ax.k}>
+                <line x1={cx} y1={cy} x2={x} y2={y} stroke={C.border} strokeWidth={1} />
+                <text
+                  x={lx}
+                  y={ly}
+                  fontSize={10}
+                  fill={C.muted}
+                  textAnchor="middle"
+                  dominantBaseline="middle"
+                  style={{ cursor: 'pointer' }}
+                  onClick={() => sel.toggle(ax.k)}
+                  data-tip="Retirer ce nutriment"
+                >
+                  {NUT_LABEL.get(ax.k)}
+                </text>
+              </g>
+            );
+          })}
+          <polygon points={polygon((ax) => ax.va)} fill={SLOT_COLOR[0]} fillOpacity={0.25} stroke={SLOT_COLOR[0]} strokeWidth={2} />
+          <polygon points={polygon((ax) => ax.vb)} fill={SLOT_COLOR[1]} fillOpacity={0.2} stroke={SLOT_COLOR[1]} strokeWidth={2} />
+        </svg>
+      )}
     </div>
   );
 }
@@ -450,23 +510,30 @@ function RadarCompare({ a, b, keys, mode }: { a: Food; b: Food; keys: NutrientKe
 // Voisins (substituts) & complémentaires
 // ---------------------------------------------------------------------------
 
-/** Vecteurs standardisés (z-score, pondérés) de la banque sur les nutriments actifs. */
-function useStandardized(foods: Food[], keys: NutrientKey[], mode: NormMode, weightFor: (k: NutrientKey) => number) {
+/**
+ * Données de voisinage sur les nutriments actifs (base normalisée `mode`) :
+ *  - `rel` : richesse relative 0→1 de chaque aliment (valeur ÷ 95ᵉ percentile de la
+ *    banque, plafonnée à 1). Le percentile plutôt que le max évite qu'un seul aliment
+ *    extrême (souvent un complément pur) fixe l'échelle et écrase tous les autres ;
+ *  - `weights` : poids d'importance par nutriment ;
+ *  - `wnorm` : norme pondérée par aliment (dénominateur du cosinus, précalculé).
+ */
+function useNeighborData(foods: Food[], keys: NutrientKey[], mode: NormMode, weightFor: (k: NutrientKey) => number) {
   return useMemo(() => {
-    const n = foods.length;
     const m = keys.length;
     const raw: number[][] = foods.map((f) => keys.map((k) => normalizedValue(f, k, mode)));
-    const z: number[][] = raw.map(() => new Array(m).fill(0));
-    const colMax = new Array(m).fill(0);
+    // Échelle robuste : 95ᵉ percentile de la colonne (repli sur le max si p95 = 0).
+    const scale = new Array(m).fill(0);
     for (let j = 0; j < m; j++) {
-      const col = raw.map((r) => r[j]);
-      const mean = col.reduce((a, x) => a + x, 0) / (n || 1);
-      const std = Math.sqrt(col.reduce((a, x) => a + (x - mean) * (x - mean), 0) / (n || 1));
-      const w = Math.sqrt(Math.max(0, weightFor(keys[j])));
-      colMax[j] = Math.max(...col, 0);
-      for (let i = 0; i < n; i++) z[i][j] = std > 1e-9 ? ((col[i] - mean) / std) * w : 0;
+      const col = raw.map((r) => r[j]).sort((a, b) => a - b);
+      const p95 = quantile(col, 0.95) ?? 0;
+      scale[j] = p95 > 0 ? p95 : col[col.length - 1] ?? 0;
     }
-    return { z, raw, colMax, index: new Map(foods.map((f, i) => [f.id, i])) };
+    const weights = keys.map((k) => Math.max(0, weightFor(k)));
+    // Richesse relative plafonnée à 1 : au-delà du p95, tous « au plafond » (pas de dominance de l'outlier).
+    const rel: number[][] = raw.map((r) => r.map((v, j) => (scale[j] > 0 ? Math.min(1, v / scale[j]) : 0)));
+    const wnorm = rel.map((rr) => Math.sqrt(rr.reduce((a, v, j) => a + weights[j] * v * v, 0)));
+    return { raw, scale, weights, rel, wnorm, index: new Map(foods.map((f, i) => [f.id, i])) };
   }, [foods, keys, mode, weightFor]);
 }
 
@@ -474,7 +541,6 @@ function NeighborsPanel({
   foods,
   a,
   b,
-  activeKeys,
   mode,
   weightFor,
   onPick,
@@ -482,34 +548,60 @@ function NeighborsPanel({
   foods: Food[];
   a: Food | null;
   b: Food | null;
-  activeKeys: NutrientKey[];
   mode: NormMode;
   weightFor: (k: NutrientKey) => number;
   onPick: (slot: 0 | 1, id: string) => void;
 }) {
-  const std = useStandardized(foods, activeKeys, mode, weightFor);
+  const sel = useNutrientSelection(COMPARABLE_KEYS);
+  const activeKeys = sel.activeKeys;
+  const data = useNeighborData(foods, activeKeys, mode, weightFor);
+  const [detailKey, setDetailKey] = useState<string | null>(null);
 
   const neighborsOf = (food: Food, otherSlot: 0 | 1) => {
-    const i = std.index.get(food.id);
+    const i = data.index.get(food.id);
     if (i == null || activeKeys.length === 0) return null;
-    const zi = std.z[i];
-    const lowMask = std.raw[i].map((v, j) => 1 - (std.colMax[j] > 0 ? v / std.colMax[j] : 0));
+    const relI = data.rel[i];
+    const normI = data.wnorm[i];
+    // Vecteur de manques de l'aliment de référence : 1 = à zéro, 0 = déjà au plafond (p95).
+    const gap = relI.map((v) => 1 - v);
+    const gapNorm = Math.sqrt(gap.reduce((a, v, j) => a + data.weights[j] * v * v, 0));
+
     const scored = foods.map((f, k) => {
       if (k === i) return null;
-      const zk = std.z[k];
-      let dist = 0;
-      let compl = 0;
-      for (let j = 0; j < zi.length; j++) {
-        const d = zi[j] - zk[j];
-        dist += d * d;
-        // Complémentarité : f est riche (valeur normalisée haute) là où `food` est pauvre.
-        compl += (std.colMax[j] > 0 ? std.raw[k][j] / std.colMax[j] : 0) * lowMask[j] * Math.max(0, weightFor(activeKeys[j]));
+      const relK = data.rel[k];
+      let dot = 0; // similarité : richesse commune
+      let cdot = 0; // complément : richesse du candidat alignée sur les manques de la référence
+      for (let j = 0; j < relI.length; j++) {
+        dot += data.weights[j] * relI[j] * relK[j];
+        cdot += data.weights[j] * gap[j] * relK[j];
       }
-      return { f, dist: Math.sqrt(dist), compl };
-    }).filter((x): x is { f: Food; dist: number; compl: number } => x !== null);
+      // Deux cosinus pondérés ∈ [0,1], indépendants de la concentration globale :
+      //  - sim   = angle entre les deux profils de richesse (même « forme » → 1) ;
+      //  - compl = angle entre les MANQUES de la référence et la richesse du candidat
+      //            (comble précisément les carences → 1 ; un aliment « riche partout »
+      //            ne gagne plus par sa seule densité).
+      const sim = normI > 1e-12 && data.wnorm[k] > 1e-12 ? dot / (normI * data.wnorm[k]) : 0;
+      const compl = gapNorm > 1e-12 && data.wnorm[k] > 1e-12 ? cdot / (gapNorm * data.wnorm[k]) : 0;
+      return { f, sim, compl };
+    }).filter((x): x is { f: Food; sim: number; compl: number } => x !== null);
 
-    const substitutes = [...scored].sort((x, y) => x.dist - y.dist).slice(0, 5);
-    const complements = [...scored].sort((x, y) => y.compl - x.compl).slice(0, 5);
+    // Nutriments qui portent le plus le score d'un candidat (pour le détail au clic).
+    const partsOf = (f: Food, kind: 'sub' | 'compl') => {
+      const kk = data.index.get(f.id)!;
+      const relK = data.rel[kk];
+      return activeKeys
+        .map((key, j) => ({
+          key,
+          c: kind === 'sub' ? data.weights[j] * relI[j] * relK[j] : data.weights[j] * gap[j] * relK[j],
+          val: data.raw[kk][j],
+        }))
+        .filter((p) => p.c > 1e-9)
+        .sort((a, b) => b.c - a.c)
+        .slice(0, 4);
+    };
+
+    const substitutes = [...scored].sort((x, y) => y.sim - x.sim).slice(0, 5).map((s) => ({ ...s, parts: partsOf(s.f, 'sub') }));
+    const complements = [...scored].sort((x, y) => y.compl - x.compl).slice(0, 5).map((s) => ({ ...s, parts: partsOf(s.f, 'compl') }));
     return { substitutes, complements, otherSlot };
   };
 
@@ -517,64 +609,152 @@ function NeighborsPanel({
     (x): x is { food: Food; slot: 0 | 1 } => x !== null,
   );
 
-  if (blocks.length === 0 || activeKeys.length === 0) return null;
+  if (blocks.length === 0) return null;
 
   return (
     <div className="panel">
-      <h2 style={{ fontSize: 15 }}>Substituts &amp; compléments</h2>
-      <p className="small" style={{ marginTop: -4 }}>
-        <strong>Substituts</strong> = profils les plus proches (par quoi remplacer sans trop changer).{' '}
-        <strong>Compléments</strong> = riches là où l'aliment est pauvre (bons duos). Cliquez pour charger dans
-        l'emplacement opposé.
+      <ChartHeader title="Substituts & compléments" sel={sel} />
+      <NutrientChipsBlock sel={sel} defaultKeys={DEFAULT_ACTIVE} />
+      <p className="small" style={{ marginTop: 6 }}>
+        <strong>Substituts</strong> = profil le plus proche en <em>forme</em> (similarité cosinus en %, indépendante de
+        la concentration : par quoi remplacer sans changer l'équilibre nutritionnel).{' '}
+        <strong>Compléments</strong> = comblent le mieux ses <em>manques</em> (cosinus entre carences et richesse, en
+        % ; un aliment « riche partout » ne gagne plus par sa seule densité). Cliquez une ligne pour la charger dans
+        l'emplacement opposé, ou <span className="mono">ⓘ</span> pour voir les nutriments qui portent le score.
       </p>
-      <div className="row" style={{ gap: 16, flexWrap: 'wrap', alignItems: 'flex-start' }}>
-        {blocks.map(({ food, slot }) => {
-          const res = neighborsOf(food, slot === 0 ? 1 : 0);
-          if (!res) return null;
-          return (
-            <div key={slot} style={{ flex: '1 1 260px', minWidth: 240 }}>
-              <div className="small" style={{ color: SLOT_COLOR[slot], fontWeight: 600, marginBottom: 6 }}>
-                {food.nom}
+      {activeKeys.length === 0 ? (
+        <div className="empty">Activez au moins un nutriment.</div>
+      ) : (
+        <div className="row" style={{ gap: 16, flexWrap: 'wrap', alignItems: 'flex-start' }}>
+          {blocks.map(({ food, slot }) => {
+            const res = neighborsOf(food, slot === 0 ? 1 : 0);
+            if (!res) return null;
+            return (
+              <div key={slot} style={{ flex: '1 1 260px', minWidth: 240 }}>
+                <div className="small" style={{ color: SLOT_COLOR[slot], fontWeight: 600, marginBottom: 6 }}>
+                  {food.nom}
+                </div>
+                <div className="small" style={{ color: C.muted, margin: '4px 0 2px' }}>Substituts</div>
+                {res.substitutes.map((s) => {
+                  const key = `${slot}-sub-${s.f.id}`;
+                  return (
+                    <SuggestionRow
+                      key={key}
+                      s={s}
+                      kind="sub"
+                      score={s.sim}
+                      color={C.accent}
+                      otherSlot={res.otherSlot}
+                      onPick={onPick}
+                      open={detailKey === key}
+                      onToggle={() => setDetailKey((d) => (d === key ? null : key))}
+                    />
+                  );
+                })}
+                <div className="small" style={{ color: C.muted, margin: '8px 0 2px' }}>Compléments</div>
+                {res.complements.map((s) => {
+                  const key = `${slot}-compl-${s.f.id}`;
+                  return (
+                    <SuggestionRow
+                      key={key}
+                      s={s}
+                      kind="compl"
+                      score={s.compl}
+                      color={C.accent2}
+                      otherSlot={res.otherSlot}
+                      onPick={onPick}
+                      open={detailKey === key}
+                      onToggle={() => setDetailKey((d) => (d === key ? null : key))}
+                    />
+                  );
+                })}
               </div>
-              <div className="small" style={{ color: C.muted, margin: '4px 0 2px' }}>Substituts</div>
-              {res.substitutes.map((s) => (
-                <button
-                  key={s.f.id}
-                  className="compare-neighbor"
-                  onClick={() => onPick(res.otherSlot, s.f.id)}
-                  data-tip={`Distance ${fmt(s.dist, 2)} · charger dans l'emplacement ${res.otherSlot === 0 ? 'A' : 'B'}`}
-                >
-                  <span>{s.f.nom}</span>
-                  <span className="mono small" style={{ color: C.muted }}>{fmt(s.dist, 2)}</span>
-                </button>
-              ))}
-              <div className="small" style={{ color: C.muted, margin: '8px 0 2px' }}>Compléments</div>
-              {res.complements.map((s) => (
-                <button
-                  key={s.f.id}
-                  className="compare-neighbor"
-                  onClick={() => onPick(res.otherSlot, s.f.id)}
-                  data-tip={`Complémentarité ${fmt(s.compl, 2)} · charger dans l'emplacement ${res.otherSlot === 0 ? 'A' : 'B'}`}
-                >
-                  <span>{s.f.nom}</span>
-                  <span className="mono small" style={{ color: C.accent2 }}>+{fmt(s.compl, 1)}</span>
-                </button>
-              ))}
-            </div>
-          );
-        })}
-      </div>
+            );
+          })}
+        </div>
+      )}
     </div>
   );
 }
 
+/** Une suggestion (substitut ou complément) : ligne cliquable + ⓘ dépliant le détail du score. */
+function SuggestionRow({
+  s,
+  kind,
+  score,
+  color,
+  otherSlot,
+  onPick,
+  open,
+  onToggle,
+}: {
+  s: { f: Food; parts: { key: NutrientKey; val: number }[] };
+  kind: 'sub' | 'compl';
+  score: number;
+  color: string;
+  otherSlot: 0 | 1;
+  onPick: (slot: 0 | 1, id: string) => void;
+  open: boolean;
+  onToggle: () => void;
+}) {
+  return (
+    <>
+      <div className="compare-neighbor-row">
+        <button
+          className="compare-neighbor"
+          onClick={() => onPick(otherSlot, s.f.id)}
+          data-tip={`${kind === 'sub' ? 'Similarité de profil' : 'Comble les manques'} ${fmt(score * 100)} % · charger dans l'emplacement ${otherSlot === 0 ? 'A' : 'B'}`}
+        >
+          <span>{s.f.nom}</span>
+          <span className="mono small" style={{ color }}>{fmt(score * 100)} %</span>
+        </button>
+        <button
+          className={`ghost small compare-detail-toggle ${open ? 'chip-active' : ''}`}
+          onClick={onToggle}
+          data-tip="Détail du score"
+          aria-label="Détail du score"
+        >
+          ⓘ
+        </button>
+      </div>
+      {open && (
+        <div className="compare-detail small">
+          <span style={{ color: C.muted }}>{kind === 'sub' ? 'Profil porté surtout par : ' : 'Comble surtout : '}</span>
+          {s.parts.length === 0
+            ? '—'
+            : s.parts.map((p) => {
+                const rda = NUT_RDA.get(p.key) ?? 0;
+                const pct = rda > 0 ? (p.val / rda) * 100 : null;
+                return (
+                  <span key={p.key} className="compare-detail-chip">
+                    {NUT_LABEL.get(p.key)}{' '}
+                    <span style={{ color: C.muted }}>
+                      {fmt(p.val, p.val < 10 ? 1 : 0)} {NUT_UNIT.get(p.key)}{pct != null ? ` · ${fmt(pct)} %` : ''}
+                    </span>
+                  </span>
+                );
+              })}
+        </div>
+      )}
+    </>
+  );
+}
+
 // ---------------------------------------------------------------------------
-// Biplot ACP : carte de toute la banque + flèches nutriments
+// Biplot ACP : carte de toute la banque + flèches nutriments (zoom / pan)
 // ---------------------------------------------------------------------------
+
+/** Transform de zoom/pan en pixels (façon d3.zoom), appliqué en rééchelonnant les axes. */
+type ZoomTransform = { k: number; x: number; y: number };
+const ZOOM_IDENTITY: ZoomTransform = { k: 1, x: 0, y: 0 };
+const ZOOM_MIN = 0.2; // < 1 pour pouvoir dézoomer au-delà de la vue initiale
+const ZOOM_MAX = 24;
+
+type EmbedMethod = 'pca' | 'tsne' | 'mds';
+const METHOD_LABEL: Record<EmbedMethod, string> = { pca: 'ACP', tsne: 't-SNE', mds: 'MDS' };
 
 function PcaBiplot({
   foods,
-  activeKeys,
   mode,
   weightFor,
   selected,
@@ -585,7 +765,6 @@ function PcaBiplot({
   onPick,
 }: {
   foods: Food[];
-  activeKeys: NutrientKey[];
   mode: NormMode;
   weightFor: (k: NutrientKey) => number;
   selected: [Food | null, Food | null];
@@ -595,8 +774,119 @@ function PcaBiplot({
   setHideCats: (s: Set<FoodCategory>) => void;
   onPick: (slot: 0 | 1, id: string) => void;
 }) {
+  const sel = useNutrientSelection(COMPARABLE_KEYS);
+  const activeKeys = sel.activeKeys;
   const svgRef = useRef<SVGSVGElement>(null);
   const [hover, setHover] = useState<{ id: string; px: number; py: number } | null>(null);
+  // Menu de choix ouvert au clic sur un point : charger l'aliment en A ou en B.
+  const [menu, setMenu] = useState<{ id: string; px: number; py: number } | null>(null);
+  const [query, setQuery] = useState('');
+  // Méthode de projection 2D de la carte.
+  const [method, setMethod] = useState<'pca' | 'tsne' | 'mds'>('pca');
+
+  const W = 680;
+  const H = 520;
+  const m = { top: 20, right: 20, bottom: 20, left: 20 };
+
+  // Zoom / pan (molette + glisser + pincement), même principe que le nuage : on
+  // rééchelonne les axes plutôt que de transformer le SVG (n'écrase pas les textes).
+  const [zoomX, setZoomX] = useState<ZoomTransform>(ZOOM_IDENTITY);
+  const [zoomY, setZoomY] = useState<ZoomTransform>(ZOOM_IDENTITY);
+  const dragRef = useRef<{ x: number; y: number } | null>(null);
+  const [dragging, setDragging] = useState(false);
+  const pointersRef = useRef<Map<number, { x: number; y: number }>>(new Map());
+  const pinchRef = useRef<{ dist: number } | null>(null);
+
+  const activeKey = activeKeys.join(',');
+  // Un changement d'axes / base rend l'ancien cadrage obsolète.
+  useEffect(() => {
+    setZoomX(ZOOM_IDENTITY);
+    setZoomY(ZOOM_IDENTITY);
+    setMenu(null);
+  }, [activeKey, mode, method]);
+
+  function zoomAt(factor: number, px: number, py: number) {
+    setZoomX((z) => {
+      const k = Math.min(ZOOM_MAX, Math.max(ZOOM_MIN, z.k * factor));
+      const d = (px - z.x) / z.k;
+      return { k, x: px - d * k, y: 0 };
+    });
+    setZoomY((z) => {
+      const k = Math.min(ZOOM_MAX, Math.max(ZOOM_MIN, z.k * factor));
+      const d = (py - z.y) / z.k;
+      return { k, x: 0, y: py - d * k };
+    });
+  }
+
+  useEffect(() => {
+    const el = svgRef.current;
+    if (!el) return;
+    const onWheel = (e: WheelEvent) => {
+      e.preventDefault();
+      const rect = el.getBoundingClientRect();
+      const px = ((e.clientX - rect.left) / rect.width) * W;
+      const py = ((e.clientY - rect.top) / rect.height) * H;
+      if (e.ctrlKey) {
+        zoomAt(Math.exp(-e.deltaY * 0.01), px, py);
+      } else {
+        setZoomX((z) => ({ ...z, x: z.x - e.deltaX }));
+        setZoomY((z) => ({ ...z, y: z.y - e.deltaY }));
+      }
+    };
+    el.addEventListener('wheel', onWheel, { passive: false });
+    return () => el.removeEventListener('wheel', onWheel);
+  }, [W, H]);
+
+  function onPointerDown(e: React.PointerEvent<SVGSVGElement>) {
+    // Pas de setPointerCapture ici : il redirigerait le « click » vers le SVG et
+    // empêcherait le clic sur un point (menu A/B). Le pan reste géré tant que le
+    // pointeur survole la carte, ce qui suffit largement.
+    pointersRef.current.set(e.pointerId, { x: e.clientX, y: e.clientY });
+    if (pointersRef.current.size === 1) {
+      dragRef.current = { x: e.clientX, y: e.clientY };
+      setDragging(true);
+    } else {
+      dragRef.current = null;
+      const pts = [...pointersRef.current.values()];
+      pinchRef.current = { dist: Math.hypot(pts[0].x - pts[1].x, pts[0].y - pts[1].y) };
+    }
+  }
+  function onPointerMove(e: React.PointerEvent<SVGSVGElement>) {
+    if (!pointersRef.current.has(e.pointerId)) return;
+    pointersRef.current.set(e.pointerId, { x: e.clientX, y: e.clientY });
+
+    if (pointersRef.current.size >= 2 && svgRef.current) {
+      const [p0, p1] = [...pointersRef.current.values()];
+      const rect = svgRef.current.getBoundingClientRect();
+      const dist = Math.hypot(p0.x - p1.x, p0.y - p1.y);
+      const cx = ((p0.x + p1.x) / 2 - rect.left) / rect.width * W;
+      const cy = ((p0.y + p1.y) / 2 - rect.top) / rect.height * H;
+      if (pinchRef.current && pinchRef.current.dist > 0) zoomAt(dist / pinchRef.current.dist, cx, cy);
+      pinchRef.current = { dist };
+      return;
+    }
+
+    if (!dragRef.current || !svgRef.current) return;
+    const rect = svgRef.current.getBoundingClientRect();
+    const dx = ((e.clientX - dragRef.current.x) / rect.width) * W;
+    const dy = ((e.clientY - dragRef.current.y) / rect.height) * H;
+    if (Math.abs(dx) > 0.5 || Math.abs(dy) > 0.5) setMenu(null); // un déplacement ferme le menu
+    dragRef.current = { x: e.clientX, y: e.clientY };
+    setZoomX((z) => ({ ...z, x: z.x + dx }));
+    setZoomY((z) => ({ ...z, y: z.y + dy }));
+  }
+  function endDrag(e: React.PointerEvent<SVGSVGElement>) {
+    pointersRef.current.delete(e.pointerId);
+    if (pointersRef.current.size < 2) pinchRef.current = null;
+    if (pointersRef.current.size === 1) {
+      const [remaining] = pointersRef.current.values();
+      dragRef.current = { x: remaining.x, y: remaining.y };
+    } else {
+      dragRef.current = null;
+      setDragging(false);
+    }
+  }
+  const zoomed = zoomX.k > 1.001 || zoomY.k > 1.001 || Math.abs(zoomX.x) > 0.5 || Math.abs(zoomY.y) > 0.5;
 
   // Carte calculée sur la banque hors compléments (concentrés qui écraseraient les axes),
   // en ré-injectant les 2 aliments sélectionnés même s'ils sont des compléments.
@@ -609,52 +899,37 @@ function PcaBiplot({
 
   const result = useMemo(() => {
     if (activeKeys.length < 2) return null;
+    const ids = bank.map((f) => f.id);
     const matrix = bank.map((f) => activeKeys.map((k) => normalizedValue(f, k, mode)));
-    return pca2({
-      ids: bank.map((f) => f.id),
-      keys: activeKeys,
-      matrix,
-      weights: activeKeys.map((k) => weightFor(k)),
-    });
-  }, [bank, activeKeys, mode, weightFor]);
+    const weights = activeKeys.map((k) => weightFor(k));
+    if (method === 'tsne') return { kind: 'tsne' as const, ...tsne({ ids, matrix, weights }) };
+    if (method === 'mds') return { kind: 'mds' as const, ...mds({ ids, matrix, weights }) };
+    return { kind: 'pca' as const, ...pca2({ ids, keys: activeKeys, matrix, weights }) };
+  }, [bank, activeKey, mode, weightFor, method]);
+  const isPca = result?.kind === 'pca';
 
-  if (!result) {
-    return (
-      <div className="panel">
-        <div className="empty">Activez au moins 2 nutriments pour tracer la carte ACP.</div>
-      </div>
+  const foodById = useMemo(() => new Map(bank.map((f) => [f.id, f])), [bank]);
+
+  const q = normalize(query);
+  const matchIds = useMemo(() => {
+    if (!q) return new Set<string>();
+    return new Set(
+      bank.filter((f) => normalize(f.nom).includes(q) || f.aliases.some((a) => normalize(a).includes(q))).map((f) => f.id),
     );
-  }
-
-  const W = 680;
-  const H = 520;
-  const m = { top: 20, right: 20, bottom: 20, left: 20 };
-  const foodById = new Map(bank.map((f) => [f.id, f]));
-  const selectedIds = new Set(selected.filter((f): f is Food => !!f).map((f) => f.id));
-
-  const visibleScores = result.scores.filter((s) => {
-    const f = foodById.get(s.id);
-    return f && (!hideCats.has(f.categorie) || selectedIds.has(f.id));
-  });
-
-  const [minX, maxX] = extent(result.scores, (s) => s.x) as [number, number];
-  const [minY, maxY] = extent(result.scores, (s) => s.y) as [number, number];
-  const xs = scaleLinear().domain([minX, maxX]).nice().range([m.left, W - m.right]);
-  const ys = scaleLinear().domain([minY, maxY]).nice().range([H - m.bottom, m.top]);
-
-  // Flèches : mises à l'échelle du nuage (les loadings vivent dans un autre repère).
-  const scoreR = Math.max(Math.abs(minX), Math.abs(maxX), Math.abs(minY), Math.abs(maxY)) || 1;
-  const loadR = Math.max(1, ...result.loadings.map((l) => Math.hypot(l.x, l.y)));
-  const arrowScale = (scoreR / loadR) * 0.85;
-  const ax = (v: number) => xs(v * arrowScale);
-  const ay = (v: number) => ys(v * arrowScale);
-  const originX = xs(0);
-  const originY = ys(0);
+  }, [bank, q]);
 
   const onMove = (e: React.MouseEvent, id: string) => {
     if (!svgRef.current) return;
     const rect = svgRef.current.getBoundingClientRect();
     setHover({ id, px: ((e.clientX - rect.left) / rect.width) * 100, py: ((e.clientY - rect.top) / rect.height) * 100 });
+  };
+
+  const onPointClick = (e: React.MouseEvent, id: string) => {
+    e.stopPropagation();
+    if (!svgRef.current) return;
+    const rect = svgRef.current.getBoundingClientRect();
+    setHover(null);
+    setMenu({ id, px: ((e.clientX - rect.left) / rect.width) * 100, py: ((e.clientY - rect.top) / rect.height) * 100 });
   };
 
   const toggleCat = (key: FoodCategory) => {
@@ -663,107 +938,260 @@ function PcaBiplot({
     setHideCats(n);
   };
 
-  const hoverFood = hover ? foodById.get(hover.id) : null;
-
   return (
     <div className="panel">
-      <div className="row" style={{ justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: 8 }}>
-        <h2 style={{ margin: 0, fontSize: 15 }}>Carte ACP de la banque</h2>
-        <div className="row" style={{ gap: 6, flexWrap: 'wrap' }}>
-          <button className={`ghost small ${showArrows ? 'chip-active' : ''}`} onClick={() => setShowArrows(!showArrows)}>
-            Flèches nutriments
-          </button>
-        </div>
-      </div>
-      <p className="small" style={{ marginTop: -4 }}>
-        Chaque point = un aliment, projeté sur les 2 axes de plus grande variance des nutriments actifs
-        ({NORM_LABELS[mode]}). Deux aliments proches ont des profils proches ; les flèches montrent quels nutriments
-        tirent les axes. Cliquez un point pour le charger (A puis B). Variance expliquée :{' '}
-        {fmt(result.explained[0] * 100)} % + {fmt(result.explained[1] * 100)} %.
-      </p>
-      <div style={{ position: 'relative' }}>
-        <svg ref={svgRef} viewBox={`0 0 ${W} ${H}`} style={{ width: '100%', display: 'block' }} onMouseLeave={() => setHover(null)}>
-          <line x1={originX} x2={originX} y1={m.top} y2={H - m.bottom} stroke={C.border} strokeWidth={1} opacity={0.6} />
-          <line x1={m.left} x2={W - m.right} y1={originY} y2={originY} stroke={C.border} strokeWidth={1} opacity={0.6} />
+      <ChartHeader title={`Carte de la banque — ${METHOD_LABEL[method]}`} sel={sel} />
+      <NutrientChipsBlock sel={sel} defaultKeys={DEFAULT_ACTIVE} />
 
-          {showArrows &&
-            result.loadings.map((l) => {
-              const x2 = ax(l.x);
-              const y2 = ay(l.y);
-              if (Math.hypot(l.x, l.y) < loadR * 0.12) return null; // flèches trop courtes : ignorées
-              return (
-                <g key={l.key} opacity={0.75}>
-                  <line x1={originX} y1={originY} x2={x2} y2={y2} stroke={C.accent} strokeWidth={1.2} />
-                  <text x={x2} y={y2} fontSize={10} fill={C.accent} textAnchor="middle" dominantBaseline="middle">
-                    {NUT_LABEL.get(l.key)}
-                  </text>
-                </g>
-              );
-            })}
+      {!result ? (
+        <div className="empty" style={{ marginTop: 8 }}>Activez au moins 2 nutriments pour tracer la carte.</div>
+      ) : (
+        (() => {
+          const selectedIds = new Set(selected.filter((f): f is Food => !!f).map((f) => f.id));
 
-          {/* Trait entre les deux sélectionnés. */}
-          {selected[0] && selected[1] && (() => {
-            const sa = result.scores.find((s) => s.id === selected[0]!.id);
-            const sb = result.scores.find((s) => s.id === selected[1]!.id);
-            if (!sa || !sb) return null;
-            return <line x1={xs(sa.x)} y1={ys(sa.y)} x2={xs(sb.x)} y2={ys(sb.y)} stroke={C.muted} strokeWidth={1} strokeDasharray="3 3" />;
-          })()}
+          const [minX, maxX] = extent(result.scores, (s) => s.x) as [number, number];
+          const [minY, maxY] = extent(result.scores, (s) => s.y) as [number, number];
+          const xs = scaleLinear().domain([minX, maxX]).nice().range([m.left, W - m.right]);
+          const ys = scaleLinear().domain([minY, maxY]).nice().range([H - m.bottom, m.top]);
+          const vxs = rescaleAxis(xs, { k: zoomX.k, t: zoomX.x });
+          const vys = rescaleAxis(ys, { k: zoomY.k, t: zoomY.y });
 
-          {visibleScores.map((s) => {
-            const f = foodById.get(s.id)!;
-            const sel = selectedIds.has(s.id);
-            const slot = selected[0]?.id === s.id ? 0 : selected[1]?.id === s.id ? 1 : null;
-            return (
-              <circle
-                key={s.id}
-                cx={xs(s.x)}
-                cy={ys(s.y)}
-                r={sel ? 7 : 4}
-                fill={slot != null ? SLOT_COLOR[slot] : COLOR_BY_CAT.get(f.categorie) ?? C.muted}
-                stroke={sel ? C.text : 'none'}
-                strokeWidth={sel ? 2 : 0}
-                opacity={sel ? 1 : 0.8}
-                style={{ cursor: 'pointer' }}
-                onMouseMove={(e) => onMove(e, s.id)}
-                onClick={() => onPick(selected[0] ? 1 : 0, s.id)}
-              />
-            );
-          })}
-        </svg>
-        {hover && hoverFood && (
-          <div
-            style={{
-              position: 'absolute',
-              left: `${hover.px}%`,
-              top: `${hover.py}%`,
-              transform: 'translate(-50%, -120%)',
-              background: C.panel2,
-              border: `1px solid ${C.border}`,
-              borderRadius: 8,
-              padding: '5px 8px',
-              fontSize: 12,
-              color: C.text,
-              pointerEvents: 'none',
-              whiteSpace: 'nowrap',
-              zIndex: 5,
-            }}
-          >
-            {hoverFood.nom}
-          </div>
-        )}
-      </div>
-      <div className="row" style={{ gap: 6, marginTop: 8, flexWrap: 'wrap' }}>
-        {CATS.map((c) => (
-          <button
-            key={c.key}
-            className="ghost small"
-            style={{ opacity: hideCats.has(c.key) ? 0.4 : 1, borderColor: hideCats.has(c.key) ? C.border : c.color }}
-            onClick={() => toggleCat(c.key)}
-          >
-            {c.label}
-          </button>
-        ))}
-      </div>
+          const visibleScores = result.scores.filter((s) => {
+            const f = foodById.get(s.id);
+            return f && (!hideCats.has(f.categorie) || selectedIds.has(f.id));
+          });
+
+          // Flèches (ACP seulement) : mises à l'échelle du nuage (loadings dans un autre repère).
+          const pcaRes = result.kind === 'pca' ? result : null;
+          const scoreR = Math.max(Math.abs(minX), Math.abs(maxX), Math.abs(minY), Math.abs(maxY)) || 1;
+          const loadR = pcaRes ? Math.max(1, ...pcaRes.loadings.map((l) => Math.hypot(l.x, l.y))) : 1;
+          const arrowScale = (scoreR / loadR) * 0.85;
+          const ax = (v: number) => vxs(v * arrowScale);
+          const ay = (v: number) => vys(v * arrowScale);
+          const originX = vxs(0);
+          const originY = vys(0);
+
+          const hoverFood = hover ? foodById.get(hover.id) : null;
+
+          return (
+            <>
+              <div className="row" style={{ gap: 6, margin: '8px 0', flexWrap: 'wrap', alignItems: 'center' }}>
+                <span className="small" style={{ color: C.muted }}>Projection :</span>
+                {(['pca', 'tsne', 'mds'] as EmbedMethod[]).map((mth) => (
+                  <button key={mth} className={`ghost small ${method === mth ? 'chip-active' : ''}`} onClick={() => setMethod(mth)}>
+                    {METHOD_LABEL[mth]}
+                  </button>
+                ))}
+                {isPca && (
+                  <button className={`ghost small ${showArrows ? 'chip-active' : ''}`} onClick={() => setShowArrows(!showArrows)}>
+                    Flèches nutriments
+                  </button>
+                )}
+                <input
+                  value={query}
+                  onChange={(e) => setQuery(e.target.value)}
+                  placeholder="Surligner un aliment…"
+                  style={{ flex: '1 1 160px', minWidth: 140 }}
+                />
+                <span style={{ flex: 1 }} />
+                <button className="ghost small" data-tip="Zoomer" onClick={() => zoomAt(1.6, (m.left + W - m.right) / 2, (m.top + H - m.bottom) / 2)}>
+                  🔍＋
+                </button>
+                <button className="ghost small" data-tip="Dézoomer" onClick={() => zoomAt(1 / 1.6, (m.left + W - m.right) / 2, (m.top + H - m.bottom) / 2)}>
+                  🔍−
+                </button>
+                <button className="ghost small" disabled={!zoomed} onClick={() => { setZoomX(ZOOM_IDENTITY); setZoomY(ZOOM_IDENTITY); }}>
+                  Réinitialiser le zoom
+                </button>
+                {zoomed && <span className="small mono">×{fmt(Math.max(zoomX.k, zoomY.k), 1)}</span>}
+              </div>
+              <p className="small" style={{ marginTop: -4 }}>
+                {pcaRes ? (
+                  <>
+                    Chaque point = un aliment sur les 2 axes de plus grande variance ({NORM_LABELS[mode]}) ; les flèches
+                    montrent quels nutriments les tirent. Variance expliquée : {fmt(pcaRes.explained[0] * 100)} % +{' '}
+                    {fmt(pcaRes.explained[1] * 100)} %
+                    {pcaRes.explained[0] + pcaRes.explained[1] < 0.5 && (
+                      <span style={{ color: C.warn }}> · carte approximative</span>
+                    )}
+                    .{' '}
+                  </>
+                ) : method === 'tsne' ? (
+                  <>
+                    <strong>t-SNE</strong> : regroupe les aliments par voisinage — les <strong>grappes</strong> = familles
+                    de profils. Les distances <em>entre</em> grappes et leurs tailles ne sont pas significatives (pas
+                    d'axes ni de flèches ; {NORM_LABELS[mode]}).{' '}
+                  </>
+                ) : (
+                  <>
+                    <strong>MDS</strong> : place les aliments pour respecter au mieux leurs <strong>distances</strong> de
+                    profil (proche de l'ACP, sans flèches ; {NORM_LABELS[mode]}).{' '}
+                  </>
+                )}
+                Ctrl + molette (ou pincer) pour zoomer, glisser pour déplacer. Cliquez un point pour le mettre en A ou en B.
+              </p>
+              <div style={{ position: 'relative' }}>
+                <svg
+                  ref={svgRef}
+                  viewBox={`0 0 ${W} ${H}`}
+                  style={{ width: '100%', display: 'block', touchAction: 'none', cursor: dragging ? 'grabbing' : 'grab' }}
+                  onMouseLeave={() => setHover(null)}
+                  onClick={() => setMenu(null)}
+                  onPointerDown={onPointerDown}
+                  onPointerMove={onPointerMove}
+                  onPointerUp={endDrag}
+                  onPointerCancel={endDrag}
+                >
+                  <defs>
+                    <clipPath id="pca-clip">
+                      <rect x={m.left} y={m.top} width={W - m.left - m.right} height={H - m.top - m.bottom} />
+                    </clipPath>
+                  </defs>
+                  <line x1={originX} x2={originX} y1={m.top} y2={H - m.bottom} stroke={C.border} strokeWidth={1} opacity={0.6} />
+                  <line x1={m.left} x2={W - m.right} y1={originY} y2={originY} stroke={C.border} strokeWidth={1} opacity={0.6} />
+
+                  <g clipPath="url(#pca-clip)">
+                    {pcaRes && showArrows &&
+                      pcaRes.loadings.map((l) => {
+                        const x2 = ax(l.x);
+                        const y2 = ay(l.y);
+                        if (Math.hypot(l.x, l.y) < loadR * 0.12) return null; // flèches trop courtes : ignorées
+                        return (
+                          <g key={l.key} opacity={0.75}>
+                            <line x1={originX} y1={originY} x2={x2} y2={y2} stroke={C.accent} strokeWidth={1.2} />
+                            <text x={x2} y={y2} fontSize={10} fill={C.accent} textAnchor="middle" dominantBaseline="middle">
+                              {NUT_LABEL.get(l.key)}
+                            </text>
+                          </g>
+                        );
+                      })}
+
+                    {/* Trait entre les deux sélectionnés. */}
+                    {selected[0] && selected[1] && (() => {
+                      const sa = result.scores.find((s) => s.id === selected[0]!.id);
+                      const sb = result.scores.find((s) => s.id === selected[1]!.id);
+                      if (!sa || !sb) return null;
+                      return <line x1={vxs(sa.x)} y1={vys(sa.y)} x2={vxs(sb.x)} y2={vys(sb.y)} stroke={C.muted} strokeWidth={1} strokeDasharray="3 3" />;
+                    })()}
+
+                    {visibleScores.map((s) => {
+                      const f = foodById.get(s.id)!;
+                      const isSel = selectedIds.has(s.id);
+                      const slot = selected[0]?.id === s.id ? 0 : selected[1]?.id === s.id ? 1 : null;
+                      const isMatch = matchIds.has(s.id);
+                      const isMenu = menu?.id === s.id;
+                      const r = isSel ? 7 : isMatch || isMenu ? 6 : 5;
+                      // Zone de tap invisible plus large que le point : vise au doigt sur mobile.
+                      const hitR = Math.max(r + 9, 15);
+                      const cxp = vxs(s.x);
+                      const cyp = vys(s.y);
+                      return (
+                        <g key={s.id}>
+                          <circle
+                            cx={cxp}
+                            cy={cyp}
+                            r={r}
+                            fill={slot != null ? SLOT_COLOR[slot] : COLOR_BY_CAT.get(f.categorie) ?? C.muted}
+                            stroke={isSel ? C.text : isMatch || isMenu ? C.accent2 : 'none'}
+                            strokeWidth={isSel ? 2 : isMatch || isMenu ? 2 : 0}
+                            opacity={q && !isMatch && !isSel ? 0.25 : isSel ? 1 : 0.8}
+                            pointerEvents="none"
+                          />
+                          <circle
+                            cx={cxp}
+                            cy={cyp}
+                            r={hitR}
+                            fill="transparent"
+                            style={{ cursor: 'pointer' }}
+                            onMouseMove={(e) => onMove(e, s.id)}
+                            onClick={(e) => onPointClick(e, s.id)}
+                          />
+                        </g>
+                      );
+                    })}
+                  </g>
+                </svg>
+                {hover && hoverFood && (
+                  <div
+                    style={{
+                      position: 'absolute',
+                      left: `${hover.px}%`,
+                      top: `${hover.py}%`,
+                      transform: 'translate(-50%, -120%)',
+                      background: C.panel2,
+                      border: `1px solid ${C.border}`,
+                      borderRadius: 8,
+                      padding: '5px 8px',
+                      fontSize: 12,
+                      color: C.text,
+                      pointerEvents: 'none',
+                      whiteSpace: 'nowrap',
+                      zIndex: 5,
+                    }}
+                  >
+                    {hoverFood.nom}
+                  </div>
+                )}
+                {menu && (() => {
+                  const mf = foodById.get(menu.id);
+                  if (!mf) return null;
+                  const inA = selected[0]?.id === menu.id;
+                  const inB = selected[1]?.id === menu.id;
+                  return (
+                    <div
+                      style={{
+                        position: 'absolute',
+                        left: `${menu.px}%`,
+                        top: `${menu.py}%`,
+                        transform: 'translate(-50%, -115%)',
+                        background: C.panel2,
+                        border: `1px solid ${C.border}`,
+                        borderRadius: 8,
+                        padding: 8,
+                        zIndex: 6,
+                        boxShadow: '0 4px 16px rgba(0,0,0,0.5)',
+                        whiteSpace: 'nowrap',
+                      }}
+                    >
+                      <div className="small" style={{ color: C.text, marginBottom: 6, textAlign: 'center', maxWidth: 200, overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                        {mf.nom}
+                      </div>
+                      <div className="row" style={{ gap: 6, justifyContent: 'center' }}>
+                        <button
+                          className="ghost small"
+                          style={{ borderColor: SLOT_COLOR[0], color: SLOT_COLOR[0], fontWeight: 600 }}
+                          onClick={() => { onPick(0, menu.id); setMenu(null); }}
+                        >
+                          {inA ? '✓ en A' : '→ mettre en A'}
+                        </button>
+                        <button
+                          className="ghost small"
+                          style={{ borderColor: SLOT_COLOR[1], color: SLOT_COLOR[1], fontWeight: 600 }}
+                          onClick={() => { onPick(1, menu.id); setMenu(null); }}
+                        >
+                          {inB ? '✓ en B' : '→ mettre en B'}
+                        </button>
+                      </div>
+                    </div>
+                  );
+                })()}
+              </div>
+              <div className="row" style={{ gap: 6, marginTop: 8, flexWrap: 'wrap' }}>
+                {CATS.map((c) => (
+                  <button
+                    key={c.key}
+                    className="ghost small"
+                    style={{ opacity: hideCats.has(c.key) ? 0.4 : 1, borderColor: hideCats.has(c.key) ? C.border : c.color }}
+                    onClick={() => toggleCat(c.key)}
+                  >
+                    {c.label}
+                  </button>
+                ))}
+              </div>
+            </>
+          );
+        })()
+      )}
     </div>
   );
 }
