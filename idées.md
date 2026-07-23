@@ -1,6 +1,10 @@
 
-- [ ] ERREUR : parfois le système en pont claude code sur tel prend bien une photo mais je recois une erreur la photo ne passe peut être pas sur supabase ? que voir ? faisons un diagnostic parce que
+- [ ] ERREUR : parfois le système en pont claude code sur tel prend bien une photo mais je recois une erreur la photo ne passe peut être pas sur supabase ? que voir ? faisons un diagnostic, et d'aillerus texte aussi là
+est ce que supabse peut bloquer ? message de confirmation que c'est bien sur supabase en attente
+- [ ] sous etimation DHA EPA ou alors surestimation du besoin non ?
+"Donc 2 portions de 100 g de poisson gras par semaine ≈ 3–4 g/semaine ≈ 450–570 mg/jour en moyenne. La recommandation est couverte. Pas besoin de saumon quotidien."
 
+- [ ] bug sur mon tel de vocal sur chrome il repte plein de fois ce que je dis (exemple : "250g 25025050 de skyr ski")
 
 - [x] Un système pour ne pas compter certains jour dans les moyennes, une sorte de mute sur le calendrier on peut mute entièrement des jours (par exemple parce qu'on sait qu'on a mal rempli).
 Les jours vident sont automatiquement mute sur le calendrier (il indiquent probablement un non remplissage ce jour là, et si c'est en fait un jeûne tu peux demute)
@@ -21,6 +25,6 @@ Interprétation ACP revoir comment bien l'interpréter sans erreur...
   - [x] Détail du score au clic (ⓘ) : nutriments qui portent la similarité / comblent les manques
   - [x] Substituts + ACP : tous les nutriments par défaut
   - [x] ACP : clic sur un point → menu « mettre en A / mettre en B » (zone de tap élargie pour mobile ; capture pointeur retirée pour que le clic passe)
-  - [ ] Interprétation ACP « sans erreur » (version légère : avertissement variance faible déjà posé ; reste explications au survol) estompage des points mal représentés en 2D (cos²), pour que ces pièges soient visibles dans l'outil
+  - [x] Interprétation ACP « sans erreur » : avertissement variance faible + estompage par qualité (cos² en ACP, fidélité des distances en MDS) + valeur au survol. Reste éventuel : explications au survol des flèches.
   - [x] Notebook de révision ACP externe (`analysis/pca_course.ipynb`) : reproduit la carte (PC1 23 % + PC2 17 %, = app), loadings PC1-4, scree, biplot, cos², réponse « aliments au centre sauf épinards » + section t-SNE/MDS
   - [x] Carte : sélecteur de projection ACP / t-SNE / MDS (embed.ts en TS pur ; flèches+variance limitées à l'ACP) + dézoom débloqué (ZOOM_MIN 0.2)

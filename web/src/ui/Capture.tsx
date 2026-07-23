@@ -182,7 +182,7 @@ export function Capture({ date, title }: { date?: string; title?: string } = {})
     if (!recording) {
       try {
         const rec = new NativeRecognizer();
-        rec.start((live) => setText(live));
+        rec.start((live) => setText(live), text);
         nativeRef.current = rec;
         setRecording(true);
         setStatus('Dictée en cours… (parlez, puis cliquez pour arrêter)');
