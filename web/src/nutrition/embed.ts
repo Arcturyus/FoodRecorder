@@ -23,7 +23,12 @@ export interface EmbedInput {
 }
 
 export interface EmbedResult {
-  scores: { id: string; x: number; y: number }[];
+  /**
+   * Coordonnées 2D. `rep` (MDS uniquement) = fidélité des distances autour du point
+   * (1 − stress relatif), 0→1 ; analogue du cos² de l'ACP. Absent en t-SNE (pas de
+   * mesure de qualité par point qui ait un sens).
+   */
+  scores: { id: string; x: number; y: number; rep?: number }[];
 }
 
 /** PRNG déterministe (mulberry32) : mêmes coordonnées à chaque rendu, pas de scintillement. */
@@ -123,7 +128,22 @@ export function mds(input: EmbedInput, iterations = 120): EmbedResult {
     Y = Ynew;
   }
 
-  return { scores: input.ids.map((id, i) => ({ id, x: Y[i][0], y: Y[i][1] })) };
+  // Fidélité par point : 1 − Σ_j(δ_ij − d_ij)² / Σ_j δ_ij² (R² local des distances), borné [0,1].
+  const rep = new Array(n).fill(1);
+  for (let i = 0; i < n; i++) {
+    let num = 0;
+    let den = 0;
+    for (let j = 0; j < n; j++) {
+      if (j === i) continue;
+      const d = Math.hypot(Y[i][0] - Y[j][0], Y[i][1] - Y[j][1]);
+      const del = delta[i][j];
+      num += (del - d) * (del - d);
+      den += del * del;
+    }
+    rep[i] = den > 1e-12 ? Math.max(0, Math.min(1, 1 - num / den)) : 1;
+  }
+
+  return { scores: input.ids.map((id, i) => ({ id, x: Y[i][0], y: Y[i][1], rep: rep[i] })) };
 }
 
 // ---------------------------------------------------------------------------

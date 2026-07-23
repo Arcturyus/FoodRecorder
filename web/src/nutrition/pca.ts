@@ -24,8 +24,11 @@ export interface PcaInput {
 }
 
 export interface PcaResult {
-  /** Projection des aliments sur (PC1, PC2). */
-  scores: { id: string; x: number; y: number }[];
+  /**
+   * Projection des aliments sur (PC1, PC2). `cos2` = qualité de représentation en 2D
+   * (part du profil captée par le plan = (x²+y²)/‖vecteur standardisé‖²), 0→1.
+   */
+  scores: { id: string; x: number; y: number; cos2: number }[];
   /** Projection des nutriments (flèches du biplot), longueur = axes actifs. */
   loadings: { key: NutrientKey; x: number; y: number }[];
   /** Fraction de variance expliquée par PC1 et PC2. */
@@ -79,7 +82,7 @@ export function pca2(input: PcaInput): PcaResult {
 
   // Colonnes vides (aucun aliment, aucun nutriment) : rien à projeter.
   if (n === 0 || m === 0) {
-    return { scores: ids.map((id) => ({ id, x: 0, y: 0 })), loadings: [], explained: [0, 0] };
+    return { scores: ids.map((id) => ({ id, x: 0, y: 0, cos2: 0 })), loadings: [], explained: [0, 0] };
   }
 
   // Standardisation z-score par colonne, puis pondération (√poids → la distance
@@ -114,11 +117,14 @@ export function pca2(input: PcaInput): PcaResult {
   const C2 = deflate(C, e1.vec, e1.value);
   const e2 = dominantEigen(C2);
 
-  const scores = ids.map((id, i) => ({
-    id,
-    x: X[i].reduce((a, x, j) => a + x * e1.vec[j], 0),
-    y: X[i].reduce((a, x, j) => a + x * e2.vec[j], 0),
-  }));
+  const scores = ids.map((id, i) => {
+    const x = X[i].reduce((a, v, j) => a + v * e1.vec[j], 0);
+    const y = X[i].reduce((a, v, j) => a + v * e2.vec[j], 0);
+    // cos² = ‖projection sur le plan‖² / ‖vecteur standardisé complet‖².
+    const sumSq = X[i].reduce((a, v) => a + v * v, 0);
+    const cos2 = sumSq > 1e-12 ? (x * x + y * y) / sumSq : 0;
+    return { id, x, y, cos2 };
+  });
 
   // Flèches du biplot : direction = composante du vecteur propre, longueur ∝ √λ (importance de l'axe).
   const s1 = Math.sqrt(Math.max(0, e1.value));

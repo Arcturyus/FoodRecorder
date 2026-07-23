@@ -910,6 +910,15 @@ function PcaBiplot({
 
   const foodById = useMemo(() => new Map(bank.map((f) => [f.id, f])), [bank]);
 
+  // Qualité de représentation par aliment (0→1) : cos² en ACP, fidélité des distances
+  // en MDS ; absente en t-SNE. Sert à l'opacité (pâle = mal représenté) et au survol.
+  const qualById = useMemo(() => {
+    const map = new Map<string, number>();
+    if (result?.kind === 'pca') for (const s of result.scores) map.set(s.id, s.cos2);
+    else if (result?.kind === 'mds') for (const s of result.scores) if (s.rep != null) map.set(s.id, s.rep);
+    return map;
+  }, [result]);
+
   const q = normalize(query);
   const matchIds = useMemo(() => {
     if (!q) return new Set<string>();
@@ -948,15 +957,17 @@ function PcaBiplot({
       ) : (
         (() => {
           const selectedIds = new Set(selected.filter((f): f is Food => !!f).map((f) => f.id));
+          // Vue « type commun » des scores (les variantes ACP/embed diffèrent sur les champs de qualité).
+          const pts = result.scores as { id: string; x: number; y: number }[];
 
-          const [minX, maxX] = extent(result.scores, (s) => s.x) as [number, number];
-          const [minY, maxY] = extent(result.scores, (s) => s.y) as [number, number];
+          const [minX, maxX] = extent(pts, (s) => s.x) as [number, number];
+          const [minY, maxY] = extent(pts, (s) => s.y) as [number, number];
           const xs = scaleLinear().domain([minX, maxX]).nice().range([m.left, W - m.right]);
           const ys = scaleLinear().domain([minY, maxY]).nice().range([H - m.bottom, m.top]);
           const vxs = rescaleAxis(xs, { k: zoomX.k, t: zoomX.x });
           const vys = rescaleAxis(ys, { k: zoomY.k, t: zoomY.y });
 
-          const visibleScores = result.scores.filter((s) => {
+          const visibleScores = pts.filter((s) => {
             const f = foodById.get(s.id);
             return f && (!hideCats.has(f.categorie) || selectedIds.has(f.id));
           });
@@ -1014,18 +1025,20 @@ function PcaBiplot({
                     {pcaRes.explained[0] + pcaRes.explained[1] < 0.5 && (
                       <span style={{ color: C.warn }}> · carte approximative</span>
                     )}
-                    .{' '}
+                    . Opacité = <strong>cos²</strong> (un point pâle est mal représenté en 2D — à ne pas
+                    sur-interpréter).{' '}
                   </>
                 ) : method === 'tsne' ? (
                   <>
                     <strong>t-SNE</strong> : regroupe les aliments par voisinage — les <strong>grappes</strong> = familles
                     de profils. Les distances <em>entre</em> grappes et leurs tailles ne sont pas significatives (pas
-                    d'axes ni de flèches ; {NORM_LABELS[mode]}).{' '}
+                    d'axes ni de flèches, pas de qualité par point ; {NORM_LABELS[mode]}).{' '}
                   </>
                 ) : (
                   <>
                     <strong>MDS</strong> : place les aliments pour respecter au mieux leurs <strong>distances</strong> de
-                    profil (proche de l'ACP, sans flèches ; {NORM_LABELS[mode]}).{' '}
+                    profil (proche de l'ACP, sans flèches ; {NORM_LABELS[mode]}). Opacité ={' '}
+                    <strong>fidélité des distances</strong> (pâle = distances mal préservées autour du point).{' '}
                   </>
                 )}
                 Ctrl + molette (ou pincer) pour zoomer, glisser pour déplacer. Cliquez un point pour le mettre en A ou en B.
@@ -1068,8 +1081,8 @@ function PcaBiplot({
 
                     {/* Trait entre les deux sélectionnés. */}
                     {selected[0] && selected[1] && (() => {
-                      const sa = result.scores.find((s) => s.id === selected[0]!.id);
-                      const sb = result.scores.find((s) => s.id === selected[1]!.id);
+                      const sa = pts.find((s) => s.id === selected[0]!.id);
+                      const sb = pts.find((s) => s.id === selected[1]!.id);
                       if (!sa || !sb) return null;
                       return <line x1={vxs(sa.x)} y1={vys(sa.y)} x2={vxs(sb.x)} y2={vys(sb.y)} stroke={C.muted} strokeWidth={1} strokeDasharray="3 3" />;
                     })()}
@@ -1080,6 +1093,11 @@ function PcaBiplot({
                       const slot = selected[0]?.id === s.id ? 0 : selected[1]?.id === s.id ? 1 : null;
                       const isMatch = matchIds.has(s.id);
                       const isMenu = menu?.id === s.id;
+                      const qy = qualById.get(s.id);
+                      // Opacité = qualité de représentation (pâle = mal représenté en 2D) ; une
+                      // recherche active prime (estompe fort les non-correspondants).
+                      const fade = qy == null ? 0.85 : 0.18 + 0.82 * qy;
+                      const op = q ? (isMatch || isSel ? 1 : 0.15) : isSel ? 1 : fade;
                       const r = isSel ? 7 : isMatch || isMenu ? 6 : 5;
                       // Zone de tap invisible plus large que le point : vise au doigt sur mobile.
                       const hitR = Math.max(r + 9, 15);
@@ -1094,7 +1112,7 @@ function PcaBiplot({
                             fill={slot != null ? SLOT_COLOR[slot] : COLOR_BY_CAT.get(f.categorie) ?? C.muted}
                             stroke={isSel ? C.text : isMatch || isMenu ? C.accent2 : 'none'}
                             strokeWidth={isSel ? 2 : isMatch || isMenu ? 2 : 0}
-                            opacity={q && !isMatch && !isSel ? 0.25 : isSel ? 1 : 0.8}
+                            opacity={op}
                             pointerEvents="none"
                           />
                           <circle
@@ -1130,6 +1148,16 @@ function PcaBiplot({
                     }}
                   >
                     {hoverFood.nom}
+                    {(() => {
+                      const qy = qualById.get(hover.id);
+                      if (qy == null) return null;
+                      const low = qy < 0.4;
+                      return (
+                        <div className="small" style={{ color: low ? C.warn : C.muted, marginTop: 2 }}>
+                          {method === 'pca' ? 'cos²' : 'fidélité'} {fmt(qy * 100)} %{low ? ' · mal représenté en 2D' : ''}
+                        </div>
+                      );
+                    })()}
                   </div>
                 )}
                 {menu && (() => {
