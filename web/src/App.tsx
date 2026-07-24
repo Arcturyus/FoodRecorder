@@ -19,6 +19,7 @@ import { FavoriteMeals } from './ui/FavoriteMeals';
 import { EntryCard } from './ui/EntryCard';
 import { Totals } from './ui/Totals';
 import { DayAdviceCard } from './ui/DayAdvice';
+import { DayNote } from './ui/DayNote';
 import { Foods } from './ui/Foods';
 import { Stats } from './ui/Stats';
 import { Weight } from './ui/Weight';
@@ -139,6 +140,7 @@ export function App() {
             todayEntries.map((e) => <EntryCard key={e.id} entry={e} />)
           )}
           <Sun />
+          <DayNote date={today} />
           <DayAdviceCard totals={totals} />
         </>
       )}

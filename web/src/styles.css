@@ -589,6 +589,16 @@ button.chip-active:hover { filter: brightness(1.08); }
   border-radius: 50%;
   background: var(--accent-2);
 }
+/* Pastille « note ce jour » : coin bas-gauche, hors de la zone du bouton mute (haut-droite). */
+.cal-note {
+  position: absolute;
+  bottom: 1px;
+  left: 2px;
+  font-size: 10px;
+  line-height: 1;
+  opacity: 0.85;
+  pointer-events: none;
+}
 .cal-day { font-size: 12px; font-weight: 600; color: var(--muted); }
 .cal-cell.filled .cal-day { color: var(--text); }
 .cal-kcal { font-size: 12px; font-variant-numeric: tabular-nums; font-weight: 600; }

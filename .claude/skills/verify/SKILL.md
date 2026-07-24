@@ -5,6 +5,19 @@ description: Lancer FoodRecorder et le piloter dans un vrai navigateur pour obse
 
 # Vérifier FoodRecorder en le faisant tourner
 
+## Quand s'en passer
+
+La vérif navigateur a un coût (lancer Vite, piloter Chrome) : **elle n'est pas
+toujours nécessaire**. Pour un petit changement dont la correction est déjà
+établie autrement — logique pure couverte par un test (`npx vitest run`),
+recalibrage d'une constante, typecheck (`npx tsc --noEmit`) qui suffit à prouver
+la cohérence, ou modif triviale sans rendu à observer — ne pas lancer le
+navigateur : signaler que c'est vérifié par test/typecheck et s'arrêter là.
+Réserver le navigateur aux changements dont **le rendu ou l'interaction** est ce
+qu'on veut réellement constater (nouveau composant, mise en page, flux UI).
+
+## Faire tourner
+
 App React + Vite, 100 % navigateur : **la surface est la page**. Pas de backend
 propre (Supabase et le pont Claude Code sont optionnels). Tout l'état vit dans
 `localStorage`, clé **`foodrecorder-v1`**, au format zustand-persist :

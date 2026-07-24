@@ -209,6 +209,7 @@ describe('jonction et création', () => {
     expect(Object.keys(useSyncStore.getState().pending)).toHaveLength(0);
     // Les singletons sont aussi poussés.
     expect((db.rows.profile_kv ?? []).map((r) => r.key).sort()).toEqual([
+      'dayNotes',
       'mutedDays',
       'nutrientImportance',
       'profile',

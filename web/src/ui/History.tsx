@@ -10,6 +10,7 @@ import { Capture } from './Capture';
 import { EntryCard } from './EntryCard';
 import { ManualAdd } from './ManualAdd';
 import { Sun } from './Sun';
+import { DayNote } from './DayNote';
 import { UncertaintyBadge } from './UncertaintyBadge';
 import { fmt } from './format';
 
@@ -39,6 +40,7 @@ export function History() {
   const entries = useStore((s) => s.entries);
   const profile = useStore((s) => s.profile);
   const mutedDays = useStore((s) => s.mutedDays);
+  const dayNotes = useStore((s) => s.dayNotes);
   const toggleDayMute = useStore((s) => s.toggleDayMute);
   const targets = useMemo(() => computeTargets(profile), [profile]);
   const kcalTarget = targets.find((t) => t.key === 'kcal')?.optimal ?? 2000;
@@ -127,6 +129,7 @@ export function History() {
                 isFuture={date > today}
                 selected={date === editDate}
                 found={foundDates.has(date)}
+                hasNote={!!dayNotes[date]}
                 muted={hasEntries && !counted}
                 fasting={!hasEntries && counted}
                 counted={counted}
@@ -152,6 +155,7 @@ export function History() {
           <span>
             <i className="cal-legend fasting" /> jeûne (compté 0)
           </span>
+          <span>📝 note ce jour</span>
           {foundDates.size > 0 && (
             <span>
               <i className="cal-legend found" /> contient l'aliment recherché
@@ -178,6 +182,7 @@ function CalCell({
   isFuture,
   selected,
   found,
+  hasNote,
   muted,
   fasting,
   counted,
@@ -192,6 +197,8 @@ function CalCell({
   selected: boolean;
   /** Jour contenant l'aliment recherché (mis en évidence). */
   found: boolean;
+  /** Jour portant une note libre (pastille 📝). */
+  hasNote: boolean;
   /** Jour rempli mais exclu des moyennes (mal rempli). */
   muted: boolean;
   /** Jour vide marqué comme jeûne (compté comme 0). */
@@ -222,6 +229,7 @@ function CalCell({
       data-tip={found ? 'Contient l’aliment recherché' : undefined}
     >
       <span className="cal-day">{day}</span>
+      {hasNote && <span className="cal-note" aria-label="Note ce jour" data-tip="Note ce jour">📝</span>}
       {!isFuture && (
         <span
           className="cal-mute"
@@ -460,6 +468,8 @@ function DayEditor({
       </label>
 
       {flash && <div className="status">{flash}</div>}
+
+      <DayNote key={date} date={date} />
 
       {dayEntries.length === 0 ? (
         <div className="empty">Aucune entrée ce jour — ajoutez ce que vous avez mangé ci-dessous.</div>

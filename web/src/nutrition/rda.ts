@@ -90,9 +90,9 @@ export const RDA: RdaEntry[] = [
     role: 'Contiennent les acides gras essentiels oméga 3 et 6 ; membranes cellulaires, signalisation.',
   },
   {
-    key: 'omega3', label: 'Oméga 3', unit: 'g', rda: 2, goal: 'atLeast', optimalFactor: 1.5, importance: 1.5,
+    key: 'omega3', label: 'Oméga 3', unit: 'g', rda: 1, goal: 'atLeast', optimalFactor: 2, importance: 1.5,
     role: 'Anti-inflammatoire ; EPA/DHA soutiennent cœur, cerveau et récupération musculaire.',
-    optimalNote: 'Équivalent pondéré = ALA ÷ 10 + EPA + DHA (l\'ALA végétal est mal converti par le corps, ~10 % de rendement) ; c\'est cette valeur qui compte pour la cible, les rapports et le score. AS ALA brut ≈ 2 g ; optimal ~3 g d\'équivalent avec EPA+DHA relevés (250-500 mg) pour l\'effet anti-inflammatoire.',
+    optimalNote: 'Équivalent pondéré = ALA ÷ 10 + EPA + DHA (l\'ALA végétal est mal converti par le corps, ~10 % de rendement) ; c\'est cette valeur qui compte pour la cible, les rapports et le score. Plancher 1 g, optimal 2 g d\'équivalent : l\'essentiel doit venir de l\'EPA/DHA direct (l\'ALA, même à ~2 g, ne pèse que ~0,2 g éq.). ~2 portions de poisson gras/semaine ≈ 250-500 mg/j d\'EPA+DHA ; pour viser l\'optimal sans poisson quotidien, appoint d\'huile de poisson/algue.',
   },
   {
     key: 'omega6', label: 'Oméga 6', unit: 'g', rda: 10, goal: 'atLeast', optimalFactor: 1,

@@ -3,8 +3,9 @@
 est ce que supabse peut bloquer ? message de confirmation que c'est bien sur supabase en attente
 - [ ] sous etimation DHA EPA ou alors surestimation du besoin non ?
 "Donc 2 portions de 100 g de poisson gras par semaine ≈ 3–4 g/semaine ≈ 450–570 mg/jour en moyenne. La recommandation est couverte. Pas besoin de saumon quotidien."
+- ajouter la possibilité de rajouter des notes quelquonque sur un jour (aujourd'hui + calendrier") j'aimerais par ex mettre pour le 24/07/2026 mettre " J'ai eu un coup de soleil torse et dos"
 
-- [ ] bug sur mon tel de vocal sur chrome il repte plein de fois ce que je dis (exemple : "250g 25025050 de skyr ski")
+- [x] bug sur mon tel de vocal sur chrome il repte plein de fois ce que je dis (exemple : "250g 25025050 de skyr ski")
 
 - [x] Un système pour ne pas compter certains jour dans les moyennes, une sorte de mute sur le calendrier on peut mute entièrement des jours (par exemple parce qu'on sait qu'on a mal rempli).
 Les jours vident sont automatiquement mute sur le calendrier (il indiquent probablement un non remplissage ce jour là, et si c'est en fait un jeûne tu peux demute)

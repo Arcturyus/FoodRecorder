@@ -29,6 +29,8 @@ export interface BackupData {
   sunExposures?: SunExposure[];
   /** Jours exclus des moyennes / forcés comptés (jeûne). Absent des vieilles sauvegardes. */
   mutedDays?: Record<string, boolean>;
+  /** Notes libres par jour. Absent des vieilles sauvegardes. */
+  dayNotes?: Record<string, string>;
   /** Overrides d'importance des nutriments. Absent des vieilles sauvegardes. */
   nutrientImportance?: Partial<Record<NutrientKey, number>>;
 }
@@ -49,6 +51,7 @@ export function buildBackup(): BackupData {
     weightConfig: s.weightConfig,
     sunExposures: s.sunExposures,
     mutedDays: s.mutedDays,
+    dayNotes: s.dayNotes,
     nutrientImportance: s.nutrientImportance,
   };
 }
@@ -78,6 +81,7 @@ export function importBackup(text: string): string {
     ...(b.weightConfig ? { weightConfig: b.weightConfig } : {}),
     sunExposures: b.sunExposures ?? [],
     mutedDays: b.mutedDays ?? {},
+    dayNotes: b.dayNotes ?? {},
     nutrientImportance: b.nutrientImportance ?? {},
   });
   const days = new Set(b.entries.map((e) => e.date)).size;

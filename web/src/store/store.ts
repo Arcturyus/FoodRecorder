@@ -218,6 +218,12 @@ interface AppState {
    */
   mutedDays: Record<string, boolean>;
   /**
+   * Notes libres par jour (YYYY-MM-DD → texte). Purement informatif : aucun impact
+   * sur les moyennes/stats/calculs (mémo rattaché au jour, ex. « coup de soleil torse
+   * et dos »). Sparse : seuls les jours annotés y figurent (chaîne vide ⇒ clé effacée).
+   */
+  dayNotes: Record<string, string>;
+  /**
    * Overrides d'importance par nutriment (multiplie le poids d'un manque/excès dans
    * les recommandations et conseils). Sparse : seuls les nutriments réglés par
    * l'utilisateur y figurent ; le reste suit le défaut RDA (cf. `effectiveImportance`).
@@ -242,6 +248,9 @@ interface AppState {
   setDayMute: (date: string, muted: boolean) => void;
   /** Bascule le « compté / non compté » d'un jour (utilise le défaut selon son remplissage). */
   toggleDayMute: (date: string) => void;
+
+  /** Fixe la note libre d'un jour. Une chaîne vide (après trim) efface la note. */
+  setDayNote: (date: string, note: string) => void;
 
   /** Fixe l'importance d'un nutriment (multiplie son poids dans les reco/conseils). */
   setNutrientImportance: (key: NutrientKey, value: number) => void;
@@ -328,6 +337,7 @@ export const useStore = create<AppState>()(
       syncCursor: null,
       lastAutoSave: null,
       mutedDays: {},
+      dayNotes: {},
       nutrientImportance: {},
 
       setSttEngine: (e) => set({ sttEngine: e }),
@@ -356,6 +366,15 @@ export const useStore = create<AppState>()(
         // Compté actuellement ? → on le mute. Non compté ? → on le compte (jeûne).
         get().setDayMute(date, isDayCounted(s.mutedDays, hasEntries, date));
       },
+
+      setDayNote: (date, note) =>
+        set((s) => {
+          const trimmed = note.trim();
+          const next = { ...s.dayNotes };
+          if (trimmed) next[date] = trimmed;
+          else delete next[date];
+          return { dayNotes: next };
+        }),
 
       setNutrientImportance: (key, value) =>
         set((s) => ({ nutrientImportance: { ...s.nutrientImportance, [key]: value } })),
@@ -699,6 +718,7 @@ function mergePersisted(persisted: unknown, current: AppState): AppState {
     weightEntries: p.weightEntries ?? current.weightEntries,
     weightConfig: { ...current.weightConfig, ...(p.weightConfig ?? {}) },
     mutedDays: p.mutedDays ?? {},
+    dayNotes: p.dayNotes ?? {},
     nutrientImportance: p.nutrientImportance ?? {},
   };
 }
