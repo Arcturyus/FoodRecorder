@@ -932,6 +932,9 @@ button.chip-active:hover { filter: brightness(1.08); }
   border: 1px solid var(--border); background: var(--panel);
 }
 .advice-known { margin-left: 3px; color: var(--accent-2); font-weight: 700; }
+.advice-subhead { margin: 14px 0 6px; font-size: 13px; font-weight: 600; color: var(--muted); }
+.advice-subhead:first-of-type { margin-top: 4px; }
+.advice-macro { border-color: var(--accent); }
 
 .reco-h3 { margin: 14px 0 6px; font-size: 15px; }
 .reco-list { display: flex; flex-direction: column; gap: 8px; }

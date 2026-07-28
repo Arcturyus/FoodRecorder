@@ -1,7 +1,23 @@
 
+
+
+- [x] Les conseils du jour font surout micro là, ca serait bien deux sections : une avec des aliments pour combler tes macros avec tes calories restantes avec prio kcal et prot, et une comme là
+
+
+- [ ] micro changement bdd : fer si H mettre un besoin à 8mg de base (on gerera femme avec regles uen autre fois car je crois selon t'es dans tes regles ou non c'est plus), 
+
+- [ ] dans la sections recommandation sdu jour mettre une autre aliments si les 5 proposés dans la section ne le sont pas il en repropose d'autres 
+- [ ] dans ma consommation, ajoute un graph ou on selectionne un nutriment et il montre les aliments qui contribuent les plus parmi notre consommation à ce nutriment et à quel point 
+
+- [ ] on supprime la banque d'aliments en brut, mais plutôt on ajoute dans la banque un aliment qui revient (1 ou 2 fois jsp encore), ou en tout cas tout est decrit par le LLM, la banque sert que au stats (et donc ca peut etre cool de rajoouter de nouveaux éléments)
+(a brainstorm)
+
+
+
+
 - [ ] ERREUR : parfois le système en pont claude code sur tel prend bien une photo mais je recois une erreur la photo ne passe peut être pas sur supabase ? que voir ? faisons un diagnostic, et d'aillerus texte aussi là
 est ce que supabse peut bloquer ? message de confirmation que c'est bien sur supabase en attente
-- [ ] sous etimation DHA EPA ou alors surestimation du besoin non ?
+- [x] sous etimation DHA EPA ou alors surestimation du besoin non ?
 "Donc 2 portions de 100 g de poisson gras par semaine ≈ 3–4 g/semaine ≈ 450–570 mg/jour en moyenne. La recommandation est couverte. Pas besoin de saumon quotidien."
 - ajouter la possibilité de rajouter des notes quelquonque sur un jour (aujourd'hui + calendrier") j'aimerais par ex mettre pour le 24/07/2026 mettre " J'ai eu un coup de soleil torse et dos"
 

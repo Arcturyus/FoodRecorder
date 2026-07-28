@@ -152,7 +152,10 @@ export function FoodCompare({
 }) {
   const overrides = useStore((s) => s.nutrientImportance);
   const [mode, setMode] = useState<NormMode>('100kcal');
-  const [weighted, setWeighted] = useState(true);
+  // Pondération désactivée par défaut : sinon un nutriment à faible importance (ou ×0)
+  // est neutralisé et la carte s'aplatit (ex. « tout au milieu » avec 3 macros dont
+  // 2 peu pondérés). L'utilisateur l'active sciemment pour refléter ses priorités.
+  const [weighted, setWeighted] = useState(false);
   const [showArrows, setShowArrows] = useState(true);
   const [hideCats, setHideCats] = useState<Set<FoodCategory>>(new Set());
 
@@ -192,7 +195,7 @@ export function FoodCompare({
             </button>
           ))}
           <span style={{ width: 12 }} />
-          <label className="row small" style={{ gap: 6, alignItems: 'center', cursor: 'pointer' }} data-tip="Pondère proximité, voisins et carte par vos curseurs d'importance (créatine à ×0 ne compte plus, oméga 3 à ×2 compte double).">
+          <label className="row small" style={{ gap: 6, alignItems: 'center', cursor: 'pointer' }} data-tip="Applique vos curseurs d'importance (onglet Nutriments) à la proximité, aux voisins et à la carte : oméga 3 à ×2 compte double, créatine à ×0 ne compte plus. Désactivé par défaut car pondérer 2 ou 3 nutriments à 0 aplatit la carte (tous les points se regroupent au centre). Activez-le pour refléter vos priorités.">
             <input type="checkbox" checked={weighted} onChange={(e) => setWeighted(e.target.checked)} />
             Pondérer par mes importances
           </label>

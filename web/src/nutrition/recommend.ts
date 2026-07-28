@@ -476,8 +476,11 @@ export function dayAdvice(
   }
 
   // 3. Nutriments en retard sur le rythme de la journée (tous, triés par sévérité).
+  // Glucides/lipides/fibres sont exclus : déjà couverts dans la section macros
+  // (macroAdvice, laggingMacros) pour éviter de les afficher deux fois.
   const lagging = targets
     .filter((t) => t.goal === 'atLeast' && t.key !== 'kcal' && t.optimal > 0 && importance(t.key) > 0)
+    .filter((t) => !MACRO_SECONDARY_KEYS.includes(t.key))
     .map((t) => ({ t, relCov: totals[t.key] / t.optimal / p }))
     .filter(({ relCov }) => relCov < DAY_LAG_THRESHOLD);
 
@@ -506,6 +509,197 @@ function roundNeed(v: number): number {
   if (v >= 100) return Math.round(v / 10) * 10;
   if (v >= 10) return Math.round(v);
   return Math.round(v * 10) / 10;
+}
+
+// ---------------------------------------------------------------------------
+// Conseils du jour — section macros (calories restantes, priorité protéines)
+// ---------------------------------------------------------------------------
+
+/** Suggestion pour compléter les macros : ce qu'apporte une portion habituelle. */
+export interface MacroSuggestion {
+  food: Food;
+  portionG: number;
+  /** Protéines apportées par la portion (g). */
+  prot: number;
+  /** Énergie apportée par la portion (kcal). */
+  kcal: number;
+}
+
+export interface MacroAdvice {
+  /** Calories restantes vs objectif (peut être négatif = objectif dépassé). */
+  kcalLeft: number;
+  /** Protéines restantes vs objectif (g, ≥ 0). */
+  protLeft: number;
+  /** Ton du conseil selon l'état du jour. */
+  tone: 'lean' | 'balanced' | 'protDone';
+  /** Phrase de contexte + conseil adaptatif. */
+  text: string;
+  /** Autres macros en retard sur le rythme calorique (glucides/lipides/fibres). */
+  laggingMacros: { target: Target; remaining: number }[];
+  /** Aliments classés pour combler, protéines/kcal en priorité. */
+  suggestions: MacroSuggestion[];
+}
+
+/** Macros secondaires, prises en compte seulement si en retard (« reste si retard »). */
+export const MACRO_SECONDARY_KEYS: NutrientKey[] = ['glucides', 'lipides', 'fibres'];
+/** Nombre d'aliments suggérés dans la section macros. */
+const MACRO_MAX_SUGGESTIONS = 5;
+
+/**
+ * Section « compléter tes macros » de l'écran Aujourd'hui : combien de calories
+ * et de protéines il reste à couvrir, et quels aliments s'y prêtent le mieux.
+ *
+ * Contrairement aux alertes micronutriments (`dayAdvice`), cette section n'est
+ * PAS soumise au seuil d'avancement du jour (30 % des kcal) : savoir combien il
+ * reste à manger est utile dès la première entrée de la journée. Elle apparaît
+ * donc dès que `totals.kcal > 0`, et se retire d'elle-même quand protéines et
+ * calories sont couvertes (ou qu'il n'y a encore rien eu aujourd'hui).
+ *
+ * Le classement est piloté par les protéines et l'énergie restante, et il
+ * s'adapte à l'état de la journée : quand la marge calorique est faible mais
+ * qu'il manque beaucoup de protéines (ex. 80 % des kcal pour 40 % des prot),
+ * un malus de dépassement calorique fait remonter le très protéiné et maigre.
+ */
+export function macroAdvice(
+  totals: Nutrients,
+  targets: Target[],
+  foods: Food[],
+  consumedIds: Set<string> = new Set(),
+  importance: ImportanceFn = NEUTRAL_IMPORTANCE,
+): MacroAdvice | null {
+  if (totals.kcal <= 0) return null; // rien mangé aujourd'hui : rien à conseiller
+  const kcalT = targets.find((t) => t.key === 'kcal');
+  const protT = targets.find((t) => t.key === 'proteines');
+  if (!kcalT || !protT || kcalT.optimal <= 0 || protT.optimal <= 0) return null;
+  // Note : pas de garde sur importance('proteines') ici — ce curseur pondère le
+  // système de manques en micronutriments, pas le suivi macro/kcal qui est le
+  // cœur de cette section et doit rester visible même si l'utilisateur a mis
+  // les protéines en sourdine côté micronutriments.
+
+  const kcalLeft = kcalT.optimal - totals.kcal;
+  const protLeft = Math.max(0, protT.optimal - totals.proteines);
+  const kcalPct = totals.kcal / kcalT.optimal;
+  const protPct = totals.proteines / protT.optimal;
+
+  const protDone = protLeft <= Math.max(2, 0.03 * protT.optimal);
+  const kcalDone = kcalLeft <= Math.max(50, 0.03 * kcalT.optimal);
+  if (protDone && kcalDone) return null; // rien à compléter
+
+  // Macros secondaires en retard sur le rythme calorique du jour.
+  const p = Math.min(1, Math.max(kcalPct, 0.01));
+  const lagging = MACRO_SECONDARY_KEYS
+    .map((key) => targets.find((t) => t.key === key))
+    .filter((t): t is Target => !!t && t.optimal > 0 && importance(t.key) > 0)
+    .map((t) => ({ target: t, remaining: Math.max(0, t.optimal - totals[t.key]), relCov: totals[t.key] / t.optimal / p }))
+    .filter((m) => m.relCov < DAY_LAG_THRESHOLD && m.remaining > 0);
+
+  // Ton adaptatif : protéines en retard sur les calories ⇒ viser maigre & très protéiné.
+  const proteinBehind = !protDone && (kcalLeft <= 0 || kcalPct - protPct >= 0.15);
+  let tone: MacroAdvice['tone'];
+  let text: string;
+  if (protDone) {
+    tone = 'protDone';
+    text = `Protéines bouclées — il te reste environ ${roundNeed(Math.max(0, kcalLeft))} kcal, à compléter plus librement.`;
+  } else if (proteinBehind) {
+    tone = 'lean';
+    const head = kcalLeft <= 0
+      ? `Objectif calorique atteint mais il manque encore ${roundNeed(protLeft)} g de protéines`
+      : `Calories bien avancées (${Math.round(kcalPct * 100)} %) mais pas les protéines (${Math.round(protPct * 100)} %)`;
+    text = `${head} : privilégie des aliments très protéinés et peu caloriques (volaille maigre, poisson blanc, fromage blanc 0 %, œufs…).`;
+  } else {
+    tone = 'balanced';
+    text = `Il reste environ ${roundNeed(Math.max(0, kcalLeft))} kcal et ${roundNeed(protLeft)} g de protéines : ces aliments t'en rapprochent.`;
+  }
+
+  const suggestions = rankMacroFoods(foods, { kcalLeft, protLeft, lagging, consumedIds });
+
+  return {
+    kcalLeft,
+    protLeft,
+    tone,
+    text,
+    laggingMacros: lagging.map(({ target, remaining }) => ({ target, remaining })),
+    suggestions,
+  };
+}
+
+/**
+ * Classe les aliments pour combler les macros : les protéines dominent le score,
+ * l'énergie restante compte peu, et un malus de dépassement calorique — d'autant
+ * plus fort que la marge kcal est faible — favorise les aliments protéinés maigres
+ * quand c'est ce dont la journée a besoin. Diversifie les catégories, garde si
+ * possible un aliment déjà consommé.
+ */
+function rankMacroFoods(
+  foods: Food[],
+  ctx: {
+    kcalLeft: number;
+    protLeft: number;
+    lagging: { target: Target; remaining: number }[];
+    consumedIds: Set<string>;
+  },
+): MacroSuggestion[] {
+  const { kcalLeft, protLeft } = ctx;
+  const protDen = Math.max(protLeft, 1);
+  const kcalPos = Math.max(kcalLeft, 0);
+  // Échelle du malus : plus la marge calorique est faible, plus un aliment gras
+  // et peu protéiné est puni ⇒ remonte le très protéiné quand la journée l'exige.
+  const overScale = Math.max(kcalPos, 300);
+  // Poids fixe (pas de dépendance à importance('proteines') : ce curseur pondère
+  // le système de manques en micronutriments, pas ce classement macro).
+  const wProt = 5;
+
+  const scored = foods
+    .filter((f) => f.categorie !== 'supplement' && f.n.proteines > 0)
+    .map((f) => {
+      const portionG = portionGrams(f);
+      const factor = portionG / 100;
+      const prot = f.n.proteines * factor;
+      const kcal = f.n.kcal * factor;
+
+      const protFill = protLeft > 0 ? Math.min(prot, protLeft) / protDen : 0;
+      let laggingBonus = 0;
+      for (const m of ctx.lagging) {
+        const amt = f.n[m.target.key] * factor;
+        if (amt > 0) laggingBonus += (0.3 * Math.min(amt, m.remaining)) / Math.max(m.remaining, 1);
+      }
+      // Tant qu'il manque des protéines, chaque calorie « coûte » (malus adaptatif :
+      // marge serrée ⇒ le maigre très protéiné remonte). Une fois les protéines
+      // couvertes, on cherche au contraire à remplir les calories restantes.
+      let score: number;
+      if (protLeft > 0) {
+        score = wProt * protFill + laggingBonus - (2 * kcal) / overScale;
+      } else {
+        const kcalFill = kcalPos > 0 ? Math.min(kcal, kcalPos) / kcalPos : 0;
+        const overshoot = Math.max(0, kcal - kcalPos) / overScale;
+        score = kcalFill + laggingBonus - 2 * overshoot;
+      }
+      return { food: f, portionG, prot, kcal, score };
+    })
+    .filter((s) => s.score > 0)
+    .sort((a, b) => b.score - a.score || b.prot - a.prot);
+
+  // 1re passe : le meilleur de chaque catégorie encore inutilisée (variété).
+  const picked: typeof scored = [];
+  const usedCategories = new Set<string>();
+  for (const c of scored) {
+    if (picked.length >= MACRO_MAX_SUGGESTIONS) break;
+    if (usedCategories.has(c.food.categorie)) continue;
+    usedCategories.add(c.food.categorie);
+    picked.push(c);
+  }
+  // 2e passe : complète avec les meilleurs restants.
+  for (const c of scored) {
+    if (picked.length >= MACRO_MAX_SUGGESTIONS) break;
+    if (!picked.includes(c)) picked.push(c);
+  }
+  // Garantit au moins un aliment déjà mangé, si l'un des candidats l'est.
+  if (picked.length > 0 && !picked.some((s) => ctx.consumedIds.has(s.food.id))) {
+    const known = scored.find((c) => ctx.consumedIds.has(c.food.id));
+    if (known) picked[picked.length - 1] = known;
+  }
+
+  return picked.map(({ food, portionG, prot, kcal }) => ({ food, portionG, prot, kcal }));
 }
 
 // ---------------------------------------------------------------------------
