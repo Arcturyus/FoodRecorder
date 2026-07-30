@@ -1,8 +1,15 @@
-import { useMemo } from 'react';
+import { useMemo, useState } from 'react';
 import type { Nutrients } from '../nutrition/types';
 import { useStore, useEffectiveFoods } from '../store/store';
 import { computeTargets } from '../nutrition/targets';
-import { dayAdvice, macroAdvice, DAY_MIN_PROGRESS, makeImportanceFn } from '../nutrition/recommend';
+import {
+  dayAdvice,
+  macroAdvice,
+  DAY_MIN_PROGRESS,
+  DAY_FOOD_SUGGESTIONS,
+  MACRO_MAX_SUGGESTIONS,
+  makeImportanceFn,
+} from '../nutrition/recommend';
 import type { DayAdviceItem, Suggestion, MacroAdvice, MacroSuggestion } from '../nutrition/recommend';
 import { fmt } from './format';
 
@@ -21,6 +28,38 @@ function SuggestionChip({ s, unit, icon, known }: { s: Suggestion; unit: string;
         {' '}({fmt(s.portionG, s.portionG < 10 ? 1 : 0)} g → {fmt(s.amount, s.amount < 10 ? 1 : 0)} {unit})
       </span>
     </span>
+  );
+}
+
+/**
+ * Fait défiler une liste de suggestions par pages : l'écran n'en montre qu'une,
+ * et « ⟳ Autres » passe à la suivante (retour au début en fin de liste). Sert
+ * quand aucune des propositions ne convient — pas envie, rien de ça au frigo —
+ * sans pour autant afficher un mur d'aliments.
+ */
+function useSuggestionPage<T>(all: T[], pageSize: number) {
+  const [page, setPage] = useState(0);
+  const pages = Math.max(1, Math.ceil(all.length / pageSize));
+  const current = page % pages; // la liste peut rétrécir entre deux rendus
+  return {
+    shown: all.slice(current * pageSize, (current + 1) * pageSize),
+    pages,
+    page: current,
+    next: () => setPage((p) => (p + 1) % pages),
+  };
+}
+
+/** Bouton « ⟳ Autres » d'une rangée de suggestions (masqué s'il n'y a qu'une page). */
+function MoreSuggestions({ page, pages, onNext }: { page: number; pages: number; onNext: () => void }) {
+  if (pages <= 1) return null;
+  return (
+    <button
+      className="ghost small advice-more"
+      onClick={onNext}
+      data-tip="Aucun ne vous convient ? En proposer d'autres qui comblent le même manque"
+    >
+      ⟳ Autres <span className="mono" style={{ opacity: 0.6 }}>{page + 1}/{pages}</span>
+    </button>
   );
 }
 
@@ -44,6 +83,7 @@ function MacroChip({ s, known }: { s: MacroSuggestion; known: boolean }) {
 
 /** Section « compléter tes macros » : calories/protéines restantes + aliments adaptés. */
 function MacroSection({ macro, consumedIds }: { macro: MacroAdvice; consumedIds: Set<string> }) {
+  const sugg = useSuggestionPage(macro.suggestions, MACRO_MAX_SUGGESTIONS);
   return (
     <div className="advice-item advice-macro">
       <div className="small">
@@ -60,9 +100,33 @@ function MacroSection({ macro, consumedIds }: { macro: MacroAdvice; consumedIds:
       )}
       {macro.suggestions.length > 0 && (
         <div className="row advice-sugg" style={{ gap: 6, flexWrap: 'wrap', marginTop: 6 }}>
-          {macro.suggestions.map((s) => (
+          {sugg.shown.map((s) => (
             <MacroChip key={s.food.id} s={s} known={consumedIds.has(s.food.id)} />
           ))}
+          <MoreSuggestions page={sugg.page} pages={sugg.pages} onNext={sugg.next} />
+        </div>
+      )}
+    </div>
+  );
+}
+
+/** Une alerte micronutriment : situation + suppléments/aliments qui la corrigent. */
+function AdviceItemCard({ it, consumedIds }: { it: DayAdviceItem; consumedIds: Set<string> }) {
+  const sugg = useSuggestionPage(it.foodSuggestions, DAY_FOOD_SUGGESTIONS);
+  return (
+    <div className="advice-item">
+      <div className="small">
+        {KIND_ICON[it.kind]} <strong>{it.target?.label ?? it.ratioLabel}</strong> — {it.text}
+      </div>
+      {(it.supplements.length > 0 || it.foodSuggestions.length > 0) && (
+        <div className="row advice-sugg" style={{ gap: 6, flexWrap: 'wrap', marginTop: 4 }}>
+          {it.supplements.map((s) => (
+            <SuggestionChip key={s.food.id} s={s} unit={it.target?.unit ?? ''} icon="💊" known={consumedIds.has(s.food.id)} />
+          ))}
+          {sugg.shown.map((s) => (
+            <SuggestionChip key={s.food.id} s={s} unit={it.target?.unit ?? it.suggestionUnit ?? ''} known={consumedIds.has(s.food.id)} />
+          ))}
+          <MoreSuggestions page={sugg.page} pages={sugg.pages} onNext={sugg.next} />
         </div>
       )}
     </div>
@@ -127,21 +191,7 @@ export function DayAdviceCard({ totals }: { totals: Nutrients }) {
               {macro && <h3 className="advice-subhead">🔬 Micronutriments &amp; équilibre</h3>}
               <div className="advice-list">
                 {items.map((it, i) => (
-                  <div className="advice-item" key={i}>
-                    <div className="small">
-                      {KIND_ICON[it.kind]} <strong>{it.target?.label ?? it.ratioLabel}</strong> — {it.text}
-                    </div>
-                    {(it.supplements.length > 0 || it.foodSuggestions.length > 0) && (
-                      <div className="row advice-sugg" style={{ gap: 6, flexWrap: 'wrap', marginTop: 4 }}>
-                        {it.supplements.map((s) => (
-                          <SuggestionChip key={s.food.id} s={s} unit={it.target?.unit ?? ''} icon="💊" known={consumedIds.has(s.food.id)} />
-                        ))}
-                        {it.foodSuggestions.map((s) => (
-                          <SuggestionChip key={s.food.id} s={s} unit={it.target?.unit ?? it.suggestionUnit ?? ''} known={consumedIds.has(s.food.id)} />
-                        ))}
-                      </div>
-                    )}
-                  </div>
+                  <AdviceItemCard key={`${it.target?.key ?? it.ratioLabel ?? i}`} it={it} consumedIds={consumedIds} />
                 ))}
               </div>
             </>

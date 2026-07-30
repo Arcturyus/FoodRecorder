@@ -1,6 +1,7 @@
 import { createClient, type SupabaseClient } from '@supabase/supabase-js';
 import type { ExtractedItem } from '../nutrition/types';
 import type { SunExposure } from '../sun/vitaminD';
+import type { WeightDraft } from '../extraction/weight';
 
 /**
  * Synchronisation optionnelle entre appareils via une table Supabase partagée
@@ -59,11 +60,20 @@ export interface SunEntryPayload extends StampedPayload {
   sorties: SunPayloadExposure[];
 }
 
+/** Une pesée prête à enregistrer (l'id et l'horodatage sont locaux). */
+export type WeightPayloadEntry = WeightDraft;
+
+/** Résultat d'une dictée de pesée analysée, à rejouer sur les autres appareils. */
+export interface WeightEntryPayload extends StampedPayload {
+  transcript: string;
+  pesee: WeightPayloadEntry;
+}
+
 /** Kinds déposés dans la file : dictées/photos en attente, et résultats traités. */
-export type SyncKind = 'transcript' | 'image' | 'entry' | 'sun' | 'sun-entry';
+export type SyncKind = 'transcript' | 'image' | 'entry' | 'sun' | 'sun-entry' | 'weight' | 'weight-entry';
 
 /** Kinds « résultat » que les autres appareils rejouent dans leur journal. */
-export const RESULT_KINDS = ['entry', 'sun-entry'] as const;
+export const RESULT_KINDS = ['entry', 'sun-entry', 'weight-entry'] as const;
 
 interface SyncRow<T> {
   id: string;
@@ -165,6 +175,28 @@ export async function pushSunTranscript(device: string, transcript: string, date
   );
 }
 
+/** Récupère les dictées de pesée en attente d'analyse. */
+export function fetchPendingWeight(): Promise<SyncRow<TranscriptPayload>[]> {
+  return fetchPending<TranscriptPayload>('weight');
+}
+
+/** Dépose une dictée de pesée en attente d'analyse par un autre appareil. */
+export async function pushWeightTranscript(device: string, transcript: string, date?: string, clientTime?: number): Promise<void> {
+  if (!supabase) return;
+  const payload: TranscriptPayload = { transcript, ...(date ? { date } : {}), ...(clientTime ? { clientTime } : {}) };
+  await withRetry('envoi de la dictée de pesée', () =>
+    supabase!.from('sync_queue').insert({ device, kind: 'weight', payload, processed: false }),
+  );
+}
+
+/** Dépose une pesée analysée, pour que les autres appareils l'enregistrent. */
+export async function pushWeightEntry(device: string, entry: WeightEntryPayload): Promise<void> {
+  if (!supabase) return;
+  await withRetry('publication de la pesée', () =>
+    supabase!.from('sync_queue').insert({ device, kind: 'weight-entry', payload: entry, processed: true }),
+  );
+}
+
 /** Dépose des sorties au soleil analysées, pour que les autres appareils les rejouent. */
 export async function pushSunEntry(device: string, entry: SunEntryPayload): Promise<void> {
   if (!supabase) return;
@@ -187,16 +219,18 @@ export async function pushEntry(device: string, entry: EntryPayload): Promise<vo
   );
 }
 
-/** Une ligne de résultat à rejouer : repas (`entry`) ou sorties au soleil (`sun-entry`). */
+/** Une ligne de résultat à rejouer : repas, sorties au soleil ou pesée. */
 export type ResultRow =
   | (SyncRow<EntryPayload> & { kind: 'entry' })
-  | (SyncRow<SunEntryPayload> & { kind: 'sun-entry' });
+  | (SyncRow<SunEntryPayload> & { kind: 'sun-entry' })
+  | (SyncRow<WeightEntryPayload> & { kind: 'weight-entry' });
 
 /**
  * Résultats traités par d'AUTRES appareils, déposés après le curseur temporel
- * donné — repas ET sorties au soleil confondus, dans l'ordre chronologique.
- * Les deux kinds partagent le même curseur : les lire ensemble évite qu'un
- * repas récent ne fasse sauter une sortie soleil plus ancienne (et inversement).
+ * donné — repas, sorties au soleil ET pesées confondus, dans l'ordre
+ * chronologique. Tous les kinds partagent le même curseur : les lire ensemble
+ * évite qu'un repas récent ne fasse sauter une sortie soleil plus ancienne
+ * (et inversement).
  */
 export async function fetchNewEntries(device: string, after: string | null): Promise<ResultRow[]> {
   if (!supabase) return [];

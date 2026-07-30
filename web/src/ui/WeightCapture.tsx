@@ -1,10 +1,11 @@
 import { useRef, useState } from 'react';
-import { useStore } from '../store/store';
+import { useStore, todayStr } from '../store/store';
 import { MicRecorder } from '../stt/recorder';
 import { isSttLoaded, loadStt, transcribe } from '../stt/whisper';
 import { NativeRecognizer } from '../stt/webspeech';
 import { extractWeight } from '../extraction/weight';
 import type { WeightPatch } from '../extraction/weight';
+import { isSyncConfigured, pushWeightTranscript } from '../sync/supabase';
 import { WEIGHT_METRICS } from '../weight/types';
 
 /** Résumé court des champs compris (pour vérification rapide). */
@@ -26,8 +27,12 @@ function summarize(patch: WeightPatch): string {
 
 /**
  * Dictée/saisie d'une pesée : mêmes moteurs STT et d'extraction que
- * l'alimentation, mais le résultat pré-remplit le formulaire de pesée
- * (via `onExtract`) plutôt que d'enregistrer directement.
+ * l'alimentation, mise en page identique au bloc « Qu'avez-vous mangé ? »
+ * (zone de saisie pleine largeur, boutons tactiles) — l'ancienne rangée serrée
+ * était inutilisable au téléphone. Le résultat pré-remplit le formulaire de
+ * pesée (via `onExtract`) plutôt que d'enregistrer directement ; si le pont
+ * Claude Code n'est pas joignable ici, la dictée part en file d'attente
+ * Supabase et l'ordinateur l'enregistrera.
  */
 export function WeightCapture({ onExtract }: { onExtract: (patch: WeightPatch) => void }) {
   const [text, setText] = useState('');
@@ -42,6 +47,7 @@ export function WeightCapture({ onExtract }: { onExtract: (patch: WeightPatch) =
   const cloudModel = useStore((s) => s.cloudModel);
   const sttEngine = useStore((s) => s.sttEngine);
   const sttModel = useStore((s) => s.sttModel);
+  const deviceId = useStore((s) => s.deviceId);
 
   const reviewHint = 'Vérifiez / corrigez le texte, puis cliquez « Analyser ».';
 
@@ -131,6 +137,24 @@ export function WeightCapture({ onExtract }: { onExtract: (patch: WeightPatch) =
       setStatus(`✓ Compris${via} : ${summarize(patch)}`);
       setText('');
     } catch (e) {
+      // Pont Claude Code indisponible ici (typiquement sur téléphone) : la dictée
+      // part en file d'attente Supabase pour que l'ordinateur l'analyse et
+      // enregistre la pesée, plutôt que d'être perdue. Même repli que Capture.
+      if (extractionMode === 'claudecode' && isSyncConfigured()) {
+        try {
+          // Jour local résolu ICI + heure d'envoi : la pesée sera datée du moment
+          // de la dictée, pas de l'heure du traitement différé (cf. poller).
+          await pushWeightTranscript(deviceId, clean, todayStr(), Date.now());
+          setText('');
+          setStatus(
+            '✓ Envoyée sur Supabase (en attente) : le pont Claude Code n’est pas joignable ici, la pesée sera enregistrée dès que l’ordinateur sera disponible.',
+          );
+          return;
+        } catch (syncErr) {
+          setStatus(`Échec de la mise en file d'attente : ${(syncErr as Error).message}`);
+          return;
+        }
+      }
       setStatus(`Erreur : ${(e as Error).message}`);
     } finally {
       setBusy(false);
@@ -138,9 +162,18 @@ export function WeightCapture({ onExtract }: { onExtract: (patch: WeightPatch) =
   }
 
   return (
-    <div className="panel">
+    <div className="panel capture">
       <h2>Dicter une pesée</h2>
-      <div className="mic-row">
+      <textarea
+        className="capture-input"
+        placeholder="Dictez ou tapez : « hier matin 68,5 kg, masse grasse 18, eau 53, muscle 55, à jeun » (la date dictée est comprise)"
+        value={text}
+        onChange={(e) => setText(e.target.value)}
+        onKeyDown={(e) => {
+          if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) analyze();
+        }}
+      />
+      <div className="capture-actions">
         <button
           className={`record-btn ${recording ? 'rec' : 'primary'}`}
           onClick={handleRecord}
@@ -148,15 +181,7 @@ export function WeightCapture({ onExtract }: { onExtract: (patch: WeightPatch) =
         >
           {recording ? '⏹ Arrêter' : '🎙 Dicter'}
         </button>
-        <textarea
-          placeholder="…ou tapez : « hier matin 68,5 kg, masse grasse 18, eau 53, muscle 55, à jeun » (la date dictée est comprise)"
-          value={text}
-          onChange={(e) => setText(e.target.value)}
-          onKeyDown={(e) => {
-            if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) analyze();
-          }}
-        />
-        <button onClick={analyze} disabled={busy || !text.trim()}>
+        <button className="capture-add" onClick={analyze} disabled={busy || !text.trim()}>
           Analyser
         </button>
       </div>
@@ -164,6 +189,9 @@ export function WeightCapture({ onExtract }: { onExtract: (patch: WeightPatch) =
       <div className="hint">
         La dictée remplit le champ : relisez, puis « Analyser » pré-remplit le formulaire ci-dessous (à valider).
         Utilise le même moteur d'extraction que l'alimentation (réglable dans « Réglages »).
+        {extractionMode === 'claudecode' &&
+          isSyncConfigured() &&
+          ' Sans le pont Claude Code sur cet appareil, la dictée est mise en attente sur Supabase et enregistrée par l’ordinateur.'}
       </div>
     </div>
   );

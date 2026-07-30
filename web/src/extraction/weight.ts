@@ -32,6 +32,38 @@ export type WeightPatch = Partial<
 
 export type WeightSource = 'anthropic' | 'claudecode' | 'llm' | 'rules';
 
+/** Pesée complète, prête à enregistrer (l'id et l'horodatage restent locaux). */
+export type WeightDraft = Omit<WeightEntry, 'id' | 'createdAt'>;
+
+/**
+ * Complète un patch dicté en pesée enregistrable, pour le traitement DIFFÉRÉ par
+ * le pont Claude Code : ce poste n'a pas le formulaire de l'appareil qui a dicté,
+ * les champs non dits prennent donc les défauts du formulaire (à jeun, nu) et le
+ * jour/l'heure estampillés par l'émetteur. Renvoie null sans poids : une pesée
+ * sans poids n'a pas de sens et ne doit pas être inventée.
+ */
+export function completeWeightEntry(
+  patch: WeightPatch,
+  defaults: { date: string; heure: string; source: WeightEntry['source'] },
+): WeightDraft | null {
+  if (patch.poids == null || patch.poids <= 0) return null;
+  return {
+    date: patch.date ?? defaults.date,
+    heure: patch.heure ?? defaults.heure,
+    aJeun: patch.aJeun ?? true,
+    nu: patch.nu ?? true,
+    poids: patch.poids,
+    masseGrasse: patch.masseGrasse,
+    eau: patch.eau,
+    masseMusculaire: patch.masseMusculaire,
+    masseOsseuse: patch.masseOsseuse,
+    graisseViscerale: patch.graisseViscerale,
+    metabolismeBasalMachine: patch.metabolismeBasalMachine,
+    remarque: patch.remarque,
+    source: defaults.source,
+  };
+}
+
 /** Date locale YYYY-MM-DD (dupliquée du store pour éviter un import circulaire). */
 function localDate(d = new Date()): string {
   const y = d.getFullYear();

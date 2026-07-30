@@ -17,12 +17,14 @@ import type { Food, FoodCategory, NutrientKey } from '../nutrition/types';
 import { sunVitDForDate } from '../sun/vitaminD';
 import {
   PeriodSelector,
+  GranularitySelector,
+  groupDates,
   resolveRange,
   datesInRange,
   rangeDays,
   defaultPeriodState,
 } from './PeriodSelector';
-import type { PeriodState } from './PeriodSelector';
+import type { PeriodState, Granularity, DateBucket } from './PeriodSelector';
 import { fmt, CATEGORY_LABELS } from './format';
 
 /**
@@ -76,6 +78,8 @@ export function FoodConsumption() {
   const [period, setPeriod] = useState<PeriodState>(defaultPeriodState);
   const [excludeSupplements, setExcludeSupplements] = useState(true);
   const [mode, setMode] = useState<ConsoMode>('classement');
+  /** Pas de temps des graphiques de détail (une barre par jour, semaine ou mois). */
+  const [gran, setGran] = useState<Granularity>('jour');
 
   /** 1re date enregistrée (borne « Tout »). */
   const earliest = useMemo(() => {
@@ -117,7 +121,7 @@ export function FoodConsumption() {
           Par nutriment
         </button>
       </div>
-      <div className="row" style={{ alignItems: 'center', marginTop: 10 }}>
+      <div className="row" style={{ alignItems: 'center', marginTop: 10, gap: 16, flexWrap: 'wrap' }}>
         <label
           className="row small"
           style={{ gap: 6, alignItems: 'center', cursor: 'pointer' }}
@@ -130,6 +134,13 @@ export function FoodConsumption() {
           />
           Sans les suppléments
         </label>
+        {mode !== 'ensemble' && (
+          <GranularitySelector
+            value={gran}
+            onChange={setGran}
+            tip="Regroupe les barres des graphiques de détail (« quand ? », « combien ? ») par jour, semaine ou mois."
+          />
+        )}
       </div>
       {mode === 'classement' && (
         <>
@@ -137,7 +148,7 @@ export function FoodConsumption() {
             Classement sur la période, d'après votre journal. Cliquez un aliment pour voir <em>quand</em> vous l'avez
             mangé.
           </p>
-          <FoodFrequencyPanel entries={freqEntries} range={range} days={days} foods={foods} />
+          <FoodFrequencyPanel entries={freqEntries} range={range} days={days} foods={foods} gran={gran} />
         </>
       )}
       {mode === 'ensemble' && (
@@ -155,7 +166,7 @@ export function FoodConsumption() {
             Choisissez un nutriment : voici les aliments qui vous l'apportent le plus sur la période, et à quel point.
             Cliquez-en un pour voir son apport jour par jour.
           </p>
-          <NutrientContributorsPanel entries={freqEntries} range={range} days={days} />
+          <NutrientContributorsPanel entries={freqEntries} range={range} days={days} gran={gran} />
         </>
       )}
     </div>
@@ -198,11 +209,13 @@ function FoodFrequencyPanel({
   range,
   days,
   foods,
+  gran,
 }: {
   entries: JournalEntry[];
   range: { start: string; end: string };
   days: number;
   foods: Food[];
+  gran: Granularity;
 }) {
   const [metric, setMetric] = useState<FreqMetric>('occurrences');
   const [openKey, setOpenKey] = useState<string | null>(null);
@@ -307,7 +320,7 @@ function FoodFrequencyPanel({
         </>
       )}
 
-      {open && <FrequencyDetail f={open} entries={entries} range={range} days={days} />}
+      {open && <FrequencyDetail f={open} entries={entries} range={range} days={days} gran={gran} />}
 
       {tip && (
         <FollowTip x={tip.x} y={tip.y}>
@@ -442,10 +455,12 @@ function NutrientContributorsPanel({
   entries,
   range,
   days,
+  gran,
 }: {
   entries: JournalEntry[];
   range: { start: string; end: string };
   days: number;
+  gran: Granularity;
 }) {
   const profile = useStore((s) => s.profile);
   const sunExposures = useStore((s) => s.sunExposures);
@@ -602,7 +617,7 @@ function NutrientContributorsPanel({
             </button>
           )}
 
-          {open && <ContributionDetail c={open} ctx={ctx} range={range} />}
+          {open && <ContributionDetail c={open} ctx={ctx} range={range} gran={gran} />}
 
           {tip && (
             <FollowTip x={tip.x} y={tip.y}>
@@ -615,29 +630,109 @@ function NutrientContributorsPanel({
   );
 }
 
-/** Détail d'un contributeur : ce qu'il a apporté, jour par jour, sur la période. */
-function ContributionDetail({
-  c,
-  ctx,
+/**
+ * Barres « une par pas de temps » sur toute la période : chaque barre somme les
+ * valeurs des dates de son groupe (un jour, une semaine ou un mois). Les groupes
+ * couvrent TOUTE la plage — les vides restent des trous, ce qui garde l'axe
+ * régulier et rend les creux visibles. Partagé par les deux détails.
+ */
+function PeriodBars({
+  buckets,
+  valueOf,
+  format,
   range,
 }: {
-  c: NutrientContribution;
-  ctx: ContribCtx;
+  buckets: DateBucket[];
+  /** Valeur d'une date (0 si aucune). */
+  valueOf: (date: string) => number;
+  /** Formatage de la valeur d'un groupe dans l'info-bulle. */
+  format: (v: number) => string;
   range: { start: string; end: string };
 }) {
-  const dates = useMemo(() => datesInRange(range), [range]);
-  const maxDay = Math.max(...c.parDate.values());
-  const perDay = c.total / Math.max(1, ctx.recordedDays);
-  const pctAjr = ctx.target && ctx.target.ajr > 0 ? (perDay / ctx.target.ajr) * 100 : null;
+  const values = buckets.map((b) => b.dates.reduce((a, d) => a + valueOf(d), 0));
+  const maxVal = Math.max(1, ...values);
 
   const W = 720;
   const H = 90;
   const padX = 4;
   const padBottom = 18;
-  const x = scaleLinear().domain([0, Math.max(1, dates.length - 1)]).range([padX, W - padX]);
-  const barW = Math.max(2, Math.min(14, (W - 2 * padX) / Math.max(1, dates.length) - 2));
+  const scale = scaleLinear().domain([0, Math.max(1, buckets.length - 1)]).range([padX, W - padX]);
+  // Un seul groupe (ex. « Mois » sur 30 jours) : au centre plutôt que collé à gauche.
+  const x = buckets.length === 1 ? () => W / 2 : scale;
+  const barW = Math.max(2, Math.min(14, (W - 2 * padX) / Math.max(1, buckets.length) - 2));
 
-  const [hover, setHover] = useState<{ date: string; v: number; px: number } | null>(null);
+  const [hover, setHover] = useState<{ label: string; v: number; px: number } | null>(null);
+
+  return (
+    <>
+      <div style={{ position: 'relative' }}>
+        <svg viewBox={`0 0 ${W} ${H}`} style={{ width: '100%', height: 'auto', display: 'block' }} role="img">
+          <line x1={padX} y1={H - padBottom} x2={W - padX} y2={H - padBottom} stroke={C.border} strokeWidth={1} />
+          {buckets.map((b, i) => {
+            const v = values[i];
+            if (v <= 0) return null;
+            const h = ((H - padBottom - 8) * v) / maxVal;
+            return (
+              <rect
+                key={b.key}
+                x={x(i) - barW / 2}
+                y={H - padBottom - h}
+                width={barW}
+                height={h}
+                rx={2}
+                fill={C.accent}
+                onMouseEnter={() => setHover({ label: b.label, v, px: (x(i) / W) * 100 })}
+                onMouseLeave={() => setHover(null)}
+              />
+            );
+          })}
+        </svg>
+        {hover && (
+          <div
+            style={{
+              position: 'absolute',
+              left: `${hover.px}%`,
+              top: '30%',
+              transform: `translate(${hover.px > 65 ? '-100%' : '-50%'}, -115%)`,
+              background: C.panel2,
+              border: `1px solid ${C.border}`,
+              borderRadius: 8,
+              padding: '6px 9px',
+              fontSize: 12,
+              color: C.text,
+              pointerEvents: 'none',
+              whiteSpace: 'nowrap',
+              zIndex: 5,
+              boxShadow: '0 4px 14px rgba(0,0,0,0.35)',
+            }}
+          >
+            {hover.label} · {format(hover.v)}
+          </div>
+        )}
+      </div>
+      <div className="row small" style={{ justifyContent: 'space-between', opacity: 0.7 }}>
+        <span>{dayLabel(range.start)}</span>
+        <span>{dayLabel(range.end)}</span>
+      </div>
+    </>
+  );
+}
+
+/** Détail d'un contributeur : ce qu'il a apporté, pas de temps par pas de temps. */
+function ContributionDetail({
+  c,
+  ctx,
+  range,
+  gran,
+}: {
+  c: NutrientContribution;
+  ctx: ContribCtx;
+  range: { start: string; end: string };
+  gran: Granularity;
+}) {
+  const buckets = useMemo(() => groupDates(datesInRange(range), gran), [range, gran]);
+  const perDay = c.total / Math.max(1, ctx.recordedDays);
+  const pctAjr = ctx.target && ctx.target.ajr > 0 ? (perDay / ctx.target.ajr) * 100 : null;
 
   return (
     <div style={{ marginTop: 12, paddingTop: 12, borderTop: `1px solid ${C.border}` }}>
@@ -649,86 +744,36 @@ function ContributionDetail({
         </span>
       </div>
       <p className="small" style={{ margin: '4px 0 8px' }}>
-        Ce que cet aliment a apporté chaque jour ({fmt(c.jours)} jour(s) d'apport ; la moyenne par jour est lissée sur
-        tous les jours enregistrés, y compris ceux sans cet aliment).
+        Ce que cet aliment a apporté {gran === 'jour' ? 'chaque jour' : gran === 'semaine' ? 'chaque semaine' : 'chaque mois'} (
+        {fmt(c.jours)} jour(s) d'apport ; la moyenne par jour est lissée sur tous les jours enregistrés, y compris ceux
+        sans cet aliment).
       </p>
-      <div style={{ position: 'relative' }}>
-        <svg viewBox={`0 0 ${W} ${H}`} style={{ width: '100%', height: 'auto', display: 'block' }} role="img">
-          <line x1={padX} y1={H - padBottom} x2={W - padX} y2={H - padBottom} stroke={C.border} strokeWidth={1} />
-          {dates.map((d, i) => {
-            const v = c.parDate.get(d) ?? 0;
-            if (v <= 0) return null;
-            const h = ((H - padBottom - 8) * v) / maxDay;
-            return (
-              <rect
-                key={d}
-                x={x(i) - barW / 2}
-                y={H - padBottom - h}
-                width={barW}
-                height={h}
-                rx={2}
-                fill={C.accent}
-                onMouseEnter={() => setHover({ date: d, v, px: (x(i) / W) * 100 })}
-                onMouseLeave={() => setHover(null)}
-              />
-            );
-          })}
-        </svg>
-        {hover && (
-          <div
-            style={{
-              position: 'absolute',
-              left: `${hover.px}%`,
-              top: '30%',
-              transform: `translate(${hover.px > 65 ? '-100%' : '-50%'}, -115%)`,
-              background: C.panel2,
-              border: `1px solid ${C.border}`,
-              borderRadius: 8,
-              padding: '6px 9px',
-              fontSize: 12,
-              color: C.text,
-              pointerEvents: 'none',
-              whiteSpace: 'nowrap',
-              zIndex: 5,
-              boxShadow: '0 4px 14px rgba(0,0,0,0.35)',
-            }}
-          >
-            {dayLabel(hover.date)} · {fmtVal(hover.v)} {ctx.unit}
-          </div>
-        )}
-      </div>
-      <div className="row small" style={{ justifyContent: 'space-between', opacity: 0.7 }}>
-        <span>{dayLabel(range.start)}</span>
-        <span>{dayLabel(range.end)}</span>
-      </div>
+      <PeriodBars
+        buckets={buckets}
+        valueOf={(d) => c.parDate.get(d) ?? 0}
+        format={(v) => `${fmtVal(v)} ${ctx.unit}`}
+        range={range}
+      />
     </div>
   );
 }
 
-/** Détail « quand ai-je mangé ça ? » : une marque par jour de la période. */
+/** Détail « quand ai-je mangé ça ? » : une marque par pas de temps de la période. */
 function FrequencyDetail({
   f,
   entries,
   range,
   days,
+  gran,
 }: {
   f: FoodFrequency;
   entries: JournalEntry[];
   range: { start: string; end: string };
   days: number;
+  gran: Granularity;
 }) {
   const counts = useMemo(() => occurrencesByDate(f, entries), [f, entries]);
-  const dates = useMemo(() => datesInRange(range), [range]);
-  const maxCount = Math.max(1, ...counts.values());
-
-  const W = 720;
-  const H = 90;
-  const padX = 4;
-  const padBottom = 18;
-  const x = scaleLinear().domain([0, Math.max(1, dates.length - 1)]).range([padX, W - padX]);
-  const barW = Math.max(2, Math.min(14, (W - 2 * padX) / Math.max(1, dates.length) - 2));
-
-  const [hover, setHover] = useState<{ date: string; n: number; px: number } | null>(null);
+  const buckets = useMemo(() => groupDates(datesInRange(range), gran), [range, gran]);
 
   return (
     <div style={{ marginTop: 12, paddingTop: 12, borderTop: `1px solid ${C.border}` }}>
@@ -739,58 +784,16 @@ function FrequencyDetail({
         </span>
       </div>
       <p className="small" style={{ margin: '4px 0 8px' }}>
-        Une barre par jour de consommation ({fmt(f.jours)} jour(s) sur {fmt(days)}, soit en moyenne{' '}
+        Une barre par {gran === 'jour' ? 'jour de consommation' : gran === 'semaine' ? 'semaine' : 'mois'} (
+        {fmt(f.jours)} jour(s) sur {fmt(days)}, soit en moyenne{' '}
         {f.jours > 0 ? `1 fois tous les ${fmt(days / f.jours, 1)} jours` : 'jamais'}).
       </p>
-      <div style={{ position: 'relative' }}>
-        <svg viewBox={`0 0 ${W} ${H}`} style={{ width: '100%', height: 'auto', display: 'block' }} role="img">
-          <line x1={padX} y1={H - padBottom} x2={W - padX} y2={H - padBottom} stroke={C.border} strokeWidth={1} />
-          {dates.map((d, i) => {
-            const n = counts.get(d) ?? 0;
-            if (n === 0) return null;
-            const h = ((H - padBottom - 8) * n) / maxCount;
-            return (
-              <rect
-                key={d}
-                x={x(i) - barW / 2}
-                y={H - padBottom - h}
-                width={barW}
-                height={h}
-                rx={2}
-                fill={C.accent}
-                onMouseEnter={() => setHover({ date: d, n, px: (x(i) / W) * 100 })}
-                onMouseLeave={() => setHover(null)}
-              />
-            );
-          })}
-        </svg>
-        {hover && (
-          <div
-            style={{
-              position: 'absolute',
-              left: `${hover.px}%`,
-              top: '30%',
-              transform: `translate(${hover.px > 65 ? '-100%' : '-50%'}, -115%)`,
-              background: C.panel2,
-              border: `1px solid ${C.border}`,
-              borderRadius: 8,
-              padding: '6px 9px',
-              fontSize: 12,
-              color: C.text,
-              pointerEvents: 'none',
-              whiteSpace: 'nowrap',
-              zIndex: 5,
-              boxShadow: '0 4px 14px rgba(0,0,0,0.35)',
-            }}
-          >
-            {dayLabel(hover.date)} · {hover.n}×
-          </div>
-        )}
-      </div>
-      <div className="row small" style={{ justifyContent: 'space-between', opacity: 0.7 }}>
-        <span>{dayLabel(range.start)}</span>
-        <span>{dayLabel(range.end)}</span>
-      </div>
+      <PeriodBars
+        buckets={buckets}
+        valueOf={(d) => counts.get(d) ?? 0}
+        format={(v) => `${fmt(v)}×`}
+        range={range}
+      />
     </div>
   );
 }

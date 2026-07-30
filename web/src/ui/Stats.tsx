@@ -8,9 +8,13 @@ import type { NutrientKey, Nutrients } from '../nutrition/types';
 import { EMPTY_NUTRIENTS } from '../nutrition/types';
 import { NUTRIENT_GROUPS } from '../nutrition/groups';
 import { Omega3Breakdown } from './Totals';
-import { PeriodSelector } from './PeriodSelector';
+import { PeriodSelector, GranularitySelector, groupDates, granularityUnit } from './PeriodSelector';
+import type { Granularity } from './PeriodSelector';
 import { usePeriodNutrition } from './usePeriodNutrition';
 import { fmt } from './format';
+
+/** Toutes les clés de nutriments (moyennes par groupe de dates). */
+const NUT_KEYS = Object.keys(EMPTY_NUTRIENTS) as NutrientKey[];
 
 /** Palette alignée sur les variables CSS du thème. */
 const C = {
@@ -48,10 +52,6 @@ export function movingAverage(values: (number | null)[], window: number): (numbe
     }
     return n > 0 ? sum / n : null;
   });
-}
-
-function dayLabel(date: string): string {
-  return new Date(`${date}T00:00:00`).toLocaleDateString('fr-FR', { weekday: 'short', day: 'numeric', month: 'short' });
 }
 
 function dayMs(date: string): number {
@@ -93,6 +93,12 @@ export function Stats() {
   const [maOn, setMaOn] = useState(false);
   const [maWindow, setMaWindow] = useState(7);
   /**
+   * Pas de temps de la tendance : un point par jour, par semaine ou par mois.
+   * Sur 90 jours ou un an, la courbe journalière n'est plus lisible — agréger
+   * en moyennes hebdomadaires/mensuelles montre le fond du mouvement.
+   */
+  const [gran, setGran] = useState<Granularity>('jour');
+  /**
    * Échelle Y logarithmique : les séries étant exprimées en % de cible, elles
    * peuvent couvrir plusieurs ordres de grandeur (ex. vitamine D à 10 % vs
    * sodium à 300 %). Le log rend leurs variations relatives comparables.
@@ -101,6 +107,33 @@ export function Stats() {
 
   const toggle = (id: string) =>
     setSelected((prev) => (prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id]));
+
+  /**
+   * Points de l'axe temps : un par jour enregistré, ou un par semaine/mois selon
+   * la granularité choisie.
+   */
+  const buckets = useMemo(() => groupDates(recorded, gran), [recorded, gran]);
+
+  /**
+   * Apports MOYENS PAR JOUR de chaque groupe de dates : en granularité « jour »
+   * c'est le total du jour lui-même, sinon la moyenne journalière de la semaine
+   * ou du mois. Toutes les cibles étant journalières, agréger en moyenne (et non
+   * en somme) garde les « % de la cible » comparables d'une granularité à l'autre.
+   */
+  const bucketAverages = useMemo(
+    () =>
+      buckets.map((b) => {
+        if (b.dates.length === 1) return byDateVitD.get(b.dates[0])!;
+        const a = { ...EMPTY_NUTRIENTS };
+        for (const d of b.dates) {
+          const t = byDateVitD.get(d)!;
+          for (const k of NUT_KEYS) a[k] += t[k];
+        }
+        for (const k of NUT_KEYS) a[k] /= b.dates.length;
+        return a;
+      }),
+    [buckets, byDateVitD],
+  );
 
   /**
    * Séries de la tendance unique : un tracé par élément sélectionné (nutriment OU
@@ -112,14 +145,21 @@ export function Stats() {
       selected.map((id, i) => {
         const color = SERIES_COLORS[i % SERIES_COLORS.length];
         const ratioDef = RATIOS.find((r) => r.key === id);
+        const point = (k: number, value: number | null, pct: number | null, maPct: number | null) => ({
+          date: buckets[k].date,
+          label: buckets[k].label,
+          t: dayMs(buckets[k].date),
+          value,
+          pct,
+          maPct,
+        });
 
         if (ratioDef) {
-          // Rapport : valeur = num/den du jour ; % = valeur / rapport idéal.
+          // Rapport : calculé SUR les apports moyens du groupe (pas la moyenne des
+          // rapports quotidiens), pour qu'un jour extrême ne domine pas la semaine.
           const objective = ratioDef.optimal;
-          const raws = recorded.map((d) => {
-            const v = computeRatio(ratioDef, byDateVitD.get(d)!).value;
-            return v == null ? null : (v / objective) * 100;
-          });
+          const values = bucketAverages.map((a) => computeRatio(ratioDef, a).value);
+          const raws = values.map((v) => (v == null ? null : (v / objective) * 100));
           const ma = movingAverage(raws, maWindow);
           return {
             id,
@@ -128,20 +168,15 @@ export function Stats() {
             suffix: ratioDef.suffix,
             color,
             objective,
-            points: recorded.map((d, k) => ({
-              date: d,
-              t: dayMs(d),
-              value: raws[k] == null ? null : (raws[k]! / 100) * objective,
-              pct: raws[k],
-              maPct: ma[k],
-            })),
+            points: values.map((v, k) => point(k, v, raws[k], ma[k])),
           };
         }
 
         // Nutriment : % = apport / objectif (plafond pour les « limites »).
         const t = targetByKey.get(id as NutrientKey)!;
         const objective = t.goal === 'limit' ? t.ajr : t.optimal;
-        const raws = recorded.map((d) => (objective > 0 ? (byDateVitD.get(d)![id as NutrientKey] / objective) * 100 : 0));
+        const values = bucketAverages.map((a) => a[id as NutrientKey]);
+        const raws = values.map((v) => (objective > 0 ? (v / objective) * 100 : 0));
         const ma = movingAverage(raws, maWindow);
         return {
           id,
@@ -151,16 +186,10 @@ export function Stats() {
           goal: t.goal,
           color,
           objective,
-          points: recorded.map((d, k) => ({
-            date: d,
-            t: dayMs(d),
-            value: byDateVitD.get(d)![id as NutrientKey],
-            pct: raws[k],
-            maPct: ma[k],
-          })),
+          points: values.map((v, k) => point(k, v, raws[k], ma[k])),
         };
       }),
-    [selected, targetByKey, recorded, byDateVitD, maWindow],
+    [selected, targetByKey, buckets, bucketAverages, maWindow],
   );
 
   const colorById = useMemo(() => new Map(series.map((s) => [s.id, s.color])), [series]);
@@ -222,6 +251,11 @@ export function Stats() {
               <input type="checkbox" checked={logY} onChange={(e) => setLogY(e.target.checked)} />
               Échelle log (Y)
             </label>
+            <GranularitySelector
+              value={gran}
+              onChange={setGran}
+              tip="Un point par jour, ou une moyenne journalière par semaine / par mois — plus lisible sur les longues périodes."
+            />
             <label className="row small" style={{ gap: 6, alignItems: 'center', cursor: 'pointer' }}>
               <input type="checkbox" checked={maOn} onChange={(e) => setMaOn(e.target.checked)} />
               Moyenne mobile
@@ -235,7 +269,7 @@ export function Stats() {
             >
               {MA_WINDOWS.map((w) => (
                 <option key={w} value={w}>
-                  {w} j
+                  {w} {granularityUnit(gran)}
                 </option>
               ))}
             </select>
@@ -244,11 +278,20 @@ export function Stats() {
         <p className="small" style={{ marginTop: 2 }}>
           Chaque courbe = un élément (nutriment <em>ou</em> rapport) en <strong>% de sa cible</strong> (ligne 100 %),
           pour comparer sur un seul axe. Survolez pour les valeurs réelles.
+          {gran !== 'jour' &&
+            ` Un point = ${gran === 'semaine' ? 'une semaine' : 'un mois'} (${buckets.length} au total), en moyenne PAR JOUR des jours enregistrés — comparable à la cible journalière.`}
           {selected.includes('vitD') && ' La vitamine D inclut l\'apport du soleil ☀️.'}
           {maOn && ' La moyenne mobile lisse le bruit ; la courbe brute reste en trait fin.'}
           {logY && ' Axe log : les valeurs à 0 % (aucun apport) ne sont pas représentables et laissent un trou.'}
         </p>
-        <MultiTrend series={series} windowDates={windowDates} maOn={maOn} maWindow={maWindow} logY={logY} />
+        <MultiTrend
+          series={series}
+          windowDates={windowDates}
+          maOn={maOn}
+          maWindow={maWindow}
+          maUnit={granularityUnit(gran)}
+          logY={logY}
+        />
         <SeriesPicker targets={targets} selected={selected} colorById={colorById} onToggle={toggle} />
       </div>
 
@@ -299,7 +342,15 @@ type TrendSeries = {
   unit?: string; // nutriment
   goal?: Target['goal']; // nutriment
   suffix?: string; // rapport (ex. « :1 »)
-  points: { date: string; t: number; value: number | null; pct: number | null; maPct: number | null }[];
+  /** Un point par pas de temps : `date` situe le point sur l'axe, `label` le nomme. */
+  points: {
+    date: string;
+    label: string;
+    t: number;
+    value: number | null;
+    pct: number | null;
+    maPct: number | null;
+  }[];
 };
 
 /** Formate une valeur de rapport (« 3,2:1 »). */
@@ -317,12 +368,15 @@ function MultiTrend({
   windowDates,
   maOn,
   maWindow,
+  maUnit,
   logY,
 }: {
   series: TrendSeries[];
   windowDates: string[];
   maOn: boolean;
   maWindow: number;
+  /** Unité d'un pas de temps (« j », « sem. », « mois »), pour la légende. */
+  maUnit: string;
   logY: boolean;
 }) {
   const W = 680;
@@ -332,9 +386,10 @@ function MultiTrend({
   const [hover, setHover] = useState<number | null>(null);
   const [ptr, setPtr] = useState({ px: 0, py: 0 });
 
-  const recorded = series[0]?.points.map((p) => p.date) ?? [];
+  /** Points de l'axe (jours, semaines ou mois selon la granularité). */
+  const steps = series[0]?.points ?? [];
 
-  if (series.length === 0 || recorded.length === 0) {
+  if (series.length === 0 || steps.length === 0) {
     return <div className="empty">Sélectionnez au moins un élément ci-dessous et enregistrez des jours sur la période.</div>;
   }
 
@@ -359,7 +414,7 @@ function MultiTrend({
     : scaleLinear().domain([0, yMax]).nice().range([H - m.bottom, m.top]);
 
   const yTicks = logY ? ys.ticks(5) : ys.ticks(4);
-  const xTicks = xs.ticks(Math.min(6, recorded.length));
+  const xTicks = xs.ticks(Math.min(6, steps.length));
   const fmtDate = (t: number) => new Date(t).toLocaleDateString('fr-FR', { day: 'numeric', month: 'short' });
 
   // En log, une valeur ≤ 0 n'est pas plaçable : on la traite comme absente (trou).
@@ -378,8 +433,8 @@ function MultiTrend({
     const p = toViewBox(e, svgRef.current, W, H);
     let best = 0;
     let bd = Infinity;
-    recorded.forEach((d, i) => {
-      const dist = Math.abs(xs(dayMs(d)) - p.x);
+    steps.forEach((s, i) => {
+      const dist = Math.abs(xs(s.t) - p.x);
       if (dist < bd) {
         bd = dist;
         best = i;
@@ -442,13 +497,13 @@ function MultiTrend({
         ))}
 
         {hover !== null && (
-          <line x1={xs(dayMs(recorded[hover]))} x2={xs(dayMs(recorded[hover]))} y1={m.top} y2={H - m.bottom} stroke={C.muted} strokeWidth={1} strokeDasharray="3 3" />
+          <line x1={xs(steps[hover].t)} x2={xs(steps[hover].t)} y1={m.top} y2={H - m.bottom} stroke={C.muted} strokeWidth={1} strokeDasharray="3 3" />
         )}
       </svg>
 
       {hover !== null && (
         <Tooltip px={ptr.px} py={ptr.py}>
-          <strong>{dayLabel(recorded[hover])}</strong>
+          <strong>{steps[hover].label}</strong>
           {series.map((s) => {
             const p = s.points[hover];
             return (
@@ -460,7 +515,7 @@ function MultiTrend({
               </div>
             );
           })}
-          {maOn && <div className="small" style={{ marginTop: 4, color: C.muted }}>moyenne mobile {maWindow} j</div>}
+          {maOn && <div className="small" style={{ marginTop: 4, color: C.muted }}>moyenne mobile {maWindow} {maUnit}</div>}
         </Tooltip>
       )}
     </div>

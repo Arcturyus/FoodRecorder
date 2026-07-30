@@ -329,14 +329,27 @@ export const DAY_MIN_PROGRESS = 0.3;
 const DAY_LAG_THRESHOLD = 0.45;
 /** Nombre maximal d'alertes affichées. */
 const DAY_MAX_ITEMS = 6;
-/** Nombre d'aliments suggérés par alerte (déficit/ratio). */
-const DAY_FOOD_SUGGESTIONS = 4;
+/** Nombre d'aliments suggérés par alerte (déficit/ratio), affichés d'un coup. */
+export const DAY_FOOD_SUGGESTIONS = 4;
+/**
+ * Nombre de « fournées » de suggestions préparées d'avance : l'écran n'en montre
+ * qu'une (DAY_FOOD_SUGGESTIONS), le bouton « ⟳ Autres idées » fait tourner les
+ * suivantes — utile quand aucune des propositions ne convient (pas envie, pas au
+ * frigo…). Calculer les pages ici, une fois, évite de recalculer un classement à
+ * chaque clic.
+ */
+export const SUGGESTION_PAGES = 4;
 
 /**
  * Meilleures sources d'un nutriment, par portion habituelle, cappées au besoin
  * restant. Diversifie les catégories d'aliments (pas 4 poissons d'affilée) et,
  * si possible, inclut au moins un aliment déjà consommé par l'utilisateur —
  * plus actionnable qu'une source jamais essayée.
+ *
+ * `limit` peut couvrir plusieurs pages d'affichage : `pageSize` dit alors combien
+ * d'éléments l'écran montre en même temps, pour que la garantie « au moins un
+ * aliment déjà mangé » porte sur la PREMIÈRE page (celle qu'on voit) et non sur
+ * la fin d'une liste qu'il faudrait faire défiler pour atteindre.
  */
 export function topSourcesFor(
   key: NutrientKey,
@@ -345,6 +358,8 @@ export function topSourcesFor(
   opts: {
     supplements: boolean;
     limit: number;
+    /** Taille de la fenêtre affichée (défaut : `limit`, donc tout d'un coup). */
+    pageSize?: number;
     exclude?: NutrientKey;
     excludeFactor?: number;
     consumedIds?: Set<string>;
@@ -384,18 +399,43 @@ export function topSourcesFor(
     }
   }
 
-  // Garantit au moins un aliment déjà mangé, si l'un des candidats l'est.
-  if (opts.consumedIds && picked.length > 0 && !picked.some((s) => opts.consumedIds!.has(s.food.id))) {
-    const known = candidates.find((c) => opts.consumedIds!.has(c.food.id));
-    if (known) picked[picked.length - 1] = known;
-  }
+  // Garantit au moins un aliment déjà mangé DANS LA PREMIÈRE PAGE, si l'un des
+  // candidats l'est.
+  if (opts.consumedIds) ensureKnownInFirstPage(picked, candidates, opts.consumedIds, opts.pageSize ?? opts.limit);
 
   return picked;
 }
 
+/**
+ * Place un aliment déjà consommé dans la fenêtre visible `[0, pageSize)` si elle
+ * n'en contient aucun : le dernier élément de la fenêtre lui cède sa place, et
+ * l'aliment est retiré de sa position ultérieure éventuelle (pas de doublon dans
+ * les pages suivantes). Mutation en place, partagée par les deux classements.
+ */
+function ensureKnownInFirstPage<T extends { food: Food }>(
+  picked: T[],
+  candidates: T[],
+  consumedIds: Set<string>,
+  pageSize: number,
+): void {
+  const win = Math.min(pageSize, picked.length);
+  if (win <= 0 || picked.slice(0, win).some((s) => consumedIds.has(s.food.id))) return;
+  const known = candidates.find((c) => consumedIds.has(c.food.id));
+  if (!known) return;
+  const later = picked.indexOf(known); // -1, ou ≥ win (sinon la fenêtre en contenait un)
+  picked[win - 1] = known;
+  if (later >= win) picked.splice(later, 1);
+}
+
 /** Options communes des suggestions d'aliments (déjà consommés inclus, variété). */
 function foodOpts(consumedIds: Set<string>, extra: Partial<Parameters<typeof topSourcesFor>[3]> = {}) {
-  return { supplements: false, limit: DAY_FOOD_SUGGESTIONS, consumedIds, ...extra };
+  return {
+    supplements: false,
+    limit: DAY_FOOD_SUGGESTIONS * SUGGESTION_PAGES,
+    pageSize: DAY_FOOD_SUGGESTIONS,
+    consumedIds,
+    ...extra,
+  };
 }
 
 /**
@@ -536,14 +576,18 @@ export interface MacroAdvice {
   text: string;
   /** Autres macros en retard sur le rythme calorique (glucides/lipides/fibres). */
   laggingMacros: { target: Target; remaining: number }[];
-  /** Aliments classés pour combler, protéines/kcal en priorité. */
+  /**
+   * Aliments classés pour combler, protéines/kcal en priorité. La liste couvre
+   * plusieurs pages de `MACRO_MAX_SUGGESTIONS` : l'écran en montre une à la fois
+   * et fait tourner les suivantes à la demande.
+   */
   suggestions: MacroSuggestion[];
 }
 
 /** Macros secondaires, prises en compte seulement si en retard (« reste si retard »). */
 export const MACRO_SECONDARY_KEYS: NutrientKey[] = ['glucides', 'lipides', 'fibres'];
-/** Nombre d'aliments suggérés dans la section macros. */
-const MACRO_MAX_SUGGESTIONS = 5;
+/** Nombre d'aliments affichés d'un coup dans la section macros. */
+export const MACRO_MAX_SUGGESTIONS = 5;
 
 /**
  * Section « compléter tes macros » de l'écran Aujourd'hui : combien de calories
@@ -679,25 +723,25 @@ function rankMacroFoods(
     .filter((s) => s.score > 0)
     .sort((a, b) => b.score - a.score || b.prot - a.prot);
 
+  // Plusieurs pages d'avance : l'écran en montre MACRO_MAX_SUGGESTIONS et fait
+  // tourner les suivantes quand aucune ne convient.
+  const total = MACRO_MAX_SUGGESTIONS * SUGGESTION_PAGES;
   // 1re passe : le meilleur de chaque catégorie encore inutilisée (variété).
   const picked: typeof scored = [];
   const usedCategories = new Set<string>();
   for (const c of scored) {
-    if (picked.length >= MACRO_MAX_SUGGESTIONS) break;
+    if (picked.length >= total) break;
     if (usedCategories.has(c.food.categorie)) continue;
     usedCategories.add(c.food.categorie);
     picked.push(c);
   }
   // 2e passe : complète avec les meilleurs restants.
   for (const c of scored) {
-    if (picked.length >= MACRO_MAX_SUGGESTIONS) break;
+    if (picked.length >= total) break;
     if (!picked.includes(c)) picked.push(c);
   }
-  // Garantit au moins un aliment déjà mangé, si l'un des candidats l'est.
-  if (picked.length > 0 && !picked.some((s) => ctx.consumedIds.has(s.food.id))) {
-    const known = scored.find((c) => ctx.consumedIds.has(c.food.id));
-    if (known) picked[picked.length - 1] = known;
-  }
+  // Garantit au moins un aliment déjà mangé dans la première page.
+  ensureKnownInFirstPage(picked, scored, ctx.consumedIds, MACRO_MAX_SUGGESTIONS);
 
   return picked.map(({ food, portionG, prot, kcal }) => ({ food, portionG, prot, kcal }));
 }

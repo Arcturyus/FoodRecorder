@@ -1,15 +1,18 @@
-import { useStore, todayStr, effectiveFoods, recentFoodCounts } from '../store/store';
+import { useStore, todayStr, nowTime, effectiveFoods, recentFoodCounts } from '../store/store';
 import { checkClaudeCode, extractWithClaudeCode, extractImageWithClaudeCode } from '../extraction/claudeCode';
 import { verifyMatches } from '../extraction/verify';
 import { extractSun } from '../extraction/sun';
+import { extractWeight, completeWeightEntry } from '../extraction/weight';
 import { completeSunExposure, SUN_FALLBACK } from '../sun/vitaminD';
 import {
   fetchPendingTranscripts,
   fetchPendingImages,
   fetchPendingSun,
+  fetchPendingWeight,
   markProcessed,
   pushEntry,
   pushSunEntry,
+  pushWeightEntry,
   fetchNewEntries,
   isSyncConfigured,
 } from './supabase';
@@ -42,6 +45,7 @@ export async function runSyncTick(): Promise<void> {
       entries,
       addEntry,
       addSunExposure,
+      addWeightEntry,
       setSyncCursor,
     } = useStore.getState();
 
@@ -133,6 +137,38 @@ export async function runSyncTick(): Promise<void> {
           }
           await markProcessed(row.id);
         }
+
+        // Dictées de pesée en attente : même chemin que le soleil. Ce poste n'a
+        // pas le formulaire de l'appareil qui a dicté — les champs non dits
+        // prennent les valeurs de repli (à jeun, nu), le jour est celui
+        // estampillé par l'émetteur et l'heure celle de son envoi.
+        const pendingWeight = await fetchPendingWeight();
+        for (const row of pendingWeight) {
+          try {
+            const { patch, source } = await extractWeight(row.payload.transcript, 'claudecode', cloudApiKey, cloudModel);
+            const stamp = row.payload.clientTime ? new Date(row.payload.clientTime) : new Date();
+            const pesee =
+              source === 'claudecode'
+                ? completeWeightEntry(patch, {
+                    date: row.payload.date ?? todayStr(stamp),
+                    heure: nowTime(stamp),
+                    source: 'claudecode',
+                  })
+                : null;
+            if (pesee) {
+              addWeightEntry(pesee, row.payload.clientTime);
+              await pushWeightEntry(deviceId, {
+                transcript: row.payload.transcript,
+                pesee,
+                ...(row.payload.date ? { date: row.payload.date } : {}),
+                ...(row.payload.clientTime ? { clientTime: row.payload.clientTime } : {}),
+              });
+            }
+          } catch {
+            // Échec ponctuel : on marque quand même la ligne traitée pour ne pas boucler dessus.
+          }
+          await markProcessed(row.id);
+        }
       }
     }
 
@@ -148,6 +184,8 @@ export async function runSyncTick(): Promise<void> {
         // jour d'origine (estampillés par l'émetteur), pas l'heure de réception ici.
         if (row.kind === 'sun-entry') {
           for (const e of row.payload.sorties as SunPayloadExposure[]) addSunExposure(e, row.payload.clientTime);
+        } else if (row.kind === 'weight-entry') {
+          addWeightEntry(row.payload.pesee, row.payload.clientTime);
         } else {
           addEntry(row.payload.transcript, row.payload.items, row.payload.source, row.payload.date, row.payload.clientTime);
         }

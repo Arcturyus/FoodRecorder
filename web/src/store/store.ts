@@ -299,8 +299,12 @@ interface AppState {
   /** Annule les modifications utilisateur sur un aliment de la banque. */
   resetFood: (id: string) => void;
 
-  /** Enregistre une pesée. `poids` requis ; les autres champs sont optionnels. */
-  addWeightEntry: (entry: Omit<WeightEntry, 'id' | 'createdAt'>) => string;
+  /**
+   * Enregistre une pesée. `poids` requis ; les autres champs sont optionnels.
+   * `createdAt` : heure de saisie (epoch ms), passée par la synchro pour l'heure
+   * d'envoi de l'appareil émetteur ; défaut `Date.now()`.
+   */
+  addWeightEntry: (entry: Omit<WeightEntry, 'id' | 'createdAt'>, createdAt?: number) => string;
   updateWeightEntry: (id: string, patch: Partial<WeightEntry>) => void;
   removeWeightEntry: (id: string) => void;
   setWeightConfig: (patch: Partial<WeightConfig>) => void;
@@ -616,8 +620,8 @@ export const useStore = create<AppState>()(
           return { foodOverrides: rest, entries: resyncEntries(s.entries, effectiveFoods(s.customFoods, rest)) };
         }),
 
-      addWeightEntry: (entry) => {
-        const full: WeightEntry = { ...entry, id: uid(), createdAt: Date.now() };
+      addWeightEntry: (entry, createdAt) => {
+        const full: WeightEntry = { ...entry, id: uid(), createdAt: createdAt ?? Date.now() };
         set((s) => {
           const weightEntries = [full, ...s.weightEntries];
           const latest = latestWeight(weightEntries);

@@ -932,6 +932,16 @@ button.chip-active:hover { filter: brightness(1.08); }
   border: 1px solid var(--border); background: var(--panel);
 }
 .advice-known { margin-left: 3px; color: var(--accent-2); font-weight: 700; }
+/* « ⟳ Autres » : même gabarit que les chips de suggestion, mais en retrait —
+   c'est une action secondaire, elle ne doit pas concurrencer les aliments. */
+.advice-more {
+  padding: 2px 9px;
+  border-radius: 999px;
+  font-size: 12.5px;
+  color: var(--muted);
+  border-color: var(--border);
+}
+.advice-more:hover { background: var(--panel-2); color: var(--accent); border-color: var(--accent); }
 .advice-subhead { margin: 14px 0 6px; font-size: 13px; font-weight: 600; color: var(--muted); }
 .advice-subhead:first-of-type { margin-top: 4px; }
 .advice-macro { border-color: var(--accent); }

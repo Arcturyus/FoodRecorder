@@ -11,20 +11,28 @@ const rows = {
   transcripts: [] as { id: string; payload: { transcript: string; date?: string } }[],
   images: [] as { id: string; payload: { imageBase64: string; mediaType: string; date?: string } }[],
   sun: [] as { id: string; payload: { transcript: string; date?: string } }[],
+  weight: [] as { id: string; payload: { transcript: string; date?: string; clientTime?: number } }[],
   results: [] as { id: string; kind: string; payload: unknown; created_at: string }[],
 };
-const pushed = { entries: [] as unknown[], sunEntries: [] as unknown[], processed: [] as string[] };
+const pushed = {
+  entries: [] as unknown[],
+  sunEntries: [] as unknown[],
+  weightEntries: [] as unknown[],
+  processed: [] as string[],
+};
 
 vi.mock('../src/sync/supabase', () => ({
   isSyncConfigured: () => true,
   fetchPendingTranscripts: async () => rows.transcripts,
   fetchPendingImages: async () => rows.images,
   fetchPendingSun: async () => rows.sun,
+  fetchPendingWeight: async () => rows.weight,
   fetchNewEntries: async () => rows.results,
   markProcessed: async (id: string) => void pushed.processed.push(id),
   pushEntry: async (_d: string, e: unknown) => void pushed.entries.push(e),
   pushSunEntry: async (_d: string, e: unknown) => void pushed.sunEntries.push(e),
-  RESULT_KINDS: ['entry', 'sun-entry'],
+  pushWeightEntry: async (_d: string, e: unknown) => void pushed.weightEntries.push(e),
+  RESULT_KINDS: ['entry', 'sun-entry', 'weight-entry'],
 }));
 
 vi.mock('../src/extraction/claudeCode', () => ({
@@ -50,17 +58,32 @@ vi.mock('../src/extraction/sun', () => ({
   }),
 }));
 
+// Seule l'extraction est simulée : `completeWeightEntry` (pure) reste la vraie,
+// c'est elle qui décide des valeurs de repli du traitement différé.
+vi.mock('../src/extraction/weight', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('../src/extraction/weight')>()),
+  extractWeight: async () => ({ patch: { poids: 68.5, masseGrasse: 18.2 }, source: 'claudecode' }),
+}));
+
 const { runSyncTick } = await import('../src/sync/poller');
 
 beforeEach(() => {
   rows.transcripts = [];
   rows.images = [];
   rows.sun = [];
+  rows.weight = [];
   rows.results = [];
   pushed.entries = [];
   pushed.sunEntries = [];
+  pushed.weightEntries = [];
   pushed.processed = [];
-  useStore.setState({ entries: [], sunExposures: [], extractionMode: 'claudecode', syncCursor: null });
+  useStore.setState({
+    entries: [],
+    sunExposures: [],
+    weightEntries: [],
+    extractionMode: 'claudecode',
+    syncCursor: null,
+  });
 });
 
 describe('runSyncTick — dictées soleil en attente', () => {
@@ -98,6 +121,37 @@ describe('runSyncTick — dictées soleil en attente', () => {
   });
 });
 
+describe('runSyncTick — dictées de pesée en attente', () => {
+  it('analyse une dictée de pesée, l’enregistre et redépose le résultat', async () => {
+    rows.weight = [{ id: 'w1', payload: { transcript: 'soixante-huit cinq, masse grasse 18,2', date: '2026-07-02', clientTime: 1_770_000_000_000 } }];
+
+    await runSyncTick();
+
+    const pesees = useStore.getState().weightEntries;
+    expect(pesees).toHaveLength(1);
+    expect(pesees[0].poids).toBe(68.5);
+    // Jour ciblé par l'émetteur, pas le jour du traitement différé.
+    expect(pesees[0].date).toBe('2026-07-02');
+    // Champs non dits : valeurs de repli du formulaire (le poste n'en a pas).
+    expect(pesees[0].aJeun).toBe(true);
+    expect(pesees[0].nu).toBe(true);
+    expect(pesees[0].source).toBe('claudecode');
+    // Heure de saisie de l'émetteur, pas l'heure de ce traitement.
+    expect(pesees[0].createdAt).toBe(1_770_000_000_000);
+
+    expect(pushed.weightEntries).toHaveLength(1);
+    expect(pushed.processed).toContain('w1');
+  });
+
+  it('ne traite pas les dictées de pesée hors mode « pont Claude Code »', async () => {
+    useStore.setState({ extractionMode: 'rules' });
+    rows.weight = [{ id: 'w1', payload: { transcript: '68,5 kg' } }];
+    await runSyncTick();
+    expect(useStore.getState().weightEntries).toHaveLength(0);
+    expect(pushed.processed).toHaveLength(0);
+  });
+});
+
 describe('runSyncTick — résultats reçus des autres appareils', () => {
   it('rejoue repas et sorties au soleil, et avance le curseur partagé', async () => {
     rows.results = [
@@ -116,6 +170,15 @@ describe('runSyncTick — résultats reçus des autres appareils', () => {
           sorties: [{ date: '2026-07-17', heure: '13:00', dureeMin: 30, ciel: 'ensoleille', peau: 'visage-bras', phenotype: 'blanc', creme: 'aucune' }],
         },
       },
+      {
+        id: 'c',
+        kind: 'weight-entry',
+        created_at: '2026-07-17T12:00:00Z',
+        payload: {
+          transcript: '68,5 kg à jeun',
+          pesee: { date: '2026-07-17', heure: '08:00', aJeun: true, nu: true, poids: 68.5, source: 'claudecode' },
+        },
+      },
     ];
 
     await runSyncTick();
@@ -123,8 +186,10 @@ describe('runSyncTick — résultats reçus des autres appareils', () => {
     expect(useStore.getState().entries).toHaveLength(1);
     expect(useStore.getState().sunExposures).toHaveLength(1);
     expect(useStore.getState().sunExposures[0].dureeMin).toBe(30);
+    expect(useStore.getState().weightEntries).toHaveLength(1);
+    expect(useStore.getState().weightEntries[0].poids).toBe(68.5);
     // Curseur = la ligne la plus récente, tous kinds confondus.
-    expect(useStore.getState().syncCursor).toBe('2026-07-17T11:00:00Z');
+    expect(useStore.getState().syncCursor).toBe('2026-07-17T12:00:00Z');
   });
 
   it('n’explose pas si Supabase est injoignable (réseau coupé)', async () => {
