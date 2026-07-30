@@ -1,7 +1,13 @@
 import { describe, expect, it } from 'vitest';
-import { foodFrequencies, frequencyKey, occurrencesByDate } from '../src/nutrition/frequency';
+import {
+  foodFrequencies,
+  frequencyKey,
+  occurrencesByDate,
+  nutrientContributions,
+} from '../src/nutrition/frequency';
 import type { JournalEntry, JournalItem } from '../src/store/store';
 import { EMPTY_NUTRIENTS } from '../src/nutrition/types';
+import type { Nutrients } from '../src/nutrition/types';
 
 function item(foodId: string | null, nom: string, kcal = 100, grams = 100): JournalItem {
   return {
@@ -80,6 +86,63 @@ describe('foodFrequencies', () => {
   it('frequencyKey préfère le foodId et normalise les noms libres', () => {
     expect(frequencyKey('saumon', 'Saumon (cuit)')).toBe('saumon');
     expect(frequencyKey(null, 'Tartes aux Myrtilles')).toBe(frequencyKey(null, 'tarte aux myrtille'));
+  });
+});
+
+describe('nutrientContributions', () => {
+  function nItem(foodId: string | null, nom: string, n: Partial<Nutrients>, grams = 100): JournalItem {
+    return { ...item(foodId, nom, 0, grams), nutrients: { ...EMPTY_NUTRIENTS, ...n } };
+  }
+
+  it('classe les aliments par quantité apportée du nutriment choisi', () => {
+    const entries = [
+      entry('2026-03-01', [nItem('epinards', 'Épinards', { fer: 3 }), nItem('steak', 'Steak haché', { fer: 2.5 })]),
+      entry('2026-03-03', [nItem('epinards', 'Épinards', { fer: 4 })], 1),
+    ];
+
+    const [epinards, steak] = nutrientContributions(entries, ALL, 'fer');
+
+    expect(epinards.foodId).toBe('epinards');
+    expect(epinards.total).toBe(7);
+    expect(epinards.occurrences).toBe(2);
+    expect(epinards.jours).toBe(2);
+    expect(epinards.grammes).toBe(200);
+    expect(epinards.derniere).toBe('2026-03-03');
+    expect([...epinards.parDate.entries()]).toEqual([['2026-03-01', 3], ['2026-03-03', 4]]);
+    expect(steak.total).toBe(2.5);
+  });
+
+  it('cumule les apports du même aliment dans une même journée', () => {
+    const entries = [
+      entry('2026-03-01', [nItem('saumon', 'Saumon', { omega3Dha: 1 }), nItem('saumon', 'Saumon', { omega3Dha: 0.5 })]),
+    ];
+    const [saumon] = nutrientContributions(entries, ALL, 'omega3Dha');
+    expect(saumon.total).toBe(1.5);
+    expect(saumon.occurrences).toBe(2);
+    expect(saumon.jours).toBe(1);
+    expect(saumon.parDate.get('2026-03-01')).toBe(1.5);
+  });
+
+  it('écarte les aliments sans apport du nutriment et respecte la plage', () => {
+    const entries = [
+      entry('2026-03-01', [nItem('riz', 'Riz', { fer: 0 }), nItem('lentilles', 'Lentilles', { fer: 3 })]),
+      entry('2026-06-01', [nItem('lentilles', 'Lentilles', { fer: 9 })], 1),
+    ];
+    const contribs = nutrientContributions(entries, { start: '2026-01-01', end: '2026-03-31' }, 'fer');
+    expect(contribs).toHaveLength(1);
+    expect(contribs[0].nom).toBe('Lentilles');
+    expect(contribs[0].total).toBe(3);
+  });
+
+  it('regroupe les aliments libres sur leur nom normalisé, libellé le plus récent retenu', () => {
+    const entries = [
+      entry('2026-03-01', [nItem(null, 'Tarte aux myrtilles', { vitC: 4 })]),
+      entry('2026-03-02', [nItem(null, 'tarte aux myrtille', { vitC: 6 })], 1),
+    ];
+    const contribs = nutrientContributions(entries, ALL, 'vitC');
+    expect(contribs).toHaveLength(1);
+    expect(contribs[0].nom).toBe('tarte aux myrtille');
+    expect(contribs[0].total).toBe(10);
   });
 });
 
