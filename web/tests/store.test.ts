@@ -2,9 +2,32 @@ import { describe, expect, it, beforeEach } from 'vitest';
 import { useStore, todayStr, recentFoodCounts, resolveItemNutrients } from '../src/store/store';
 import { buildBackup, importBackup, journalToCsv, weightsToCsv } from '../src/store/backup';
 import { FOOD_BY_ID } from '../src/nutrition/foods';
+import { isPhotoEntry } from '../src/nutrition/uncertainty';
+import { EMPTY_NUTRIENTS } from '../src/nutrition/types';
+import type { ExtractedItem } from '../src/nutrition/types';
 
 const banane = FOOD_BY_ID.get('banane')!;
 const today = todayStr();
+
+/** Item extrait « une banane », résolu par le matching sur la banque. */
+function banItem(): ExtractedItem {
+  return { aliment: 'banane', quantite: 1, unite: 'piece', estimation: false };
+}
+
+/**
+ * Item estimé par l'IA (hors banque, sans catégorie) : le cas exact de
+ * l'historique saisi avant que l'app ne conserve la catégorie.
+ */
+function iaItem(nom: string): ExtractedItem {
+  return {
+    aliment: nom,
+    quantite: 1,
+    unite: 'piece',
+    estimation: false,
+    nutriments: { ...EMPTY_NUTRIENTS, kcal: 250 },
+    grammesParPiece: 100,
+  };
+}
 
 /** Date locale N jours avant aujourd'hui. */
 function daysAgo(n: number): string {
@@ -71,6 +94,61 @@ describe('duplication de repas / jour', () => {
     useStore.getState().duplicateDay(daysAgo(2));
     const todays = useStore.getState().entries.filter((e) => e.date === today);
     expect(todays).toHaveLength(2);
+  });
+
+  it('ne recopie pas la dictée (elle décrivait le repas d’un autre jour)', () => {
+    const srcId = useStore
+      .getState()
+      .addEntry('hier midi j’ai mangé une banane', [banItem()], 'claudecode', daysAgo(3));
+    useStore.getState().duplicateEntry(srcId);
+    const copy = useStore.getState().entries.find((e) => e.id !== srcId)!;
+    expect(copy.transcript).toBe('');
+    expect(copy.items[0].nomAffiche).toBe('Banane');
+    // duplicateDay suit la même règle.
+    useStore.getState().duplicateDay(daysAgo(3), daysAgo(1));
+    const dayCopy = useStore.getState().entries.find((e) => e.date === daysAgo(1))!;
+    expect(dayCopy.transcript).toBe('');
+  });
+
+  it('garde le marqueur photo, dont dépend l’incertitude sur les quantités', () => {
+    const srcId = useStore.getState().addEntry('📷 Photo', [banItem()], 'claudecode', daysAgo(3));
+    useStore.getState().duplicateEntry(srcId);
+    const copy = useStore.getState().entries.find((e) => e.id !== srcId)!;
+    expect(isPhotoEntry(copy)).toBe(true);
+  });
+});
+
+describe('catégories des aliments non résolus', () => {
+  it('setItemCategories classe les items non résolus, sans toucher aux autres', () => {
+    const id = useStore.getState().addEntry('', [iaItem('brick au thon')], 'claudecode');
+    const bananeId = useStore.getState().addFoodEntry(banane, 1, 'piece');
+
+    const n = useStore.getState().setItemCategories({ 'Brick au thon': 'poisson' });
+
+    expect(n).toBe(1);
+    expect(useStore.getState().entries.find((e) => e.id === id)!.items[0].categorie).toBe('poisson');
+    // Un item résolu tient sa catégorie de la banque : on ne la duplique pas sur l'item.
+    expect(useStore.getState().entries.find((e) => e.id === bananeId)!.items[0].categorie).toBeUndefined();
+  });
+
+  it('ne reclasse jamais un item déjà classé', () => {
+    const id = useStore.getState().addEntry('', [iaItem('brick au thon')], 'claudecode');
+    useStore.getState().setItemCategories({ 'brick au thon': 'poisson' });
+    const n = useStore.getState().setItemCategories({ 'brick au thon': 'plat' });
+    expect(n).toBe(0);
+    expect(useStore.getState().entries.find((e) => e.id === id)!.items[0].categorie).toBe('poisson');
+  });
+});
+
+describe('repas favoris — renommage', () => {
+  it('renomme un favori (les anciens portaient la dictée entière)', () => {
+    useStore.getState().saveFavoriteMeal('alors du fromage blanc je dirais 200 g avec', []);
+    const fav = useStore.getState().favoriteMeals[0];
+    useStore.getState().renameFavoriteMeal(fav.id, '  Fromage blanc chocolat  ');
+    expect(useStore.getState().favoriteMeals[0].nom).toBe('Fromage blanc chocolat');
+    // Un nom vide ne détruit pas le favori.
+    useStore.getState().renameFavoriteMeal(fav.id, '   ');
+    expect(useStore.getState().favoriteMeals[0].nom).toBe('Fromage blanc chocolat');
   });
 });
 

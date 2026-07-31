@@ -1,6 +1,6 @@
 import { useMemo, useState } from 'react';
 import { useStore, dayTotals, todayStr } from '../store/store';
-import type { Target } from '../nutrition/targets';
+import type { Sex, Target } from '../nutrition/targets';
 import { computeRatios } from '../nutrition/ratios';
 import type { RatioResult } from '../nutrition/ratios';
 import type { NutrientKey } from '../nutrition/types';
@@ -30,6 +30,7 @@ const STATUS_COLOR: Record<string, string> = {
  */
 export function Nutrients() {
   const entries = useStore((s) => s.entries);
+  const sexe = useStore((s) => s.profile.sexe);
   const today = todayStr();
   const {
     period,
@@ -97,6 +98,8 @@ export function Nutrients() {
       </div>
 
       <SaturatedFatGuide />
+
+      <IronGuide sexe={sexe} />
 
       <NutrientImportancePanel targets={targets} />
 
@@ -172,6 +175,62 @@ function SaturatedFatGuide() {
         pur. C'est pour ça que la tuile « AG saturés » du bilan porte une ligne « dont … » : son total n'est
         plus qu'un <em>filet de sécurité</em> (plafond 30 g, poids réduit), le vrai plafond étant sur les 15 g
         de C16+C14. Survolez la tuile pour voir, aliment par aliment, ce que chacun apporte de l'un et de l'autre.
+      </div>
+    </div>
+  );
+}
+
+/**
+ * Zoom sur le fer : c'est le seul nutriment dont le besoin varie du simple au
+ * triple selon la personne et le moment (règles, grossesse). La tuile du bilan
+ * ne peut afficher qu'un chiffre — celui du profil — et son survol reste court :
+ * les cas particuliers se lisent ici.
+ */
+function IronGuide({ sexe }: { sexe: Sex }) {
+  return (
+    <div className="panel">
+      <h2>Fer : un besoin qui n'est pas le même pour tout le monde</h2>
+      <p className="small" style={{ marginTop: -6 }}>
+        Le corps ne sait pas éliminer le fer : il ne se perd que par les saignements et le renouvellement des
+        cellules. Le besoin ne dépend donc pas de la taille ni du sport, mais de ce qu'on perd. D'où un AJR à
+        <strong> 9 mg</strong> chez l'homme, alors qu'il grimpe au double, voire au triple, dans certains cas.
+        Votre profil est réglé sur « {sexe} » — c'est lui qui fixe la cible affichée dans le bilan.
+      </p>
+
+      <div className="guide-item">
+        <strong>Homme (et femme sans règles) — 9 mg</strong>
+        <div className="small" style={{ marginTop: 4 }}>
+          Les pertes se limitent à ~1 mg/j (peau, intestin). Comme l'absorption tourne autour de 10-15 %,
+          9 mg d'apport suffisent largement à les compenser. Après la ménopause, ou sous contraception qui
+          supprime les règles, le besoin d'une femme rejoint celui-ci.
+        </div>
+      </div>
+
+      <div className="guide-item">
+        <strong>Femme réglée — 15 à 18 mg en moyenne</strong>
+        <div className="small" style={{ marginTop: 4 }}>
+          Chaque cycle coûte l'équivalent de ~0,5 à 1 mg/j de plus, et bien davantage sur les jours de règles
+          abondantes. La cible retenue est une <em>moyenne sur le cycle</em> : c'est surtout pendant et juste
+          après les règles qu'il faut y faire attention ; le reste du temps, le besoin redescend vers celui de
+          l'homme. C'est aussi le premier public des carences (fatigue, souffle court à l'effort).
+        </div>
+      </div>
+
+      <div className="guide-item">
+        <strong>Grossesse — 27 mg</strong>
+        <div className="small" style={{ marginTop: 4 }}>
+          Le volume sanguin augmente d'environ moitié, et il faut constituer les réserves du fœtus et du
+          placenta : le besoin est presque triplé. C'est le seul cas où une supplémentation est couramment
+          prescrite — l'alimentation seule y arrive difficilement.
+        </div>
+      </div>
+
+      <div className="hint" style={{ marginTop: 10 }}>
+        <strong>À retenir</strong> — deux fers coexistent : l'<strong>héminique</strong> (viande, poisson,
+        abats), absorbé à ~25 %, et le <strong>non héminique</strong> (légumineuses, épinards, céréales),
+        absorbé à ~5 % seulement. La vitamine C du même repas peut multiplier l'absorption du second par 2 à 3 ;
+        le thé, le café et le calcium la freinent. À l'inverse, inutile de pousser au-dessus du besoin sans
+        carence avérée : le fer en excès est pro-oxydant et s'accumule (le corps n'a pas de porte de sortie).
       </div>
     </div>
   );

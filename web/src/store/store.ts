@@ -1,7 +1,15 @@
 import { useMemo } from 'react';
 import { create } from 'zustand';
 import { persist } from 'zustand/middleware';
-import type { ComputedItem, ExtractedItem, Food, Nutrients, NutrientKey, Unit } from '../nutrition/types';
+import type {
+  ComputedItem,
+  ExtractedItem,
+  Food,
+  FoodCategory,
+  Nutrients,
+  NutrientKey,
+  Unit,
+} from '../nutrition/types';
 import { EMPTY_NUTRIENTS } from '../nutrition/types';
 import { computeItems, totalNutrients, toGrams, scaleNutrients } from '../nutrition/compute';
 import { FOODS, FOOD_BY_ID, splitSaturated } from '../nutrition/foods';
@@ -9,6 +17,8 @@ import { DEFAULT_LLM_MODEL } from '../extraction/llm';
 import { DEFAULT_CLOUD_MODEL } from '../extraction/anthropic';
 import { DEFAULT_STT_MODEL } from '../stt/whisper';
 import { isNativeSttSupported } from '../stt/webspeech';
+import { normalizeForMatch } from '../nutrition/normalize';
+import { isPhotoEntry } from '../nutrition/uncertainty';
 import { DEFAULT_PROFILE } from '../nutrition/targets';
 import type { Profile } from '../nutrition/targets';
 import type { WeightEntry, WeightConfig } from '../weight/types';
@@ -27,6 +37,13 @@ export interface JournalItem {
   nutrients: Nutrients;
   estimation: boolean;
   douteux: boolean;
+  /**
+   * Catégorie d'un aliment NON résolu (estimé par l'IA, ou introuvable dans la
+   * banque) : sans elle, ces items échappent à tout filtre par catégorie —
+   * or ce sont justement les plats décrits par le LLM (pizza, poke bowl…).
+   * Les items résolus n'en portent pas : ils tiennent la leur de la banque.
+   */
+  categorie?: FoodCategory;
   /**
    * Fourchette plausible de quantité (même unité que `quantite`) fournie par
    * l'IA quand elle a estimé la quantité (photo surtout). Sert au calcul de
@@ -166,6 +183,17 @@ export function recentFoodCounts(entries: JournalEntry[], days = 14): Map<string
   return counts;
 }
 
+/**
+ * Transcript d'une entrée dupliquée : on ne recopie PAS la dictée d'origine.
+ * Elle décrit un repas d'un autre jour (« ce midi j'ai mangé… »), elle encombre
+ * la carte, et elle repartirait ensuite comme nom de favori proposé. Seul le
+ * marqueur photo est conservé : `isPhotoEntry` s'en sert pour majorer
+ * l'incertitude des quantités devinées à l'œil, qui vaut aussi pour la copie.
+ */
+function copiedTranscript(transcript: string): string {
+  return isPhotoEntry({ transcript }) ? '📷 Photo' : '';
+}
+
 /** Convertit un ComputedItem (matching brut) en JournalItem (résolu). */
 export function toJournalItem(ci: ComputedItem): JournalItem {
   return {
@@ -180,6 +208,9 @@ export function toJournalItem(ci: ComputedItem): JournalItem {
     ...(ci.extracted.quantiteMin != null && ci.extracted.quantiteMax != null
       ? { quantiteMin: ci.extracted.quantiteMin, quantiteMax: ci.extracted.quantiteMax }
       : {}),
+    // Catégorie : seulement pour un aliment non résolu (sinon c'est la banque qui
+    // fait foi, et la garder ici la figerait à la valeur du jour de la saisie).
+    ...(!ci.match.food && ci.extracted.categorie ? { categorie: ci.extracted.categorie } : {}),
     // Un aliment estimé par l'IA n'est pas « douteux » (valeurs fournies) : il porte
     // son propre repère `iaEstime` (mise en évidence + vérification recommandée).
     douteux: !ci.aiEstime && (ci.match.douteux || ci.match.food === null),
@@ -285,10 +316,19 @@ interface AppState {
   duplicateEntry: (entryId: string, date?: string) => void;
   /** Duplique toutes les entrées d'un jour vers un autre — défaut : aujourd'hui. */
   duplicateDay: (fromDate: string, toDate?: string) => void;
+  /**
+   * Renseigne la catégorie des aliments NON résolus du journal, par nom (comparé
+   * normalisé) : rattrapage groupé de l'historique saisi avant que la catégorie
+   * ne soit conservée. Ne touche jamais un item déjà classé. Renvoie le nombre
+   * d'items complétés.
+   */
+  setItemCategories: (byName: Record<string, FoodCategory>) => number;
 
   /** Enregistre un repas favori (« petit-déj habituel ») à partir d'items du journal. */
   saveFavoriteMeal: (nom: string, items: FavoriteMealItem[]) => void;
   removeFavoriteMeal: (id: string) => void;
+  /** Renomme un repas favori (les anciens portaient la dictée entière comme nom). */
+  renameFavoriteMeal: (id: string, nom: string) => void;
   /** Ajoute un repas favori au journal du jour ciblé (défaut aujourd'hui). */
   applyFavoriteMeal: (id: string, date?: string) => string | null;
 
@@ -508,6 +548,7 @@ export const useStore = create<AppState>()(
             id: uid(),
             date: date ?? todayStr(),
             createdAt: Date.now(),
+            transcript: copiedTranscript(src.transcript),
             items: src.items.map((it) => ({ ...it, id: uid() })),
           };
           return { entries: [copy, ...s.entries] };
@@ -523,10 +564,30 @@ export const useStore = create<AppState>()(
               id: uid(),
               date: target,
               createdAt: Date.now(),
+              transcript: copiedTranscript(e.transcript),
               items: e.items.map((it) => ({ ...it, id: uid() })),
             }));
           return copies.length > 0 ? { entries: [...copies, ...s.entries] } : {};
         }),
+
+      setItemCategories: (byName) => {
+        const wanted = new Map(Object.entries(byName).map(([nom, c]) => [normalizeForMatch(nom), c]));
+        let count = 0;
+        const entries = get().entries.map((e) => {
+          let touched = false;
+          const items = e.items.map((it) => {
+            if (it.foodId || it.categorie) return it;
+            const c = wanted.get(normalizeForMatch(it.nomAffiche));
+            if (!c) return it;
+            touched = true;
+            count++;
+            return { ...it, categorie: c };
+          });
+          return touched ? { ...e, items } : e;
+        });
+        if (count > 0) set({ entries });
+        return count;
+      },
 
       saveFavoriteMeal: (nom, items) =>
         set((s) => ({
@@ -548,6 +609,13 @@ export const useStore = create<AppState>()(
 
       removeFavoriteMeal: (id) =>
         set((s) => ({ favoriteMeals: s.favoriteMeals.filter((f) => f.id !== id) })),
+
+      renameFavoriteMeal: (id, nom) =>
+        set((s) => {
+          const trimmed = nom.trim();
+          if (!trimmed) return {};
+          return { favoriteMeals: s.favoriteMeals.map((f) => (f.id === id ? { ...f, nom: trimmed } : f)) };
+        }),
 
       applyFavoriteMeal: (id, date) => {
         const fav = get().favoriteMeals.find((f) => f.id === id);

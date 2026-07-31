@@ -52,6 +52,19 @@ describe('foodFrequencies', () => {
     expect(riz.occurrences).toBe(1);
   });
 
+  it('renseigne la catégorie : banque pour les résolus, item pour les estimés', () => {
+    const brick = { ...item(null, 'brick au thon'), categorie: 'poisson' as const };
+    const entries = [entry('2026-03-01', [item('saumon', 'Saumon (cuit)'), brick, item(null, 'sauce mystère')])];
+
+    const freqs = foodFrequencies(entries, ALL, (id) => (id === 'saumon' ? 'poisson' : undefined));
+    const byNom = new Map(freqs.map((f) => [f.nom, f]));
+
+    expect(byNom.get('Saumon (cuit)')!.categorie).toBe('poisson');
+    expect(byNom.get('brick au thon')!.categorie).toBe('poisson');
+    // Aliment jamais classé : c'est lui que le rattrapage IA doit rattraper.
+    expect(byNom.get('sauce mystère')!.categorie).toBeNull();
+  });
+
   it('ne retient que les entrées de la plage demandée', () => {
     const entries = [
       entry('2026-03-01', [item('banane', 'Banane')]),

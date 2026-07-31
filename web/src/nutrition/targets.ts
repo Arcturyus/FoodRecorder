@@ -174,9 +174,12 @@ export function computeTargets(profile: Profile): Target[] {
     if (r.goal === 'limit') {
       return { ...base, ajr: r.rda, optimal: r.optimalLow ?? r.rda };
     }
-    // Fer : besoin plus élevé chez la femme (menstruations).
+    // Fer : 9 mg suffisent chez l'homme (pertes faibles). Chez la femme, ce sont
+    // les règles qui creusent le besoin — 15 à 18 mg en moyenne sur le cycle,
+    // et jusqu'à 27 mg enceinte (cf. le Guide). Hors règles, le besoin rejoint
+    // celui de l'homme : la cible retenue est donc une moyenne, pas un maximum.
     if (r.key === 'fer' && sexe === 'femme') {
-      return { ...base, ajr: 16, optimal: 20 };
+      return { ...base, ajr: 15, optimal: 18 };
     }
     const factor = r.optimalFactor ?? 1;
     return { ...base, ajr: r.rda, optimal: Math.round(r.rda * factor) };

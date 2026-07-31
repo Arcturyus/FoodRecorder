@@ -123,9 +123,9 @@ export const RDA: RdaEntry[] = [
     role: 'Acide oléique (non essentiel) ; contribue au bon profil lipidique.',
   },
   {
-    key: 'fer', label: 'Fer', unit: 'mg', rda: 14, goal: 'atLeast', optimalFactor: 1,
+    key: 'fer', label: 'Fer', unit: 'mg', rda: 9, goal: 'atLeast', optimalFactor: 1,
     role: 'Transport de l\'oxygène (hémoglobine) et production d\'énergie ; clé pour l\'endurance.',
-    optimalNote: 'Ne pas dépasser inutilement : le fer en excès est pro-oxydant. Besoin plus élevé chez la femme.',
+    optimalNote: 'Homme : 9 mg, les pertes sont faibles. Femme : 15-18 mg si les règles sont là, sinon comme l\'homme ; 27 mg enceinte. En excès le fer est pro-oxydant (détail dans le Guide).',
   },
   {
     key: 'magnesium', label: 'Magnésium', unit: 'mg', rda: 375, goal: 'atLeast', optimalFactor: 1.15,

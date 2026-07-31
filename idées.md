@@ -1,19 +1,17 @@
 # À FAIRE
 
-- [ ] recherhcer un aliment dans l'histo : autoriser la multi selection (+ recherche d'une categorie défini exemple poissons) mais cela necessite de mettre une catégorie à tout element estimé par LLM parmi la liste de catégories
-- [ ] repas favori rework : prendre moins de place si y a trop de foavori (quitte à mettre un bouton plus, les mettrzs un peu sur plusieurs colonnes mais attention UI phone)
-Pour cela enlever le texte de dicté dans un favori, et d'ailleurs ne pas copier le texte dictée lorsque l'on appui sur dupliquer (dans historique ou aujourdhui)
+
 
 
 ## 1. Base de données : fer & graisses saturées détaillées
 
-- [ ] Fer : si homme, besoin de base à 8 mg (on gérera le cas femme + règles une autre fois — le besoin change selon la période du cycle). **← seul point restant de cette section**
+- [x] Fer — **FAIT** (voir VALIDÉ / FAIT) : 9 mg chez l'homme, 15 → 18 mg chez la femme, 27 mg enceinte expliqué dans le Guide.
 - [x] Séparer les acides gras saturés — **FAIT** (voir VALIDÉ / FAIT).
 
 **Décidé :**
 - **Répartition** : estimée comme le reste des nutriments. On remplit à la main les aliments à fort **et** à moyen impact (on cible large : un petit impact mangé souvent finit par compter), et pour tout le reste c'est l'IA qui estime. Repère chiffré sur le journal réel (23 jours) : 19 aliments couvrent 80 % des AG saturés mangés, 31 en couvrent 90 %, 44 en couvrent 95 % — et la moitié des gros contributeurs sont des plats décrits par le LLM (pizza, glace, burger…), donc le schéma d'extraction doit lui aussi renvoyer la répartition.
 - **Affichage** : une seule ligne « AG saturés » **dépliable** en sous-détail (comme les oméga 3 ALA/EPA/DHA), avec une petite ligne d'explication : ce qui est mauvais dans les AG saturés, ce qui est acceptable.
-- **Fer** : AJR et optimal tous les deux à 8 mg chez l'homme.
+- **Fer** : AJR et optimal tous les deux à 9 mg chez l'homme (le corps n'élimine pas le fer, il ne se perd que par les saignements).
 
 **Seuils retenus (implémentés) :**
 - Plafond qui compte sur **C16:0 + C14:0** : **15 g/j**, idéal ≤ 10 g. C'est une VRAIE limite et non un prorata de l'ancienne (premier jet à 16 g = 72 % du plafond du total, corrigé après retour utilisateur) : le « < 10 % de l'énergie » des recommandations vise les saturés qui élèvent le LDL, et l'AHA descend à 7 % en prévention cardiovasculaire, soit ≈ 15 g pour 2000 kcal. Plus exigeant que l'ancien plafond de 22 g sur le total, puisque le stéarique n'y est plus compté.
@@ -51,6 +49,9 @@ Pour cela enlever le texte de dicté dans un favori, et d'ailleurs ne pas copier
 
 # VALIDÉ / FAIT
 
+- [x] **Recherche d'historique : multi-sélection + catégories** : plusieurs aliments peuvent rester sélectionnés (par défaut TOUS les résultats), combinés en **OU** (« quand ai-je mangé du poisson ? ») avec une bascule **ET** (« les jours où saumon ET riz »), et un filtre par **catégorie** à côté de la recherche texte. La catégorie estimée par le LLM était jusqu'ici perdue à l'enregistrement (`toJournalItem` ne gardait que les nutriments) : elle est désormais conservée sur l'item non résolu, et un bouton **« ⟳ Les classer avec l'IA »** rattrape l'historique déjà saisi en **un appel groupé** (57 noms distincts sur le journal réel — vérifié de bout en bout : sardines → poisson, inuline → supplément, guacamole → matière grasse).
+- [x] **Repas favoris compacts** : grille de pastilles (nom seul, 2 colonnes sur téléphone, 3-4 en desktop), détail des aliments en info-bulle, bouton « + N autres » au-delà de 6, et mode « Modifier » pour renommer/supprimer. Le nom proposé à l'enregistrement n'est **plus la dictée** (elle produisait des favoris à rallonge, illisibles et impossibles à redire à la voix) mais les aliments — d'où le **renommage**, pour les anciens. Dans la foulée, **dupliquer** un repas ou un jour ne recopie plus la dictée (elle décrivait un autre jour) ; seul le marqueur `📷` survit, dont dépend l'incertitude sur les quantités devinées à l'œil.
+- [x] **Fer : 9 mg** chez l'homme (AJR = optimal ; le corps n'élimine pas le fer, seules les pertes comptent), **15 → 18 mg** chez la femme réglée, avec un survol court sur la tuile et un panneau du Guide pour les cas particuliers (hors règles = comme l'homme, 27 mg enceinte, héminique vs non héminique, vitamine C).
 - [x] **Poids — analyse de l'évolution** : moyenne mobile **réglable** (3 / 7 / 14 / 30 j, comme dans Stats), appliquée aussi aux kcal superposées et à la part squelettique. Active, elle **remplace** les courbes brutes au lieu de s'y ajouter (contrepartie assumée : les points de pesée et le clic-pour-éditer ne reviennent qu'en la décochant) ; l'estimation de date d'atteinte de l'objectif suit la même fenêtre. **Pas d'agrégat Jour/Semaine/Mois ici** — la moyenne mobile suffit. kcal = **jours enregistrés uniquement** (un jour vide n'est pas un jour à 0), sauf s'il est marqué « compté » sur le calendrier (jeûne) où il vaut bien 0 ; un jour muté est ignoré même s'il contient des entrées.
 - [x] **AG saturés séparés** : deux sous-nutriments (`agSaturesLdl` = C16+C14, `agSaturesStearique` = C18) avec leurs propres cibles — 16 g et 18 g — pendant que le total devient un filet de sécurité à 30 g / ×0,5. Ils n'ont **pas de tuile propre** (notion de `parent` dans les cibles) : ils s'affichent en ligne « dont … » sous la tuile « AG saturés », comme ALA/EPA/DHA sous les oméga 3, et sont décalés sous leur parent dans le panneau d'importance. Répartition remplie à la main pour ~55 aliments (table de ratios `SFA_SPLIT_BY_FOOD`), profil de catégorie pour le reste, prompt IA enrichi, et rattrapage à l'hydratation pour l'historique déjà saisi. Exclus des dimensions de comparaison/ACP (colinéaires avec leur parent).
 - [x] **Composition par aliment en couleurs** : dans l'infobulle « Principaux apports » des tuiles oméga 3 et AG saturés, chaque aliment porte une petite barre segmentée (ALA/EPA/DHA — C16+C14 / stéarique / non détaillé) mise côte à côte sur sa ligne, ses valeurs en texte, et **une seule ligne de légende** en bas. Mêmes couleurs dans la ligne « dont … » sous la tuile.

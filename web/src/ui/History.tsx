@@ -6,13 +6,15 @@ import type { FoodFrequency } from '../nutrition/frequency';
 import { matchFood } from '../nutrition/match';
 import { normalizeForMatch } from '../nutrition/normalize';
 import { dayKcalUncertainty } from '../nutrition/uncertainty';
+import { categorizeNames } from '../extraction/categorize';
+import type { FoodCategory } from '../nutrition/types';
 import { Capture } from './Capture';
 import { EntryCard } from './EntryCard';
 import { ManualAdd } from './ManualAdd';
 import { Sun } from './Sun';
 import { DayNote } from './DayNote';
 import { UncertaintyBadge } from './UncertaintyBadge';
-import { fmt } from './format';
+import { fmt, CATEGORY_LABELS } from './format';
 
 const WEEKDAYS = ['L', 'M', 'M', 'J', 'V', 'S', 'D'];
 
@@ -158,7 +160,7 @@ export function History() {
           <span>📝 note ce jour</span>
           {foundDates.size > 0 && (
             <span>
-              <i className="cal-legend found" /> contient l'aliment recherché
+              <i className="cal-legend found" /> jour retenu par la recherche
             </span>
           )}
         </div>
@@ -226,7 +228,7 @@ function CalCell({
       }${found ? ' found' : ''}${muted ? ' muted' : ''}${fasting ? ' fasting' : ''}`}
       onClick={onClick}
       disabled={isFuture}
-      data-tip={found ? 'Contient l’aliment recherché' : undefined}
+      data-tip={found ? 'Jour retenu par la recherche' : undefined}
     >
       <span className="cal-day">{day}</span>
       {hasNote && <span className="cal-note" aria-label="Note ce jour" data-tip="Note ce jour">📝</span>}
@@ -264,12 +266,21 @@ function CalCell({
 
 /** Nombre de jours affichés d'emblée dans les résultats (le reste au clic). */
 const DATES_SHOWN = 12;
+/** Nombre d'aliments proposés d'emblée (une catégorie entière en compte beaucoup). */
+const RESULTS_SHOWN = 16;
 
 /**
- * « Quand ai-je mangé du saumon ? » : cherche un aliment dans tout l'historique
- * et répond par sa fréquence et la liste des jours, cliquables (le calendrier
+ * « Quand ai-je mangé du saumon ? » : cherche des aliments dans tout l'historique
+ * et répond par leur fréquence et la liste des jours, cliquables (le calendrier
  * bascule sur le mois du jour choisi et l'ouvre). Les jours trouvés sont aussi
  * mis en évidence dans le calendrier.
+ *
+ * La recherche porte sur le NOM, sur la CATÉGORIE (« tous les poissons »), ou sur
+ * les deux, et plusieurs aliments peuvent rester sélectionnés à la fois :
+ *  - « au moins un » (OU) — la question habituelle (« quand ai-je mangé du poisson ? ») ;
+ *  - « tous » (ET) — les jours où deux aliments se retrouvent ensemble.
+ * Par défaut tous les résultats sont actifs : le filtre par catégorie répond donc
+ * tout de suite, sans avoir à cocher les aliments un par un.
  */
 function FoodSearch({
   onDatesChange,
@@ -281,40 +292,89 @@ function FoodSearch({
   const entries = useStore((s) => s.entries);
   const foods = useEffectiveFoods();
   const [query, setQuery] = useState('');
-  const [pickedKey, setPickedKey] = useState<string | null>(null);
-  const [showAll, setShowAll] = useState(false);
+  const [cat, setCat] = useState<FoodCategory | 'all' | 'none'>('all');
+  /** Aliments cochés ; `null` = tous les résultats courants (état de départ). */
+  const [picked, setPicked] = useState<Set<string> | null>(null);
+  const [combine, setCombine] = useState<'ou' | 'et'>('ou');
+  const [showAllDates, setShowAllDates] = useState(false);
+  const [showAllResults, setShowAllResults] = useState(false);
 
   const today = todayStr();
+  const categoryOfFood = useMemo(() => {
+    const byId = new Map(foods.map((f) => [f.id, f.categorie]));
+    return (id: string) => byId.get(id);
+  }, [foods]);
   /** Fréquences sur TOUT l'historique (la recherche n'est pas bornée à une période). */
-  const freqs = useMemo(() => foodFrequencies(entries, { start: '0000-01-01', end: today }), [entries, today]);
+  const freqs = useMemo(
+    () => foodFrequencies(entries, { start: '0000-01-01', end: today }, categoryOfFood),
+    [entries, today, categoryOfFood],
+  );
 
   /**
-   * Résultats : recoupement direct sur le libellé (« saumon » → « Saumon (cuit) »,
-   * « Saumon fumé »), complété par le matching flou de l'app quand rien ne
-   * ressort (fautes de frappe, alias : « pavé de saumon » → aliment `saumon`).
+   * Résultats : filtre par catégorie, puis recoupement direct sur le libellé
+   * (« saumon » → « Saumon (cuit) », « Saumon fumé »), complété par le matching
+   * flou de l'app quand rien ne ressort (fautes de frappe, alias : « pavé de
+   * saumon » → aliment `saumon`). Sans texte ET sans catégorie : aucun résultat,
+   * on n'affiche pas tout l'historique par accident.
    */
   const results = useMemo<FoodFrequency[]>(() => {
+    const base =
+      cat === 'all' ? freqs : cat === 'none' ? freqs.filter((f) => f.categorie === null) : freqs.filter((f) => f.categorie === cat);
     const q = normalizeForMatch(query.trim());
-    if (q.length < 2) return [];
-    const direct = freqs.filter((f) => normalizeForMatch(f.nom).includes(q));
+    if (q.length < 2) return cat === 'all' ? [] : base;
+    const direct = base.filter((f) => normalizeForMatch(f.nom).includes(q));
     if (direct.length > 0) return direct;
     const m = matchFood(query, foods);
     if (!m.food) return [];
-    const byId = freqs.filter((f) => f.key === frequencyKey(m.food!.id, m.food!.nom));
-    return byId;
-  }, [query, freqs, foods]);
+    return base.filter((f) => f.key === frequencyKey(m.food!.id, m.food!.nom));
+  }, [query, cat, freqs, foods]);
 
-  const active = results.find((f) => f.key === pickedKey) ?? results[0] ?? null;
-
-  // Le surlignage du calendrier (état du parent) suit l'aliment actif. En effet
-  // et non pendant le rendu : remonter l'info au parent est un effet de bord.
-  const activeDates = active?.dates;
+  // Changer de recherche repart de « tout sélectionné » : garder les coches
+  // d'une recherche précédente n'aurait aucun sens sur de nouveaux aliments.
   useEffect(() => {
-    onDatesChange(new Set(activeDates ?? []));
-  }, [activeDates, onDatesChange]);
+    setPicked(null);
+    setShowAllDates(false);
+    setShowAllResults(false);
+  }, [query, cat]);
 
-  const dates = active ? [...active.dates].reverse() : [];
-  const shown = showAll ? dates : dates.slice(0, DATES_SHOWN);
+  const active = picked ? results.filter((f) => picked.has(f.key)) : results;
+
+  /** Jours retenus : union (OU) ou intersection (ET) des jours des aliments actifs. */
+  const dates = useMemo(() => {
+    if (active.length === 0) return [];
+    if (combine === 'et') {
+      let acc = active[0].dates;
+      for (const f of active.slice(1)) {
+        const other = new Set(f.dates);
+        acc = acc.filter((d) => other.has(d));
+      }
+      return [...acc].sort();
+    }
+    const union = new Set<string>();
+    for (const f of active) for (const d of f.dates) union.add(d);
+    return [...union].sort();
+  }, [active, combine]);
+
+  // Le surlignage du calendrier (état du parent) suit les jours retenus. En effet
+  // et non pendant le rendu : remonter l'info au parent est un effet de bord.
+  // La clé texte évite de relancer l'effet à chaque rendu (le tableau est neuf).
+  const datesKey = dates.join(',');
+  useEffect(() => {
+    onDatesChange(new Set(datesKey ? datesKey.split(',') : []));
+  }, [datesKey, onDatesChange]);
+
+  const shownResults = showAllResults ? results : results.slice(0, RESULTS_SHOWN);
+  const shownDates = showAllDates ? [...dates].reverse() : [...dates].reverse().slice(0, DATES_SHOWN);
+  const searching = query.trim().length >= 2 || cat !== 'all';
+
+  function toggle(key: string) {
+    const current = picked ?? new Set(results.map((f) => f.key));
+    const next = new Set(current);
+    if (next.has(key)) next.delete(key);
+    else next.add(key);
+    setPicked(next);
+    setShowAllDates(false);
+  }
 
   return (
     <div className="panel">
@@ -322,62 +382,165 @@ function FoodSearch({
         <input
           type="search"
           value={query}
-          onChange={(e) => {
-            setQuery(e.target.value);
-            setPickedKey(null);
-            setShowAll(false);
-          }}
+          onChange={(e) => setQuery(e.target.value)}
           placeholder="Rechercher un aliment… (« saumon » : quand en ai-je mangé ?)"
-          style={{ flex: '1 1 260px' }}
+          style={{ flex: '1 1 240px' }}
           aria-label="Rechercher un aliment dans l'historique"
         />
-        {query && (
-          <button className="ghost small" onClick={() => { setQuery(''); setPickedKey(null); }}>
+        <select
+          value={cat}
+          onChange={(e) => setCat(e.target.value as FoodCategory | 'all' | 'none')}
+          aria-label="Filtrer par catégorie"
+          style={{ flex: '0 1 180px' }}
+        >
+          <option value="all">Toutes catégories</option>
+          {CATEGORY_LABELS.map((c) => (
+            <option key={c.key} value={c.key}>
+              {c.label}
+            </option>
+          ))}
+          <option value="none">Non classés</option>
+        </select>
+        {(query || cat !== 'all') && (
+          <button className="ghost small" onClick={() => { setQuery(''); setCat('all'); }}>
             Effacer
           </button>
         )}
       </div>
 
-      {query.trim().length >= 2 && results.length === 0 && (
-        <div className="hint">Aucun aliment de ce nom dans l'historique.</div>
+      <UnclassifiedFoods freqs={freqs} />
+
+      {searching && results.length === 0 && (
+        <div className="hint">Aucun aliment ne correspond dans l'historique.</div>
       )}
 
       {results.length > 1 && (
-        <div className="row" style={{ gap: 6, flexWrap: 'wrap', marginTop: 8 }}>
-          {results.map((f) => (
-            <button
-              key={f.key}
-              className={`small ${active?.key === f.key ? 'chip-active' : 'ghost'}`}
-              onClick={() => { setPickedKey(f.key); setShowAll(false); }}
-            >
-              {f.nom} · {fmt(f.occurrences)}×
-            </button>
-          ))}
-        </div>
-      )}
-
-      {active && (
         <>
-          <div className="hint" style={{ marginTop: 8 }}>
-            <strong>{active.nom}</strong> : {fmt(active.occurrences)} fois sur {fmt(active.jours)} jour(s) —
-            dernière fois <strong>{dayLabel(active.derniere, true)}</strong> ({daysSince(active.derniere, today)}).
-            Total {fmt(active.grammes)} g · {fmt(active.kcal)} kcal. Les jours concernés sont surlignés dans le
-            calendrier.
-          </div>
-          <div className="row" style={{ gap: 6, flexWrap: 'wrap', marginTop: 6 }}>
-            {shown.map((d) => (
-              <button key={d} className="ghost small" onClick={() => onPickDate(d)} data-tip="Ouvrir ce jour">
-                {dayLabel(d, true)}
+          <div className="row" style={{ gap: 6, flexWrap: 'wrap', marginTop: 8, alignItems: 'center' }}>
+            {shownResults.map((f) => (
+              <button
+                key={f.key}
+                className={`small ${active.includes(f) ? 'chip-active' : 'ghost'}`}
+                onClick={() => toggle(f.key)}
+                data-tip={active.includes(f) ? 'Retirer de la sélection' : 'Ajouter à la sélection'}
+              >
+                {f.nom} · {fmt(f.occurrences)}×
               </button>
             ))}
-            {!showAll && dates.length > DATES_SHOWN && (
-              <button className="ghost small" onClick={() => setShowAll(true)}>
-                +{dates.length - DATES_SHOWN} autre(s)
+            {!showAllResults && results.length > RESULTS_SHOWN && (
+              <button className="ghost small" onClick={() => setShowAllResults(true)}>
+                +{results.length - RESULTS_SHOWN} autre(s)
               </button>
+            )}
+          </div>
+          <div className="row small" style={{ gap: 10, flexWrap: 'wrap', marginTop: 6, alignItems: 'center' }}>
+            <span style={{ color: 'var(--muted)' }}>
+              {active.length} / {results.length} sélectionné(s)
+            </span>
+            <button className="ghost small" onClick={() => setPicked(null)} disabled={picked === null}>
+              Tout
+            </button>
+            <button className="ghost small" onClick={() => setPicked(new Set())} disabled={active.length === 0}>
+              Aucun
+            </button>
+            {active.length > 1 && (
+              <label className="row small" style={{ gap: 6, alignItems: 'center', cursor: 'pointer' }}>
+                <input
+                  type="checkbox"
+                  checked={combine === 'et'}
+                  onChange={(e) => setCombine(e.target.checked ? 'et' : 'ou')}
+                />
+                <span data-tip="Coché : seuls les jours où TOUS les aliments sélectionnés apparaissent">
+                  jours contenant <strong>tous</strong> les aliments
+                </span>
+              </label>
             )}
           </div>
         </>
       )}
+
+      {active.length > 0 && (
+        <>
+          <div className="hint" style={{ marginTop: 8 }}>
+            {active.length === 1 ? (
+              <>
+                <strong>{active[0].nom}</strong> : {fmt(active[0].occurrences)} fois sur {fmt(active[0].jours)} jour(s) —
+                dernière fois <strong>{dayLabel(active[0].derniere, true)}</strong> (
+                {daysSince(active[0].derniere, today)}). Total {fmt(active[0].grammes)} g · {fmt(active[0].kcal)} kcal.
+              </>
+            ) : (
+              <>
+                <strong>{active.length} aliments</strong> ·{' '}
+                {fmt(active.reduce((a, f) => a + f.occurrences, 0))} consommations sur <strong>{dates.length}</strong>{' '}
+                jour(s) {combine === 'et' ? 'où ils apparaissent tous' : 'où au moins un apparaît'} · total{' '}
+                {fmt(active.reduce((a, f) => a + f.kcal, 0))} kcal.
+              </>
+            )}{' '}
+            Les jours concernés sont surlignés dans le calendrier.
+          </div>
+          <div className="row" style={{ gap: 6, flexWrap: 'wrap', marginTop: 6 }}>
+            {shownDates.map((d) => (
+              <button key={d} className="ghost small" onClick={() => onPickDate(d)} data-tip="Ouvrir ce jour">
+                {dayLabel(d, true)}
+              </button>
+            ))}
+            {!showAllDates && dates.length > DATES_SHOWN && (
+              <button className="ghost small" onClick={() => setShowAllDates(true)}>
+                +{dates.length - DATES_SHOWN} autre(s)
+              </button>
+            )}
+            {dates.length === 0 && <span className="small">Aucun jour ne contient tous ces aliments.</span>}
+          </div>
+        </>
+      )}
+    </div>
+  );
+}
+
+/**
+ * Rattrapage des aliments non classés : les plats décrits par le LLM avant que
+ * l'app ne conserve leur catégorie n'en ont aucune, et échapperaient donc au
+ * filtre par catégorie (« poissons » raterait les sardines à l'huile). Un appel
+ * IA groupé les classe tous d'un coup, une fois pour toutes.
+ */
+function UnclassifiedFoods({ freqs }: { freqs: FoodFrequency[] }) {
+  const extractionMode = useStore((s) => s.extractionMode);
+  const cloudApiKey = useStore((s) => s.cloudApiKey);
+  const cloudModel = useStore((s) => s.cloudModel);
+  const setItemCategories = useStore((s) => s.setItemCategories);
+  const [busy, setBusy] = useState(false);
+  const [status, setStatus] = useState('');
+
+  const unclassified = useMemo(() => freqs.filter((f) => f.categorie === null), [freqs]);
+  if (unclassified.length === 0) return status ? <div className="status">{status}</div> : null;
+
+  async function classify() {
+    setBusy(true);
+    setStatus('Classement en cours…');
+    try {
+      const byName = await categorizeNames(
+        unclassified.map((f) => f.nom),
+        extractionMode,
+        cloudApiKey,
+        cloudModel,
+      );
+      const n = setItemCategories(byName);
+      setStatus(n > 0 ? `${n} aliment(s) classés dans l'historique.` : 'Aucun aliment classé.');
+    } catch (e) {
+      setStatus(`Erreur : ${(e as Error).message}`);
+    }
+    setBusy(false);
+  }
+
+  return (
+    <div className="row small" style={{ gap: 8, alignItems: 'center', flexWrap: 'wrap', marginTop: 8 }}>
+      <span style={{ color: 'var(--muted)' }}>
+        {unclassified.length} aliment(s) sans catégorie (estimés par l'IA) — invisibles au filtre par catégorie.
+      </span>
+      <button className="ghost small" onClick={classify} disabled={busy}>
+        {busy ? '…' : '⟳ Les classer avec l’IA'}
+      </button>
+      {status && <span style={{ color: 'var(--muted)' }}>{status}</span>}
     </div>
   );
 }

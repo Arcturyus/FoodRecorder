@@ -28,8 +28,13 @@ export function EntryCard({ entry }: { entry: JournalEntry }) {
   }
 
   function saveAsFavorite() {
-    const suggestion = entry.transcript.replace(/^⭐\s*/, '') || entry.items.map((it) => it.nomAffiche).join(', ');
-    const nom = window.prompt('Nom du repas favori (ex. « petit-déj habituel ») :', suggestion);
+    // Jamais la dictée comme nom proposé : elle fait des favoris à rallonge
+    // (« alors du fromage blanc 3 % je dirais 200 g avec deux carrés de… »),
+    // illisibles dans la grille et impossibles à redire à la voix. On propose
+    // les aliments — sauf si l'entrée vient déjà d'un favori, dont on garde le nom.
+    const fromFavorite = entry.transcript.startsWith('⭐') ? entry.transcript.slice(1).trim() : '';
+    const suggestion = fromFavorite || entry.items.slice(0, 3).map((it) => it.nomAffiche).join(', ');
+    const nom = window.prompt('Nom du repas favori, court (ex. « petit-déj habituel ») :', suggestion);
     if (!nom || !nom.trim()) return;
     saveFavoriteMeal(nom, entry.items);
     setSaved(`⭐ Enregistré comme favori : « ${nom.trim()} » (visible sur l'onglet Aujourd'hui).`);

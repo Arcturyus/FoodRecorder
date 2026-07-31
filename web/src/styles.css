@@ -732,6 +732,43 @@ button.chip-active:hover { filter: brightness(1.08); }
 }
 .series-chip > span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 
+/* ---- Repas favoris : grille de pastilles (nom seul, détail au survol) ----
+   Une ligne par favori mangeait tout l'écran dès qu'il y en avait quelques-uns.
+   `auto-fill` + minmax donne 2 colonnes sur téléphone et 3-4 en desktop. */
+.fav-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 8px; margin-top: 10px; }
+.fav-chip {
+  display: flex; align-items: stretch; gap: 4px;
+  min-width: 0; /* sans quoi le nom long pousse la colonne au lieu d'être tronqué */
+}
+.fav-chip > .fav-add {
+  display: flex; align-items: center; gap: 7px;
+  flex: 1; min-width: 0; min-height: 40px; padding: 6px 10px;
+  border: 1px solid var(--border); border-radius: 10px;
+  background: var(--panel-2); color: var(--text);
+  font-size: 13px; text-align: left;
+  transition: border-color 0.12s, background 0.12s;
+}
+.fav-chip > .fav-add:hover { border-color: var(--accent); background: var(--panel); }
+.fav-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.fav-act {
+  flex: none; width: 34px; min-height: 40px; padding: 0;
+  border-radius: 10px; background: var(--panel-2); color: var(--muted); font-size: 13px;
+}
+.fav-act:hover { border-color: var(--accent); color: var(--text); }
+.fav-act.danger { color: var(--danger); }
+.fav-act.danger:hover { border-color: var(--danger); }
+/* « + N autres » : action secondaire, en retrait des favoris eux-mêmes. */
+.fav-more {
+  min-height: 40px; border-radius: 10px;
+  background: transparent; color: var(--muted); font-size: 12.5px;
+}
+.fav-more:hover { border-color: var(--accent); color: var(--accent); background: var(--panel-2); }
+
+@media (max-width: 640px) {
+  .fav-grid { grid-template-columns: repeat(auto-fill, minmax(130px, 1fr)); }
+  .fav-chip > .fav-add, .fav-act, .fav-more { min-height: 46px; } /* cible tactile */
+}
+
 /* ---- Formulaire d'édition d'aliment (Aliments) ---- */
 .food-form {
   padding: 12px;
@@ -917,6 +954,9 @@ button.chip-active:hover { filter: brightness(1.08); }
   .cal-cell:hover:not(:disabled) { border-color: var(--border); }
   .series-chip:hover { border-color: var(--border); color: var(--muted); }
   .sun-term:hover { border-color: var(--border); background: var(--panel); }
+  .fav-chip > .fav-add:hover { border-color: var(--border); background: var(--panel-2); }
+  .fav-act:hover { border-color: var(--border); color: var(--muted); }
+  .fav-more:hover { border-color: var(--border); color: var(--muted); background: transparent; }
 }
 
 /* ---- Info-bulles (remplace `title`, natif et non stylable, par une bulle
