@@ -152,6 +152,58 @@ describe('repas favoris — renommage', () => {
   });
 });
 
+describe('repas favoris — édition du contenu', () => {
+  it('modifie un aliment existant (quantité, unité, remplacement)', () => {
+    useStore.getState().saveFavoriteMeal('Petit-déj', [
+      { foodId: 'banane', nomAffiche: 'Banane', quantite: 1, unite: 'piece', estimation: false },
+    ]);
+    const fav = useStore.getState().favoriteMeals[0];
+
+    useStore.getState().updateFavoriteMealItem(fav.id, 0, { quantite: 2 });
+    expect(useStore.getState().favoriteMeals[0].items[0].quantite).toBe(2);
+
+    const pomme = FOOD_BY_ID.get('pomme') ?? FOOD_BY_ID.get('oeuf')!;
+    useStore.getState().updateFavoriteMealItem(fav.id, 0, { foodId: pomme.id, nomAffiche: pomme.nom });
+    expect(useStore.getState().favoriteMeals[0].items[0].foodId).toBe(pomme.id);
+  });
+
+  it('ajoute et retire des aliments d’un favori', () => {
+    useStore.getState().saveFavoriteMeal('Shaker', [
+      { foodId: 'banane', nomAffiche: 'Banane', quantite: 1, unite: 'piece', estimation: false },
+    ]);
+    const fav = useStore.getState().favoriteMeals[0];
+
+    useStore.getState().addFavoriteMealItem(fav.id, {
+      foodId: 'banane',
+      nomAffiche: 'Banane',
+      quantite: 200,
+      unite: 'g',
+      estimation: false,
+    });
+    expect(useStore.getState().favoriteMeals[0].items).toHaveLength(2);
+
+    useStore.getState().removeFavoriteMealItem(fav.id, 0);
+    const after = useStore.getState().favoriteMeals[0].items;
+    expect(after).toHaveLength(1);
+    expect(after[0].quantite).toBe(200);
+  });
+
+  it('ne touche pas aux autres favoris', () => {
+    useStore.getState().saveFavoriteMeal('A', [
+      { foodId: 'banane', nomAffiche: 'Banane', quantite: 1, unite: 'piece', estimation: false },
+    ]);
+    useStore.getState().saveFavoriteMeal('B', [
+      { foodId: 'banane', nomAffiche: 'Banane', quantite: 1, unite: 'piece', estimation: false },
+    ]);
+    const [favB, favA] = useStore.getState().favoriteMeals; // ordre : le plus récent en tête
+
+    useStore.getState().updateFavoriteMealItem(favA.id, 0, { quantite: 5 });
+
+    expect(useStore.getState().favoriteMeals.find((f) => f.id === favA.id)!.items[0].quantite).toBe(5);
+    expect(useStore.getState().favoriteMeals.find((f) => f.id === favB.id)!.items[0].quantite).toBe(1);
+  });
+});
+
 describe('recentFoodCounts', () => {
   it('compte les aliments des derniers jours, pas les anciens', () => {
     useStore.getState().addFoodEntry(banane, 1, 'piece', daysAgo(1));

@@ -7,7 +7,7 @@ import { matchFood } from '../nutrition/match';
 import { normalizeForMatch } from '../nutrition/normalize';
 import { dayKcalUncertainty } from '../nutrition/uncertainty';
 import { categorizeNames } from '../extraction/categorize';
-import type { FoodCategory } from '../nutrition/types';
+import type { Food, FoodCategory } from '../nutrition/types';
 import { Capture } from './Capture';
 import { EntryCard } from './EntryCard';
 import { ManualAdd } from './ManualAdd';
@@ -270,17 +270,46 @@ const DATES_SHOWN = 12;
 const RESULTS_SHOWN = 16;
 
 /**
+ * Filtre les fréquences par catégorie puis par texte : recoupement direct sur
+ * le libellé (« saumon » → « Saumon (cuit) », « Saumon fumé »), complété par le
+ * matching flou de l'app quand rien ne ressort (fautes de frappe, alias :
+ * « pavé de saumon » → aliment `saumon`). Sans texte ET sans catégorie : aucun
+ * résultat, on n'affiche pas tout l'historique par accident. Fonction pure
+ * (hors composant) : réutilisée aussi pour l'ajout en bloc d'une catégorie.
+ */
+function filterFoodResults(
+  freqs: FoodFrequency[],
+  foods: Food[],
+  query: string,
+  cat: FoodCategory | 'all' | 'none',
+): FoodFrequency[] {
+  const base =
+    cat === 'all' ? freqs : cat === 'none' ? freqs.filter((f) => f.categorie === null) : freqs.filter((f) => f.categorie === cat);
+  const q = normalizeForMatch(query.trim());
+  if (q.length < 2) return cat === 'all' ? [] : base;
+  const direct = base.filter((f) => normalizeForMatch(f.nom).includes(q));
+  if (direct.length > 0) return direct;
+  const m = matchFood(query, foods);
+  if (!m.food) return [];
+  return base.filter((f) => f.key === frequencyKey(m.food!.id, m.food!.nom));
+}
+
+/**
  * « Quand ai-je mangé du saumon ? » : cherche des aliments dans tout l'historique
  * et répond par leur fréquence et la liste des jours, cliquables (le calendrier
  * bascule sur le mois du jour choisi et l'ouvre). Les jours trouvés sont aussi
  * mis en évidence dans le calendrier.
  *
- * La recherche porte sur le NOM, sur la CATÉGORIE (« tous les poissons »), ou sur
- * les deux, et plusieurs aliments peuvent rester sélectionnés à la fois :
- *  - « au moins un » (OU) — la question habituelle (« quand ai-je mangé du poisson ? ») ;
- *  - « tous » (ET) — les jours où deux aliments se retrouvent ensemble.
- * Par défaut tous les résultats sont actifs : le filtre par catégorie répond donc
- * tout de suite, sans avoir à cocher les aliments un par un.
+ * La sélection est un PANIER qui survit aux recherches successives, pas un
+ * simple filtre : on cherche « saumon », on clique dessus (il est ajouté), puis
+ * on cherche/choisit une autre catégorie ou un autre nom, et ça vient s'ajouter
+ * SANS effacer ce qui est déjà là. Deux façons de remplir le panier :
+ *  - clic sur un aliment (résultat de la recherche texte, ou navigué par
+ *    catégorie) : l'ajoute ou le retire, un par un ;
+ *  - choisir une catégorie dans le sélecteur : ajoute D'UN COUP tous ses
+ *    aliments (« viande » → tous les aliments viande du panier).
+ * Les aliments du panier se combinent en « au moins un » (OU, par défaut) ou
+ * « tous » (ET) via la bascule, pour répondre aussi à « saumon ET riz ».
  */
 function FoodSearch({
   onDatesChange,
@@ -293,8 +322,8 @@ function FoodSearch({
   const foods = useEffectiveFoods();
   const [query, setQuery] = useState('');
   const [cat, setCat] = useState<FoodCategory | 'all' | 'none'>('all');
-  /** Aliments cochés ; `null` = tous les résultats courants (état de départ). */
-  const [picked, setPicked] = useState<Set<string> | null>(null);
+  /** Le panier : aliments retenus, accumulés au fil des recherches. */
+  const [basket, setBasket] = useState<Set<string>>(new Set());
   const [combine, setCombine] = useState<'ou' | 'et'>('ou');
   const [showAllDates, setShowAllDates] = useState(false);
   const [showAllResults, setShowAllResults] = useState(false);
@@ -310,50 +339,24 @@ function FoodSearch({
     [entries, today, categoryOfFood],
   );
 
-  /**
-   * Résultats : filtre par catégorie, puis recoupement direct sur le libellé
-   * (« saumon » → « Saumon (cuit) », « Saumon fumé »), complété par le matching
-   * flou de l'app quand rien ne ressort (fautes de frappe, alias : « pavé de
-   * saumon » → aliment `saumon`). Sans texte ET sans catégorie : aucun résultat,
-   * on n'affiche pas tout l'historique par accident.
-   */
-  const results = useMemo<FoodFrequency[]>(() => {
-    const base =
-      cat === 'all' ? freqs : cat === 'none' ? freqs.filter((f) => f.categorie === null) : freqs.filter((f) => f.categorie === cat);
-    const q = normalizeForMatch(query.trim());
-    if (q.length < 2) return cat === 'all' ? [] : base;
-    const direct = base.filter((f) => normalizeForMatch(f.nom).includes(q));
-    if (direct.length > 0) return direct;
-    const m = matchFood(query, foods);
-    if (!m.food) return [];
-    return base.filter((f) => f.key === frequencyKey(m.food!.id, m.food!.nom));
-  }, [query, cat, freqs, foods]);
+  const results = useMemo(() => filterFoodResults(freqs, foods, query, cat), [freqs, foods, query, cat]);
+  const basketItems = useMemo(() => freqs.filter((f) => basket.has(f.key)), [freqs, basket]);
 
-  // Changer de recherche repart de « tout sélectionné » : garder les coches
-  // d'une recherche précédente n'aurait aucun sens sur de nouveaux aliments.
-  useEffect(() => {
-    setPicked(null);
-    setShowAllDates(false);
-    setShowAllResults(false);
-  }, [query, cat]);
-
-  const active = picked ? results.filter((f) => picked.has(f.key)) : results;
-
-  /** Jours retenus : union (OU) ou intersection (ET) des jours des aliments actifs. */
+  /** Jours retenus : union (OU) ou intersection (ET) des jours du panier. */
   const dates = useMemo(() => {
-    if (active.length === 0) return [];
+    if (basketItems.length === 0) return [];
     if (combine === 'et') {
-      let acc = active[0].dates;
-      for (const f of active.slice(1)) {
+      let acc = basketItems[0].dates;
+      for (const f of basketItems.slice(1)) {
         const other = new Set(f.dates);
         acc = acc.filter((d) => other.has(d));
       }
       return [...acc].sort();
     }
     const union = new Set<string>();
-    for (const f of active) for (const d of f.dates) union.add(d);
+    for (const f of basketItems) for (const d of f.dates) union.add(d);
     return [...union].sort();
-  }, [active, combine]);
+  }, [basketItems, combine]);
 
   // Le surlignage du calendrier (état du parent) suit les jours retenus. En effet
   // et non pendant le rendu : remonter l'info au parent est un effet de bord.
@@ -361,19 +364,40 @@ function FoodSearch({
   const datesKey = dates.join(',');
   useEffect(() => {
     onDatesChange(new Set(datesKey ? datesKey.split(',') : []));
+    setShowAllDates(false);
   }, [datesKey, onDatesChange]);
 
   const shownResults = showAllResults ? results : results.slice(0, RESULTS_SHOWN);
   const shownDates = showAllDates ? [...dates].reverse() : [...dates].reverse().slice(0, DATES_SHOWN);
   const searching = query.trim().length >= 2 || cat !== 'all';
 
-  function toggle(key: string) {
-    const current = picked ?? new Set(results.map((f) => f.key));
-    const next = new Set(current);
-    if (next.has(key)) next.delete(key);
-    else next.add(key);
-    setPicked(next);
-    setShowAllDates(false);
+  function addToBasket(keys: string[]) {
+    if (keys.length === 0) return;
+    setBasket((prev) => {
+      const next = new Set(prev);
+      for (const k of keys) next.add(k);
+      return next;
+    });
+  }
+
+  function toggleBasket(key: string) {
+    setBasket((prev) => {
+      const next = new Set(prev);
+      if (next.has(key)) next.delete(key);
+      else next.add(key);
+      return next;
+    });
+  }
+
+  /**
+   * Choisir une catégorie ajoute D'UN COUP tous ses aliments au panier (le
+   * clic individuel reste possible pour en retirer un ensuite). Revenir à
+   * « Toutes catégories » ne fait que relâcher le filtre d'affichage.
+   */
+  function onCategoryChange(next: FoodCategory | 'all' | 'none') {
+    setCat(next);
+    setShowAllResults(false);
+    if (next !== 'all') addToBasket(filterFoodResults(freqs, foods, query, next).map((f) => f.key));
   }
 
   return (
@@ -382,15 +406,15 @@ function FoodSearch({
         <input
           type="search"
           value={query}
-          onChange={(e) => setQuery(e.target.value)}
+          onChange={(e) => { setQuery(e.target.value); setShowAllResults(false); }}
           placeholder="Rechercher un aliment… (« saumon » : quand en ai-je mangé ?)"
           style={{ flex: '1 1 240px' }}
           aria-label="Rechercher un aliment dans l'historique"
         />
         <select
           value={cat}
-          onChange={(e) => setCat(e.target.value as FoodCategory | 'all' | 'none')}
-          aria-label="Filtrer par catégorie"
+          onChange={(e) => onCategoryChange(e.target.value as FoodCategory | 'all' | 'none')}
+          aria-label="Filtrer par catégorie (l'ajoute au panier)"
           style={{ flex: '0 1 180px' }}
         >
           <option value="all">Toutes catégories</option>
@@ -403,7 +427,7 @@ function FoodSearch({
         </select>
         {(query || cat !== 'all') && (
           <button className="ghost small" onClick={() => { setQuery(''); setCat('all'); }}>
-            Effacer
+            Effacer la recherche
           </button>
         )}
       </div>
@@ -414,15 +438,15 @@ function FoodSearch({
         <div className="hint">Aucun aliment ne correspond dans l'historique.</div>
       )}
 
-      {results.length > 1 && (
+      {results.length > 0 && (
         <>
           <div className="row" style={{ gap: 6, flexWrap: 'wrap', marginTop: 8, alignItems: 'center' }}>
             {shownResults.map((f) => (
               <button
                 key={f.key}
-                className={`small ${active.includes(f) ? 'chip-active' : 'ghost'}`}
-                onClick={() => toggle(f.key)}
-                data-tip={active.includes(f) ? 'Retirer de la sélection' : 'Ajouter à la sélection'}
+                className={`small ${basket.has(f.key) ? 'chip-active' : 'ghost'}`}
+                onClick={() => toggleBasket(f.key)}
+                data-tip={basket.has(f.key) ? 'Retirer de la sélection' : 'Ajouter à la sélection'}
               >
                 {f.nom} · {fmt(f.occurrences)}×
               </button>
@@ -433,47 +457,64 @@ function FoodSearch({
               </button>
             )}
           </div>
-          <div className="row small" style={{ gap: 10, flexWrap: 'wrap', marginTop: 6, alignItems: 'center' }}>
-            <span style={{ color: 'var(--muted)' }}>
-              {active.length} / {results.length} sélectionné(s)
-            </span>
-            <button className="ghost small" onClick={() => setPicked(null)} disabled={picked === null}>
-              Tout
+          <div className="row small" style={{ marginTop: 6 }}>
+            <button
+              className="ghost small"
+              onClick={() => addToBasket(results.map((f) => f.key))}
+              disabled={results.every((f) => basket.has(f.key))}
+            >
+              + Ajouter {results.length > 1 ? `les ${results.length} résultats` : 'ce résultat'} à la sélection
             </button>
-            <button className="ghost small" onClick={() => setPicked(new Set())} disabled={active.length === 0}>
-              Aucun
-            </button>
-            {active.length > 1 && (
-              <label className="row small" style={{ gap: 6, alignItems: 'center', cursor: 'pointer' }}>
-                <input
-                  type="checkbox"
-                  checked={combine === 'et'}
-                  onChange={(e) => setCombine(e.target.checked ? 'et' : 'ou')}
-                />
-                <span data-tip="Coché : seuls les jours où TOUS les aliments sélectionnés apparaissent">
-                  jours contenant <strong>tous</strong> les aliments
-                </span>
-              </label>
-            )}
           </div>
         </>
       )}
 
-      {active.length > 0 && (
-        <>
+      {basketItems.length > 0 && (
+        <div style={{ marginTop: 14, paddingTop: 10, borderTop: '1px solid var(--border)' }}>
+          <div className="row" style={{ justifyContent: 'space-between', alignItems: 'baseline', flexWrap: 'wrap', gap: 8 }}>
+            <strong className="small">Sélection : {basketItems.length} aliment(s)</strong>
+            <button className="ghost small" onClick={() => setBasket(new Set())}>
+              Vider la sélection
+            </button>
+          </div>
+          <div className="row" style={{ gap: 6, flexWrap: 'wrap', marginTop: 6 }}>
+            {basketItems.map((f) => (
+              <button
+                key={f.key}
+                className="small chip-active"
+                onClick={() => toggleBasket(f.key)}
+                data-tip="Retirer de la sélection"
+              >
+                {f.nom} ✕
+              </button>
+            ))}
+          </div>
+          {basketItems.length > 1 && (
+            <label className="row small" style={{ gap: 6, alignItems: 'center', cursor: 'pointer', marginTop: 8 }}>
+              <input
+                type="checkbox"
+                checked={combine === 'et'}
+                onChange={(e) => setCombine(e.target.checked ? 'et' : 'ou')}
+              />
+              <span data-tip="Coché : seuls les jours où TOUS les aliments sélectionnés apparaissent">
+                jours contenant <strong>tous</strong> les aliments
+              </span>
+            </label>
+          )}
+
           <div className="hint" style={{ marginTop: 8 }}>
-            {active.length === 1 ? (
+            {basketItems.length === 1 ? (
               <>
-                <strong>{active[0].nom}</strong> : {fmt(active[0].occurrences)} fois sur {fmt(active[0].jours)} jour(s) —
-                dernière fois <strong>{dayLabel(active[0].derniere, true)}</strong> (
-                {daysSince(active[0].derniere, today)}). Total {fmt(active[0].grammes)} g · {fmt(active[0].kcal)} kcal.
+                <strong>{basketItems[0].nom}</strong> : {fmt(basketItems[0].occurrences)} fois sur{' '}
+                {fmt(basketItems[0].jours)} jour(s) — dernière fois <strong>{dayLabel(basketItems[0].derniere, true)}</strong>{' '}
+                ({daysSince(basketItems[0].derniere, today)}). Total {fmt(basketItems[0].grammes)} g ·{' '}
+                {fmt(basketItems[0].kcal)} kcal.
               </>
             ) : (
               <>
-                <strong>{active.length} aliments</strong> ·{' '}
-                {fmt(active.reduce((a, f) => a + f.occurrences, 0))} consommations sur <strong>{dates.length}</strong>{' '}
-                jour(s) {combine === 'et' ? 'où ils apparaissent tous' : 'où au moins un apparaît'} · total{' '}
-                {fmt(active.reduce((a, f) => a + f.kcal, 0))} kcal.
+                {fmt(basketItems.reduce((a, f) => a + f.occurrences, 0))} consommations sur{' '}
+                <strong>{dates.length}</strong> jour(s) {combine === 'et' ? 'où ils apparaissent tous' : 'où au moins un apparaît'} ·
+                total {fmt(basketItems.reduce((a, f) => a + f.kcal, 0))} kcal.
               </>
             )}{' '}
             Les jours concernés sont surlignés dans le calendrier.
@@ -491,7 +532,7 @@ function FoodSearch({
             )}
             {dates.length === 0 && <span className="small">Aucun jour ne contient tous ces aliments.</span>}
           </div>
-        </>
+        </div>
       )}
     </div>
   );

@@ -329,6 +329,12 @@ interface AppState {
   removeFavoriteMeal: (id: string) => void;
   /** Renomme un repas favori (les anciens portaient la dictée entière comme nom). */
   renameFavoriteMeal: (id: string, nom: string) => void;
+  /** Modifie un aliment d'un repas favori (choix, quantité, unité). */
+  updateFavoriteMealItem: (favId: string, index: number, patch: Partial<FavoriteMealItem>) => void;
+  /** Retire un aliment d'un repas favori. */
+  removeFavoriteMealItem: (favId: string, index: number) => void;
+  /** Ajoute un aliment à un repas favori existant. */
+  addFavoriteMealItem: (favId: string, item: FavoriteMealItem) => void;
   /** Ajoute un repas favori au journal du jour ciblé (défaut aujourd'hui). */
   applyFavoriteMeal: (id: string, date?: string) => string | null;
 
@@ -616,6 +622,25 @@ export const useStore = create<AppState>()(
           if (!trimmed) return {};
           return { favoriteMeals: s.favoriteMeals.map((f) => (f.id === id ? { ...f, nom: trimmed } : f)) };
         }),
+
+      updateFavoriteMealItem: (favId, index, patch) =>
+        set((s) => ({
+          favoriteMeals: s.favoriteMeals.map((f) =>
+            f.id === favId ? { ...f, items: f.items.map((it, i) => (i === index ? { ...it, ...patch } : it)) } : f,
+          ),
+        })),
+
+      removeFavoriteMealItem: (favId, index) =>
+        set((s) => ({
+          favoriteMeals: s.favoriteMeals.map((f) =>
+            f.id === favId ? { ...f, items: f.items.filter((_, i) => i !== index) } : f,
+          ),
+        })),
+
+      addFavoriteMealItem: (favId, item) =>
+        set((s) => ({
+          favoriteMeals: s.favoriteMeals.map((f) => (f.id === favId ? { ...f, items: [...f.items, item] } : f)),
+        })),
 
       applyFavoriteMeal: (id, date) => {
         const fav = get().favoriteMeals.find((f) => f.id === id);
