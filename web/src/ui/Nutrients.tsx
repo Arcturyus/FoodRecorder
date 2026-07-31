@@ -96,12 +96,80 @@ export function Nutrients() {
         ))}
       </div>
 
+      <SaturatedFatGuide />
+
       <NutrientImportancePanel targets={targets} />
 
       <Recommendations averages={averages} targets={targets} hasData={recorded.length > 0} />
 
       <VitaminDPanel status={vitDStatus} />
     </>
+  );
+}
+
+/**
+ * Zoom sur les AG saturés : sous un seul chiffre du bilan se cachent trois
+ * familles au comportement très différent. Tant que la base ne détaille pas la
+ * répartition par acide gras (C16/C14/C18), c'est ici que se lit la nuance —
+ * d'où un texte d'explication plutôt qu'un simple `optimalNote` sur la ligne.
+ */
+function SaturatedFatGuide() {
+  return (
+    <div className="panel">
+      <h2>AG saturés : tous ne se valent pas</h2>
+      <p className="small" style={{ marginTop: -6 }}>
+        « AG saturés » est un fourre-tout. Sous ce seul chiffre cohabitent trois familles qui se comportent
+        différemment selon la longueur de leur chaîne carbonée — c'est pourquoi un carré de chocolat noir et une
+        noix de beurre, à AG saturés égaux, n'ont pas le même effet sur les artères.
+      </p>
+
+      <div className="guide-item">
+        <strong>Palmitique (C16:0) &amp; myristique (C14:0) — ceux qui comptent vraiment</strong>
+        <div className="small" style={{ marginTop: 4 }}>
+          Beurre, crème, fromage, viande grasse, huile de palme — donc aussi les viennoiseries, pâtisseries et
+          plats industriels. Ils freinent les récepteurs qui font le ménage du LDL dans le foie : en excès, le
+          LDL monte et les plaques artérielles se construisent sur des années. À quantité égale le myristique
+          est le plus puissant des deux, mais le palmitique est de très loin le plus abondant.
+        </div>
+        <div className="small" style={{ marginTop: 4, color: 'var(--warn)' }}>
+          C'est sur eux que devrait porter le plafond : ≈ 16 g/j pour 2000 kcal, idéal ≤ 11 g.
+        </div>
+      </div>
+
+      <div className="guide-item">
+        <strong>Stéarique (C18:0) — le neutre</strong>
+        <div className="small" style={{ marginTop: 4 }}>
+          Chocolat noir (le beurre de cacao en est ~1/3), bœuf et agneau, un peu le porc. Le foie le désature
+          très vite en acide <em>oléique</em> — exactement l'acide gras de l'huile d'olive. Résultat : il ne fait
+          pas monter le LDL, et les études en milieu contrôlé qui en ont fait manger jusqu'à ~11 % de l'énergie
+          (≈ 24 g/j) n'ont pas vu le LDL bouger. Il n'a donc rien à faire dans un plafond.
+        </div>
+        <div className="small" style={{ marginTop: 4, color: 'var(--muted)' }}>
+          Repère souple malgré tout : ≈ 18 g/j — plus du double d'un apport courant (5-8 g), donc il ne se
+          déclenche que sur un vrai excès. Pourquoi pas totalement libre : il fait un peu baisser le HDL, il est
+          soupçonné de favoriser l'agrégation plaquettaire, et surtout il n'arrive presque jamais seul —
+          l'aliment qui l'apporte apporte du palmitique avec.
+        </div>
+      </div>
+
+      <div className="guide-item">
+        <strong>Laurique (C12:0) &amp; chaînes courtes à moyennes (C4 à C10) — le cas à part</strong>
+        <div className="small" style={{ marginTop: 4 }}>
+          Coco et huile de palmiste pour le laurique ; beurre et fromages pour les chaînes courtes. Le laurique
+          fait monter le LDL, mais aussi beaucoup le HDL ; les chaînes courtes sont brûlées directement par le
+          foie plutôt que stockées. Peu abondants dans une alimentation française : ils restent comptés dans le
+          total, sans qu'on les traque à part.
+        </div>
+      </div>
+
+      <div className="hint" style={{ marginTop: 10 }}>
+        <strong>À retenir</strong> — ce n'est pas tant la quantité d'AG saturés qui compte que leur origine.
+        Une même dose de chocolat noir à 85 % et de beurre donne le même chiffre dans le bilan, pas le même
+        effet. À l'inverse, un plat industriel « pas si gras » à l'huile de palme apporte du palmitique presque
+        pur. En attendant que la base détaille la répartition par acide gras, la ligne « AG saturés » affiche le
+        total (plafond ≈ 22 g) : lisez-la en regardant <em>ce qui</em> l'a remplie.
+      </div>
+    </div>
   );
 }
 

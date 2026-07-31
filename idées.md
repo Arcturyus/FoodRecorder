@@ -1,5 +1,11 @@
 # À FAIRE
 
+- [ ] repas favori rework : prendre moins de place si y a trop de foavori (quitte à mettre un bouton plus, les mettrzs un peu sur plusieurs colonnes mais attention UI phone)
+Pour cela enlever le texte de dicté dans un favori, et d'ailleurs ne pas copier le texte dictée lorsque l'on appui sur dupliquer (dans historique ou aujourdhui)
+
+
+- [x] save verifications : est ce que les notes, les jour non comptés,les poids, autres auxquelles je compte pas sont save dans le json
+
 ## 1. Base de données : fer & graisses saturées détaillées
 
 - [ ] Fer : si homme, besoin de base à 8 mg (on gérera le cas femme + règles une autre fois — le besoin change selon la période du cycle).
@@ -7,11 +13,15 @@
   - **Acide stéarique (C18:0) — « le neutre »** : chocolat noir (beurre de cacao), une partie de la viande. Le foie le convertit vite en acide oléique (mono-insaturé, comme l'huile d'olive) : il ne fait pas monter le LDL.
   - **Acide palmitique (C16:0) et myristique (C14:0) — « à limiter »** : beurre, crème, fromage, huile de palme, viande grasse. En excès : LDL en hausse, plaques artérielles à long terme.
 
-**À éclaircir avant de coder :**
-- Quelle source pour la répartition C18:0 / C16:0 / C14:0 des ~150 aliments de la banque ? (Ciqual la donne pour une partie seulement — faut-il estimer le reste par catégorie, ou ne remplir que les aliments à fort impact : beurre, fromages, viandes, huile de palme, chocolat ?)
-- Faut-il une cible chiffrée pour le stéarique, ou juste le **sortir du plafond** des AG saturés (le plafond ne portant plus que sur C16:0 + C14:0) ? Un excès de C18:0 reste probablement non souhaitable — quel seuil ?
-- Affichage : 3 nouvelles lignes de nutriments, ou une ligne « AG saturés » dépliable en sous-détail (comme les oméga 3 ALA/EPA/DHA) ?
-- Le fer à 8 mg change les cibles existantes : on garde l'AJR à 8 et l'optimal plus haut, ou les deux à 8 ?
+**Décidé :**
+- **Répartition** : estimée comme le reste des nutriments. On remplit à la main les aliments à fort **et** à moyen impact (on cible large : un petit impact mangé souvent finit par compter), et pour tout le reste c'est l'IA qui estime. Repère chiffré sur le journal réel (23 jours) : 19 aliments couvrent 80 % des AG saturés mangés, 31 en couvrent 90 %, 44 en couvrent 95 % — et la moitié des gros contributeurs sont des plats décrits par le LLM (pizza, glace, burger…), donc le schéma d'extraction doit lui aussi renvoyer la répartition.
+- **Affichage** : une seule ligne « AG saturés » **dépliable** en sous-détail (comme les oméga 3 ALA/EPA/DHA), avec une petite ligne d'explication : ce qui est mauvais dans les AG saturés, ce qui est acceptable.
+- **Fer** : AJR et optimal tous les deux à 8 mg chez l'homme.
+
+**Seuils proposés (à valider) :**
+- Le plafond qui compte porte sur **C16:0 + C14:0** (palmitique + myristique) : **16 g/j** max, idéal **≤ 11 g** — soit ~72 % du plafond actuel des AG saturés (22 g / idéal 15 g), la proportion typique de ces deux acides dans les AG saturés d'une alimentation occidentale.
+- **C18:0 (stéarique)** : sorti du plafond, mais pas illimité — repère souple à **10 g/j**, avec un poids d'importance faible. Un régime normal en apporte 5-8 g ; le repère ne se déclenche donc que sur un vrai excès (grosse plaque de chocolat noir, journée très viande grasse). Justification de ne pas le laisser libre : neutre sur le LDL, mais légèrement pro-thrombotique, il fait baisser un peu le HDL et il arrive rarement seul (le palmitique l'accompagne).
+- La ligne « **AG saturés** » totale reste affichée mais devient un **filet de sécurité** : plafond relevé de 22 → **26 g** et poids d'importance réduit, pour ne pas pénaliser deux fois le même excès. Elle sert surtout à couvrir la part non détaillée (C12 laurique, chaînes courtes des produits laitiers).
 
 ## 2. Banque d'aliments : ne plus la maintenir en brut
 

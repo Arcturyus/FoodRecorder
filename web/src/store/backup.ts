@@ -6,13 +6,27 @@
  */
 
 import { useStore, todayStr } from './store';
-import type { JournalEntry, FavoriteMeal, FoodOverrides } from './store';
+import type { JournalEntry, FavoriteMeal, FoodOverrides, SttEngine, ExtractionMode } from './store';
 import type { Food } from '../nutrition/types';
 import type { Profile } from '../nutrition/targets';
 import type { WeightEntry, WeightConfig } from '../weight/types';
 import { WEIGHT_METRICS } from '../weight/types';
 import type { SunExposure } from '../sun/vitaminD';
 import type { NutrientKey } from '../nutrition/types';
+import { backupCounts } from './backupCounts';
+
+/**
+ * Réglages de l'appareil (moteur d'extraction, modèles). Sauvegardés pour ne pas
+ * avoir à les refaire après une restauration ; la clé API en est volontairement
+ * exclue (secret, propre à l'appareil).
+ */
+export interface BackupSettings {
+  sttEngine: SttEngine;
+  sttModel: string;
+  llmModel: string;
+  extractionMode: ExtractionMode;
+  cloudModel: string;
+}
 
 export interface BackupData {
   app: 'foodrecorder';
@@ -33,6 +47,8 @@ export interface BackupData {
   dayNotes?: Record<string, string>;
   /** Overrides d'importance des nutriments. Absent des vieilles sauvegardes. */
   nutrientImportance?: Partial<Record<NutrientKey, number>>;
+  /** Réglages d'extraction / dictée (hors clé API). Absent des vieilles sauvegardes. */
+  settings?: BackupSettings;
 }
 
 /** Construit l'objet de sauvegarde depuis l'état courant du store. */
@@ -53,8 +69,16 @@ export function buildBackup(): BackupData {
     mutedDays: s.mutedDays,
     dayNotes: s.dayNotes,
     nutrientImportance: s.nutrientImportance,
+    settings: {
+      sttEngine: s.sttEngine,
+      sttModel: s.sttModel,
+      llmModel: s.llmModel,
+      extractionMode: s.extractionMode,
+      cloudModel: s.cloudModel,
+    },
   };
 }
+
 
 /**
  * Valide puis applique une sauvegarde JSON (remplace les données actuelles).
@@ -83,11 +107,35 @@ export function importBackup(text: string): string {
     mutedDays: b.mutedDays ?? {},
     dayNotes: b.dayNotes ?? {},
     nutrientImportance: b.nutrientImportance ?? {},
+    // Champ par champ (et non `...b.settings`) : un fichier bricolé ne doit pas
+    // pouvoir injecter n'importe quelle clé dans le store.
+    ...(b.settings
+      ? {
+          ...(b.settings.sttEngine ? { sttEngine: b.settings.sttEngine } : {}),
+          ...(b.settings.sttModel ? { sttModel: b.settings.sttModel } : {}),
+          ...(b.settings.llmModel ? { llmModel: b.settings.llmModel } : {}),
+          ...(b.settings.extractionMode ? { extractionMode: b.settings.extractionMode } : {}),
+          ...(b.settings.cloudModel ? { cloudModel: b.settings.cloudModel } : {}),
+        }
+      : {}),
   });
   const days = new Set(b.entries.map((e) => e.date)).size;
-  return `Import réussi : ${b.entries.length} entrée(s) sur ${days} jour(s), ${b.weightEntries.length} pesée(s), ${
-    (b.customFoods ?? []).length
-  } aliment(s) perso, ${(b.favoriteMeals ?? []).length} repas favori(s).`;
+  const c = backupCounts(b as Record<string, unknown>);
+  // Tout ce qui se restaure est annoncé : c'est le seul moyen de vérifier d'un
+  // coup d'œil qu'une donnée (notes, jours non comptés…) a bien fait le voyage.
+  const extras: [number, string][] = [
+    [c.soleil, 'sortie(s) au soleil'],
+    [c.notes, 'note(s) de jour'],
+    [c['jours réglés'], 'jour(s) comptés / non comptés réglés'],
+    [c.importances, 'importance(s) de nutriment réglée(s)'],
+  ];
+  const extraText = extras.filter(([n]) => n > 0).map(([n, label]) => `${n} ${label}`);
+  return (
+    `Import réussi : ${b.entries.length} entrée(s) sur ${days} jour(s), ${b.weightEntries.length} pesée(s), ` +
+    `${c['aliments perso']} aliment(s) perso, ${c.favoris} repas favori(s)` +
+    (extraText.length > 0 ? `, ${extraText.join(', ')}` : '') +
+    '.'
+  );
 }
 
 // ---------------------------------------------------------------------------

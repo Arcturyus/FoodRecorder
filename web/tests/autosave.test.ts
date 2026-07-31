@@ -63,6 +63,20 @@ describe('runAutoSaveTick', () => {
     expect(useStore.getState().lastAutoSave).toBeNull();
   });
 
+  it('refus du garde-fou (navigateur vierge) → le jour n’est PAS marqué, on retentera', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (_u: string, init?: { method?: string }) =>
+        init?.method
+          ? { ok: true, json: async () => ({ skipped: 'sauvegarde bien plus pauvre que foodrecorder-2026-07-30.json' }) }
+          : { ok: true, json: async () => ({ available: true }) },
+      ),
+    );
+    const res = await runAutoSaveTick();
+    expect(res.status).toBe('skipped');
+    expect(useStore.getState().lastAutoSave).toBeNull();
+  });
+
   it('poste bien une sauvegarde FoodRecorder complète', async () => {
     let body = '';
     vi.stubGlobal(

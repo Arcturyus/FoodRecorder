@@ -656,9 +656,10 @@ function BackupPanel() {
         <input ref={fileRef} type="file" accept="application/json,.json" onChange={handleImport} style={{ display: 'none' }} />
       </div>
       <div className="hint">
-        Le JSON contient tout (journal, pesées, aliments perso, repas favoris, profil, constantes) et se ré-importe
-        tel quel — la clé API n'y figure pas. Les CSV s'ouvrent dans un tableur (Excel, LibreOffice) mais ne se
-        ré-importent pas.
+        Le JSON contient tout (journal, pesées et constantes, aliments perso et aliments modifiés, repas favoris,
+        profil, expositions au soleil, notes de jour, jours comptés / non comptés, importances de nutriments,
+        réglages d'extraction) et se ré-importe tel quel — la clé API n'y figure pas. Les CSV s'ouvrent dans un
+        tableur (Excel, LibreOffice) mais ne se ré-importent pas.
       </div>
       {status && <div className="status">{status}</div>}
     </div>

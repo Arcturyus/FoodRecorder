@@ -18,6 +18,8 @@ import { buildBackup } from './backup';
 export type AutoSaveResult =
   | { status: 'written'; file: string }
   | { status: 'already-done' }
+  /** Refusée par le garde-fou anti-écrasement (navigateur vierge, cf. backupCounts). */
+  | { status: 'skipped'; reason: string }
   | { status: 'unavailable' };
 
 /**
@@ -47,7 +49,13 @@ export async function runAutoSaveTick(): Promise<AutoSaveResult> {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(buildBackup(), null, 2),
     });
-    const data = (await res.json().catch(() => ({}))) as { written?: string; error?: string };
+    const data = (await res.json().catch(() => ({}))) as { written?: string; skipped?: string; error?: string };
+    // Refus du garde-fou : on NE marque pas le jour, pour retenter dès que ce
+    // navigateur aura récupéré les vraies données (import ou synchro).
+    if (data.skipped) {
+      console.warn(`[autosave] ${data.skipped}`);
+      return { status: 'skipped', reason: data.skipped };
+    }
     if (!res.ok || !data.written) return { status: 'unavailable' };
 
     // Marqué seulement après une écriture confirmée : un échec doit être retenté

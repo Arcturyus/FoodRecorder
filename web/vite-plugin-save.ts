@@ -1,7 +1,8 @@
 import type { Plugin } from 'vite';
 import type { IncomingMessage } from 'node:http';
-import { mkdir, writeFile } from 'node:fs/promises';
+import { mkdir, readdir, readFile, writeFile } from 'node:fs/promises';
 import { resolve } from 'node:path';
+import { suspiciousLoss } from './src/store/backupCounts';
 
 /**
  * Plugin de dev Vite : sauvegarde automatique du journal sur le disque.
@@ -16,7 +17,9 @@ import { resolve } from 'node:path';
  *
  * Endpoints :
  *   GET  /api/save → { available: true, dir }
- *   POST /api/save → { written: "save/foodrecorder-2026-07-17.json" } | { error }
+ *   POST /api/save → { written: "save/foodrecorder-2026-07-17.json" }
+ *                  | { skipped: "raison" }   (garde-fou anti-écrasement)
+ *                  | { error }
  *     body : la sauvegarde JSON complète (cf. buildBackup()).
  */
 
@@ -46,6 +49,32 @@ function readBody(req: IncomingMessage): Promise<string> {
     req.on('end', () => resolve(data));
     req.on('error', reject);
   });
+}
+
+/**
+ * Sauvegarde de référence : le fichier du jour s'il existe (cas de l'écrasement
+ * direct), sinon la plus récente du dossier. On compare à la plus récente et pas
+ * seulement au fichier du jour, sinon un navigateur vierge ouvert un jour neuf
+ * déposerait quand même un fichier vide dans `save/`.
+ */
+async function latestBackup(dir: string, todayFile: string): Promise<{ name: string; data: Record<string, unknown> } | null> {
+  let names: string[];
+  try {
+    names = (await readdir(dir)).filter((n) => n.startsWith('foodrecorder-') && n.endsWith('.json')).sort();
+  } catch {
+    return null; // dossier pas encore créé : première sauvegarde
+  }
+  // Le nom porte la date : l'ordre alphabétique est l'ordre chronologique.
+  const candidates = names.includes(todayFile) ? [todayFile] : names.slice(-1);
+  for (const name of candidates) {
+    try {
+      const data = JSON.parse(await readFile(resolve(dir, name), 'utf8')) as Record<string, unknown>;
+      return { name, data };
+    } catch {
+      // Fichier illisible : on ne s'en sert pas de référence.
+    }
+  }
+  return null;
 }
 
 /** Date locale (le fichier du jour, pas la date UTC). */
@@ -91,6 +120,18 @@ export function autoSave(): Plugin {
 
             const name = `foodrecorder-${today()}.json`;
             const file = resolve(dir, name);
+
+            // Garde-fou : un navigateur au localStorage vide (autre navigateur,
+            // mode privé, nettoyage) ne doit pas écraser la vraie sauvegarde.
+            const ref = await latestBackup(dir, name);
+            const loss = ref ? suspiciousLoss(parsed as Record<string, unknown>, ref.data) : null;
+            if (loss) {
+              const reason = `sauvegarde bien plus pauvre que ${ref!.name} (${loss}) — écriture refusée`;
+              server.config.logger.warn(`[autosave] ${reason}`);
+              res.end(JSON.stringify({ skipped: reason }));
+              return;
+            }
+
             await mkdir(dir, { recursive: true });
             await writeFile(file, body, 'utf8');
             // Chemin absolu : « save/… » ne dit pas où chercher sur le disque.

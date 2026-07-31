@@ -73,8 +73,8 @@ export const RDA: RdaEntry[] = [
   },
   {
     key: 'agSatures', label: 'AG saturés', unit: 'g', rda: 22, goal: 'limit', optimalLow: 15,
-    role: 'Source d\'énergie, mais un excès élève le LDL-cholestérol et le risque cardiovasculaire.',
-    optimalNote: 'Plafond ≈ 10 % de l\'énergie (≈ 22 g pour 2000 kcal) ; idéal le plus bas, vers 15 g.',
+    role: 'Source d\'énergie, mais un excès élève le LDL-cholestérol et le risque cardiovasculaire — surtout à cause du palmitique et du myristique, pas du stéarique.',
+    optimalNote: 'Plafond ≈ 10 % de l\'énergie (≈ 22 g pour 2000 kcal) ; idéal le plus bas, vers 15 g. Chiffre à lire avec son origine : le stéarique du chocolat noir ou du bœuf (converti en acide oléique par le foie) ne fait pas monter le LDL, contrairement au palmitique du beurre, des fromages et de l\'huile de palme — voir « AG saturés : tous ne se valent pas » dans Nutriments.',
   },
   {
     key: 'agTrans', label: 'AG trans', unit: 'g', rda: 2, goal: 'limit', optimalLow: 0,
