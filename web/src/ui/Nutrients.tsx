@@ -132,7 +132,7 @@ function SaturatedFatGuide() {
           est le plus puissant des deux, mais le palmitique est de très loin le plus abondant.
         </div>
         <div className="small" style={{ marginTop: 4, color: 'var(--warn)' }}>
-          C'est sur eux que devrait porter le plafond : ≈ 16 g/j pour 2000 kcal, idéal ≤ 11 g.
+          C'est sur eux que porte le plafond qui compte : <strong>16 g/j</strong> pour 2000 kcal, idéal ≤ 11 g.
         </div>
       </div>
 
@@ -145,10 +145,10 @@ function SaturatedFatGuide() {
           (≈ 24 g/j) n'ont pas vu le LDL bouger. Il n'a donc rien à faire dans un plafond.
         </div>
         <div className="small" style={{ marginTop: 4, color: 'var(--muted)' }}>
-          Repère souple malgré tout : ≈ 18 g/j — plus du double d'un apport courant (5-8 g), donc il ne se
-          déclenche que sur un vrai excès. Pourquoi pas totalement libre : il fait un peu baisser le HDL, il est
-          soupçonné de favoriser l'agrégation plaquettaire, et surtout il n'arrive presque jamais seul —
-          l'aliment qui l'apporte apporte du palmitique avec.
+          Repère souple malgré tout : <strong>18 g/j</strong>, avec un poids d'importance faible — plus du double
+          d'un apport courant (5-8 g), donc il ne se déclenche que sur un vrai excès. Pourquoi pas totalement
+          libre : il fait un peu baisser le HDL, il est soupçonné de favoriser l'agrégation plaquettaire, et
+          surtout il n'arrive presque jamais seul — l'aliment qui l'apporte apporte du palmitique avec.
         </div>
       </div>
 
@@ -166,8 +166,9 @@ function SaturatedFatGuide() {
         <strong>À retenir</strong> — ce n'est pas tant la quantité d'AG saturés qui compte que leur origine.
         Une même dose de chocolat noir à 85 % et de beurre donne le même chiffre dans le bilan, pas le même
         effet. À l'inverse, un plat industriel « pas si gras » à l'huile de palme apporte du palmitique presque
-        pur. En attendant que la base détaille la répartition par acide gras, la ligne « AG saturés » affiche le
-        total (plafond ≈ 22 g) : lisez-la en regardant <em>ce qui</em> l'a remplie.
+        pur. C'est pour ça que la tuile « AG saturés » du bilan porte une ligne « dont … » : son total n'est
+        plus qu'un <em>filet de sécurité</em> (plafond 30 g, poids réduit), le vrai plafond étant sur les 16 g
+        de C16+C14. Survolez la tuile pour voir, aliment par aliment, ce que chacun apporte de l'un et de l'autre.
       </div>
     </div>
   );
@@ -287,7 +288,10 @@ function NutrientImportancePanel({ targets }: { targets: Target[] }) {
               const isOpen = expanded === k;
               return (
                 <div key={k}>
-                  <div className="importance-row">
+                  {/* Sous-détail (C16+C14, stéarique) : décalé sous son parent pour
+                      qu'on lise « ce sont des morceaux d'AG saturés », pas trois
+                      nutriments indépendants. */}
+                  <div className={`importance-row${t.parent ? ' is-sub' : ''}`}>
                     <button
                       className="importance-label nutrient-toggle"
                       data-tip={t.role}

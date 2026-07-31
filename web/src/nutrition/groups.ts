@@ -10,7 +10,7 @@ import { EMPTY_NUTRIENTS } from './types';
  */
 export const NUTRIENT_NAMED_GROUPS: { title: string; keys: NutrientKey[] }[] = [
   { title: 'Macros', keys: ['kcal', 'proteines', 'glucides', 'lipides', 'fibres'] },
-  { title: 'Lipides & oméga', keys: ['agSatures', 'agTrans', 'agMonoInsatures', 'agPolyInsatures', 'omega3', 'omega6', 'omega9'] },
+  { title: 'Lipides & oméga', keys: ['agSatures', 'agSaturesLdl', 'agSaturesStearique', 'agTrans', 'agMonoInsatures', 'agPolyInsatures', 'omega3', 'omega6', 'omega9'] },
   { title: 'Minéraux', keys: ['fer', 'magnesium', 'potassium', 'calcium', 'zinc', 'sodium', 'selenium', 'iode'] },
   { title: 'Vitamines', keys: ['vitA', 'vitC', 'vitD', 'vitE', 'vitK1', 'vitK2', 'vitB1', 'vitB2', 'vitB3', 'vitB5', 'vitB6', 'vitB9', 'vitB12'] },
 ];

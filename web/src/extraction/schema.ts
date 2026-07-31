@@ -1,6 +1,7 @@
 import { z } from 'zod';
 import { UNITS, EMPTY_NUTRIENTS } from '../nutrition/types';
-import type { ExtractedItem, Nutrients, NutrientKey } from '../nutrition/types';
+import type { ExtractedItem, FoodCategory, Nutrients, NutrientKey } from '../nutrition/types';
+import { splitSaturated } from '../nutrition/foods';
 
 /** Toutes les clés de nutriments (ordre stable, pour prompts + validation). */
 const NUTRIENT_KEYS = Object.keys(EMPTY_NUTRIENTS) as NutrientKey[];
@@ -63,9 +64,20 @@ export const extractionJsonSchema = {
   additionalProperties: false,
 } as const;
 
-/** Complète des nutriments partiels avec toutes les clés manquantes (à 0). */
-function fullNutrients(partial: Partial<Record<NutrientKey, number>>): Nutrients {
-  return { ...EMPTY_NUTRIENTS, ...partial };
+/**
+ * Complète des nutriments partiels avec toutes les clés manquantes (à 0).
+ *
+ * Cas particulier des AG saturés : si l'IA a donné le total sans la répartition
+ * C16+C14 / C18 (modèle plus ancien, oubli), on l'estime depuis la catégorie —
+ * une répartition vide ferait mentir la ligne « dont » du bilan et sortirait
+ * l'aliment du plafond qui compte.
+ */
+function fullNutrients(partial: Partial<Record<NutrientKey, number>>, categorie?: FoodCategory): Nutrients {
+  const n = { ...EMPTY_NUTRIENTS, ...partial };
+  if (n.agSatures > 0 && n.agSaturesLdl === 0 && n.agSaturesStearique === 0) {
+    Object.assign(n, splitSaturated(n.agSatures, categorie ?? 'autre'));
+  }
+  return n;
 }
 
 export function validateExtraction(raw: unknown): ExtractedItem[] | null {
@@ -85,7 +97,9 @@ export function validateExtraction(raw: unknown): ExtractedItem[] | null {
       ? { quantiteMin: it.quantiteMin, quantiteMax: it.quantiteMax }
       : {}),
     // On ne conserve l'estimation IA que si des nutriments ont été fournis.
-    ...(it.nutriments ? { nutriments: fullNutrients(it.nutriments), categorie: it.categorie, grammesParPiece: it.grammesParPiece } : {}),
+    ...(it.nutriments
+      ? { nutriments: fullNutrients(it.nutriments, it.categorie), categorie: it.categorie, grammesParPiece: it.grammesParPiece }
+      : {}),
   }));
 }
 
@@ -97,6 +111,11 @@ export const NUTRIMENTS_PROMPT_DOC = `Toutes les valeurs sont POUR 100 g d'alime
 - kcal : énergie en kcal
 - proteines, glucides, lipides, fibres : g
 - agSatures, agMonoInsatures, agPolyInsatures, omega3, omega6, omega9 : g (omega3/6 ⊂ poly-insaturés, omega9 ⊂ mono-insaturés)
+- agSaturesLdl, agSaturesStearique : g — RÉPARTITION des AG saturés (sous-ensembles de agSatures, à renseigner dès que agSatures > 0).
+  · agSaturesLdl = palmitique C16:0 + myristique C14:0, ceux qui élèvent le LDL (beurre, crème, fromage, viande grasse, huile de palme).
+  · agSaturesStearique = stéarique C18:0, neutre sur le LDL (beurre de cacao donc chocolat noir, bœuf, agneau).
+  · Leur somme est ≤ agSatures ; le reste (laurique C12, chaînes courtes des laitages, C20/C22 des oléagineux) n'est pas détaillé.
+  · Ordres de grandeur, en part des AG saturés : matière grasse laitière ≈ 62 % / 18 % ; beurre de cacao ≈ 43 % / 56 % ; huile de palme ≈ 90 % / 8 % ; bœuf ≈ 66 % / 34 % ; agneau ≈ 54 % / 42 % ; volaille ≈ 76 % / 20 % ; poisson ≈ 78 % / 16 % ; végétal courant ≈ 85 % / 8 %.
 - fer, magnesium, potassium, calcium, zinc, sodium : mg
 - vitC, vitE, vitB1, vitB2, vitB3, vitB5, vitB6 : mg
 - selenium, iode, vitA, vitD, vitK1, vitK2, vitB9, vitB12 : µg (vitA en µg équivalent rétinol)
@@ -116,7 +135,7 @@ Dans ce cas, ajoute à l'item :
 - "grammesParPiece" (optionnel) : poids en g d'une pièce/portion si l'unité est "piece"/"portion"
 - "nutriments" : un objet contenant TOUS les champs ci-dessous (n'en omets AUCUN ; mets 0 si négligeable).
 ${NUTRIMENTS_PROMPT_DOC}
-Exemple : {"aliment":"pastel de nata","quantite":1,"unite":"piece","estimation":true,"categorie":"sucre-snack","grammesParPiece":60,"nutriments":{"kcal":298,"proteines":6,"glucides":37,"lipides":13,"fibres":1,"agSatures":6,"agMonoInsatures":4,"agPolyInsatures":1.5,"omega3":0.1,"omega6":1.2,"omega9":3.5,"fer":0.6,"magnesium":12,"potassium":90,"calcium":80,"zinc":0.5,"sodium":180,"selenium":8,"iode":10,"vitA":90,"vitC":0,"vitD":0.8,"vitE":0.4,"vitK1":2,"vitK2":1,"vitB1":0.05,"vitB2":0.2,"vitB3":0.4,"vitB5":0.5,"vitB6":0.05,"vitB9":18,"vitB12":0.4,"creatine":0,"collagene":0}}
+Exemple : {"aliment":"pastel de nata","quantite":1,"unite":"piece","estimation":true,"categorie":"sucre-snack","grammesParPiece":60,"nutriments":{"kcal":298,"proteines":6,"glucides":37,"lipides":13,"fibres":1,"agSatures":6,"agSaturesLdl":3.9,"agSaturesStearique":1.1,"agMonoInsatures":4,"agPolyInsatures":1.5,"omega3":0.1,"omega6":1.2,"omega9":3.5,"fer":0.6,"magnesium":12,"potassium":90,"calcium":80,"zinc":0.5,"sodium":180,"selenium":8,"iode":10,"vitA":90,"vitC":0,"vitD":0.8,"vitE":0.4,"vitK1":2,"vitK2":1,"vitB1":0.05,"vitB2":0.2,"vitB3":0.4,"vitB5":0.5,"vitB6":0.05,"vitB9":18,"vitB12":0.4,"creatine":0,"collagene":0}}
 N'utilise "nutriments" QUE lorsque c'est justifié ; en cas de doute, laisse l'application résoudre l'aliment (n'ajoute pas de nutriments).`;
 
 /**

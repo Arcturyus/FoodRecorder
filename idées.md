@@ -4,24 +4,21 @@
 Pour cela enlever le texte de dicté dans un favori, et d'ailleurs ne pas copier le texte dictée lorsque l'on appui sur dupliquer (dans historique ou aujourdhui)
 
 
-- [x] save verifications : est ce que les notes, les jour non comptés,les poids, autres auxquelles je compte pas sont save dans le json
-
 ## 1. Base de données : fer & graisses saturées détaillées
 
-- [ ] Fer : si homme, besoin de base à 8 mg (on gérera le cas femme + règles une autre fois — le besoin change selon la période du cycle).
-- [ ] Séparer les acides gras saturés, qui ne se comportent pas tous pareil (longueur de chaîne carbonée) :
-  - **Acide stéarique (C18:0) — « le neutre »** : chocolat noir (beurre de cacao), une partie de la viande. Le foie le convertit vite en acide oléique (mono-insaturé, comme l'huile d'olive) : il ne fait pas monter le LDL.
-  - **Acide palmitique (C16:0) et myristique (C14:0) — « à limiter »** : beurre, crème, fromage, huile de palme, viande grasse. En excès : LDL en hausse, plaques artérielles à long terme.
+- [ ] Fer : si homme, besoin de base à 8 mg (on gérera le cas femme + règles une autre fois — le besoin change selon la période du cycle). **← seul point restant de cette section**
+- [x] Séparer les acides gras saturés — **FAIT** (voir VALIDÉ / FAIT).
 
 **Décidé :**
 - **Répartition** : estimée comme le reste des nutriments. On remplit à la main les aliments à fort **et** à moyen impact (on cible large : un petit impact mangé souvent finit par compter), et pour tout le reste c'est l'IA qui estime. Repère chiffré sur le journal réel (23 jours) : 19 aliments couvrent 80 % des AG saturés mangés, 31 en couvrent 90 %, 44 en couvrent 95 % — et la moitié des gros contributeurs sont des plats décrits par le LLM (pizza, glace, burger…), donc le schéma d'extraction doit lui aussi renvoyer la répartition.
 - **Affichage** : une seule ligne « AG saturés » **dépliable** en sous-détail (comme les oméga 3 ALA/EPA/DHA), avec une petite ligne d'explication : ce qui est mauvais dans les AG saturés, ce qui est acceptable.
 - **Fer** : AJR et optimal tous les deux à 8 mg chez l'homme.
 
-**Seuils proposés (à valider) :**
-- Le plafond qui compte porte sur **C16:0 + C14:0** (palmitique + myristique) : **16 g/j** max, idéal **≤ 11 g** — soit ~72 % du plafond actuel des AG saturés (22 g / idéal 15 g), la proportion typique de ces deux acides dans les AG saturés d'une alimentation occidentale.
-- **C18:0 (stéarique)** : sorti du plafond, mais pas illimité — repère souple à **10 g/j**, avec un poids d'importance faible. Un régime normal en apporte 5-8 g ; le repère ne se déclenche donc que sur un vrai excès (grosse plaque de chocolat noir, journée très viande grasse). Justification de ne pas le laisser libre : neutre sur le LDL, mais légèrement pro-thrombotique, il fait baisser un peu le HDL et il arrive rarement seul (le palmitique l'accompagne).
-- La ligne « **AG saturés** » totale reste affichée mais devient un **filet de sécurité** : plafond relevé de 22 → **26 g** et poids d'importance réduit, pour ne pas pénaliser deux fois le même excès. Elle sert surtout à couvrir la part non détaillée (C12 laurique, chaînes courtes des produits laitiers).
+**Seuils retenus (implémentés) :**
+- Plafond qui compte sur **C16:0 + C14:0** : **16 g/j**, idéal ≤ 11 g — ~72 % de l'ancien plafond « AG saturés » (22 g), la part typique de ces deux acides. À apport constant, ni plus ni moins sévère qu'avant, simplement dirigé sur les bons acides gras.
+- **C18:0 (stéarique)** : sorti du plafond, repère souple **18 g/j** (relevé depuis 10 après retour utilisateur — 10 g était trop bas pour un acide gras aussi secondaire, et c'était juste). Les études en milieu contrôlé sont montées à ~11 % de l'énergie (≈ 24 g/j) sans voir bouger le LDL ; un apport courant est de 5-8 g. Poids d'importance ×0,5.
+- Ligne « **AG saturés** » totale = **filet de sécurité** : plafond 22 → **30 g**, importance ×0,5, pour ne pas pénaliser deux fois le même excès. Couvre la part non détaillée (C12 laurique, chaînes courtes des laitages).
+- Mesure sur le journal réel (23 j) : moyenne 35,6 g d'AG saturés dont **22,8 g de C16+C14** (plafond 16, dépassé 20 jours sur 23) et **9,9 g de stéarique** (repère 18, jamais atteint). Le repère stéarique se comporte donc bien comme voulu : haut, il ne se déclenche pas sur une consommation normale.
 
 ## 2. Banque d'aliments : ne plus la maintenir en brut
 
@@ -43,15 +40,7 @@ Pour cela enlever le texte de dicté dans un favori, et d'ailleurs ne pas copier
 - Piste n°1 à écarter : limite de taille d'une ligne Supabase (le base64 d'une photo réduite ~1024 px fait ~150-300 Ko) et politiques RLS de `sync_queue`.
 - Faut-il un écran « file d'attente » (lignes en attente, envoyées, traitées) plutôt que des messages fugaces ? Ce serait aussi la réponse au « message de confirmation ».
 
-## 4. Poids : analyse de l'évolution
-
-- [ ] Moyenne mobile réglable comme dans Stats, appliquée aussi aux kcal mangées superposées. Quand la moyenne mobile est active : n'afficher **que** les moyennes mobiles, pour ne pas surcharger le graphe.
-
-**À éclaircir avant de coder :**
-- L'agrégat Jour / Semaine / Mois vient d'être ajouté à Stats et à Ma consommation : on le met aussi sur la courbe de poids (auquel cas moyenne mobile *et* agrégat cohabitent, comme dans Stats), ou la moyenne mobile suffit ici ?
-- Les kcal superposées : moyenne des jours enregistrés uniquement, ou 0 pour les jours vides ?
-
-## 5. Inspiration
+## 4. Inspiration
 
 - [ ] Analyse de l'app Cronometer, pour y prendre de bonnes idées ou des choses à ne pas faire.
 
@@ -61,6 +50,11 @@ Pour cela enlever le texte de dicté dans un favori, et d'ailleurs ne pas copier
 
 # VALIDÉ / FAIT
 
+- [x] **Poids — analyse de l'évolution** : moyenne mobile **réglable** (3 / 7 / 14 / 30 j, comme dans Stats), appliquée aussi aux kcal superposées et à la part squelettique. Active, elle **remplace** les courbes brutes au lieu de s'y ajouter (contrepartie assumée : les points de pesée et le clic-pour-éditer ne reviennent qu'en la décochant) ; l'estimation de date d'atteinte de l'objectif suit la même fenêtre. **Pas d'agrégat Jour/Semaine/Mois ici** — la moyenne mobile suffit. kcal = **jours enregistrés uniquement** (un jour vide n'est pas un jour à 0), sauf s'il est marqué « compté » sur le calendrier (jeûne) où il vaut bien 0 ; un jour muté est ignoré même s'il contient des entrées.
+- [x] **AG saturés séparés** : deux sous-nutriments (`agSaturesLdl` = C16+C14, `agSaturesStearique` = C18) avec leurs propres cibles — 16 g et 18 g — pendant que le total devient un filet de sécurité à 30 g / ×0,5. Ils n'ont **pas de tuile propre** (notion de `parent` dans les cibles) : ils s'affichent en ligne « dont … » sous la tuile « AG saturés », comme ALA/EPA/DHA sous les oméga 3, et sont décalés sous leur parent dans le panneau d'importance. Répartition remplie à la main pour ~55 aliments (table de ratios `SFA_SPLIT_BY_FOOD`), profil de catégorie pour le reste, prompt IA enrichi, et rattrapage à l'hydratation pour l'historique déjà saisi. Exclus des dimensions de comparaison/ACP (colinéaires avec leur parent).
+- [x] **Composition par aliment en couleurs** : dans l'infobulle « Principaux apports » des tuiles oméga 3 et AG saturés, chaque aliment porte une petite barre segmentée (ALA/EPA/DHA — C16+C14 / stéarique / non détaillé) mise côte à côte sur sa ligne, ses valeurs en texte, et **une seule ligne de légende** en bas. Mêmes couleurs dans la ligne « dont … » sous la tuile.
+- [x] **Guide — « AG saturés : tous ne se valent pas »** : panneau explicatif dans l'onglet Nutriments (palmitique/myristique à limiter, stéarique neutre car converti en oléique par le foie, laurique et chaînes courtes à part), + renvoi depuis la ligne « AG saturés ».
+- [x] **Vérification des sauvegardes** : tout est bien dans le JSON (notes de jour, jours comptés/non comptés, pesées + constantes, soleil, importances, aliments perso/modifiés, favoris, profil) — seule la clé API en est exclue, volontairement. Ajouté : les **réglages** (moteur d'extraction, modèles) y passent aussi, un test d'exhaustivité qui échoue si un futur champ du store n'est ni exporté ni justifié, et un **garde-fou anti-écrasement** — un navigateur au localStorage vide ne peut plus remplacer la sauvegarde du jour par une version vierge (c'était arrivé le 30/07 ; 9 fichiers de `save/` sont dans cet état).
 - [x] **Conseils du jour — proposer d'autres aliments** : bouton « ⟳ Autres n/4 » sur chaque rangée de suggestions (macros et micronutriments). 4 pages sont préparées d'avance, sans doublon, et la garantie « au moins un aliment déjà mangé » porte sur la page visible.
 - [x] **Ma consommation — d'où vient ce nutriment ?** : mode « Par nutriment » (sélecteur + classement des aliments contributeurs, part en %, quantité, détail jour par jour).
 - [x] **Agrégat par semaine / mois** : sélecteur Jour / Semaine / Mois sur la « Tendance comparée » de Stats (moyennes PAR JOUR du groupe, donc comparables à la cible journalière ; la fenêtre de moyenne mobile suit l'unité) et sur les graphes de détail de Ma consommation.

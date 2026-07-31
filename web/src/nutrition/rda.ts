@@ -39,6 +39,13 @@ export interface RdaEntry {
   importance?: number;
   /** goal `limit` : cible basse idéale (« le plus bas raisonnable »), sous le plafond. */
   optimalLow?: number;
+  /**
+   * Sous-détail d'un autre nutriment (ex. C16+C14 ⊂ AG saturés). Il garde une
+   * cible propre — donc il compte dans le score et les recommandations — mais
+   * n'a PAS sa tuile dans le bilan du jour : il s'affiche sous celle du parent,
+   * qui resterait sinon un fourre-tout illisible.
+   */
+  parent?: NutrientKey;
   /** Rôle physiologique — ce que le nutriment fait dans le corps. */
   role: string;
   /** Justification de la cible optimale ou de la limite. */
@@ -72,9 +79,21 @@ export const RDA: RdaEntry[] = [
     optimalNote: 'AS ≈ 30 g ; viser ~36 g apporte un bénéfice cardiométabolique supplémentaire.',
   },
   {
-    key: 'agSatures', label: 'AG saturés', unit: 'g', rda: 22, goal: 'limit', optimalLow: 15,
-    role: 'Source d\'énergie, mais un excès élève le LDL-cholestérol et le risque cardiovasculaire — surtout à cause du palmitique et du myristique, pas du stéarique.',
-    optimalNote: 'Plafond ≈ 10 % de l\'énergie (≈ 22 g pour 2000 kcal) ; idéal le plus bas, vers 15 g. Chiffre à lire avec son origine : le stéarique du chocolat noir ou du bœuf (converti en acide oléique par le foie) ne fait pas monter le LDL, contrairement au palmitique du beurre, des fromages et de l\'huile de palme — voir « AG saturés : tous ne se valent pas » dans Nutriments.',
+    key: 'agSatures', label: 'AG saturés', unit: 'g', rda: 30, goal: 'limit', optimalLow: 20, importance: 0.5,
+    role: 'Total des acides gras saturés — un fourre-tout : c\'est le palmitique et le myristique qui élèvent le LDL, pas le stéarique.',
+    optimalNote: 'Devenu un FILET DE SÉCURITÉ (plafond 30 g, idéal ≤ 20 g), avec un poids réduit : le vrai plafond porte sur les deux sous-détails ci-dessous, pour ne pas pénaliser deux fois le même excès. Le total sert surtout à couvrir la part non détaillée (laurique C12, chaînes courtes des laitages). Voir « AG saturés : tous ne se valent pas » dans Nutriments.',
+  },
+  {
+    key: 'agSaturesLdl', parent: 'agSatures',
+    label: 'AG saturés à limiter (C16+C14)', unit: 'g', rda: 16, goal: 'limit', optimalLow: 11, importance: 1.2,
+    role: 'Palmitique et myristique : beurre, crème, fromage, viande grasse, huile de palme. Ils freinent l\'élimination du LDL par le foie — en excès, LDL en hausse et plaques artérielles à long terme.',
+    optimalNote: 'C\'est LE plafond qui compte : 16 g/j pour 2000 kcal, idéal ≤ 11 g — soit ~72 % de l\'ancien plafond « AG saturés » (22 g), la part typique de ces deux acides dans une alimentation occidentale. À apport constant, ni plus ni moins sévère qu\'avant : simplement dirigé sur les bons acides gras.',
+  },
+  {
+    key: 'agSaturesStearique', parent: 'agSatures',
+    label: 'Stéarique C18 (AG saturé neutre)', unit: 'g', rda: 18, goal: 'limit', optimalLow: 12, importance: 0.5,
+    role: 'Chocolat noir (le beurre de cacao en est ~1/3), bœuf et agneau. Le foie le désature vite en acide oléique — celui de l\'huile d\'olive : il ne fait pas monter le LDL.',
+    optimalNote: 'Repère HAUT et volontairement souple (18 g/j, idéal ≤ 12 g), poids d\'importance faible : les études en milieu contrôlé en ont fait manger jusqu\'à ~11 % de l\'énergie (≈ 24 g/j) sans voir bouger le LDL, et un apport courant est de 5-8 g. Il n\'est pas laissé totalement libre car il fait un peu baisser le HDL, il est soupçonné de favoriser l\'agrégation plaquettaire, et il n\'arrive presque jamais seul (le palmitique l\'accompagne).',
   },
   {
     key: 'agTrans', label: 'AG trans', unit: 'g', rda: 2, goal: 'limit', optimalLow: 0,

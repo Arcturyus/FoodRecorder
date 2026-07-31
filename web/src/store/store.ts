@@ -4,7 +4,7 @@ import { persist } from 'zustand/middleware';
 import type { ComputedItem, ExtractedItem, Food, Nutrients, NutrientKey, Unit } from '../nutrition/types';
 import { EMPTY_NUTRIENTS } from '../nutrition/types';
 import { computeItems, totalNutrients, toGrams, scaleNutrients } from '../nutrition/compute';
-import { FOODS, FOOD_BY_ID } from '../nutrition/foods';
+import { FOODS, FOOD_BY_ID, splitSaturated } from '../nutrition/foods';
 import { DEFAULT_LLM_MODEL } from '../extraction/llm';
 import { DEFAULT_CLOUD_MODEL } from '../extraction/anthropic';
 import { DEFAULT_STT_MODEL } from '../stt/whisper';
@@ -665,9 +665,24 @@ export const useStore = create<AppState>()(
   ),
 );
 
-/** Complète un objet nutriments persisté avec les clés manquantes (nouveaux nutriments). */
+/**
+ * Complète un objet nutriments persisté avec les clés manquantes (nouveaux
+ * nutriments).
+ *
+ * Cas de la répartition des AG saturés, ajoutée après coup : les items résolus
+ * à un aliment de la banque se recalculent tout seuls (cf. resolveItemNutrients),
+ * mais les estimations IA et les ajustements « pour cette fois » gardent un
+ * snapshot figé — sans rattrapage, la moitié de l'historique compterait 0 g de
+ * C16+C14 et sortirait du plafond qui compte. On répartit alors le total selon
+ * le profil générique « autre » : la catégorie de l'aliment n'est pas conservée
+ * dans le journal, et une estimation grossière vaut mieux qu'un trou.
+ */
 export function normalizeNutrients(n: Partial<Nutrients> | undefined): Nutrients {
-  return { ...EMPTY_NUTRIENTS, ...(n ?? {}) };
+  const out = { ...EMPTY_NUTRIENTS, ...(n ?? {}) };
+  if (out.agSatures > 0 && out.agSaturesLdl === 0 && out.agSaturesStearique === 0) {
+    Object.assign(out, splitSaturated(out.agSatures, 'autre'));
+  }
+  return out;
 }
 
 /**
@@ -694,6 +709,9 @@ export function resyncEntries(entries: JournalEntry[], foods: Food[]): JournalEn
       ...it,
       nutrients: resolveItemNutrients(it, it.foodId ? foods.find((f) => f.id === it.foodId) ?? null : null),
       ...(it.customN ? { customN: normalizeNutrients(it.customN) } : {}),
+      // L'estimation IA « pour 100 g » est rescalée à chaque édition de quantité :
+      // elle doit être complétée elle aussi, sinon la correction se reperdrait.
+      ...(it.iaEstime ? { iaEstime: { ...it.iaEstime, n: normalizeNutrients(it.iaEstime.n) } } : {}),
     })),
   }));
 }

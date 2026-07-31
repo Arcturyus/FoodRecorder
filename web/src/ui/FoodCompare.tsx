@@ -37,8 +37,14 @@ const C = {
 /** Couleurs des deux emplacements comparés (A / B). */
 const SLOT_COLOR = ['#5b8cff', '#f5a623'] as const;
 
-/** Nutriments comparables : tout sauf les calories (constantes en densité /100 kcal). */
-const NUT = RDA.filter((r) => r.key !== 'kcal').map((r) => ({ key: r.key, label: r.label, unit: r.unit }));
+/**
+ * Nutriments comparables : tout sauf les calories (constantes en densité
+ * /100 kcal) et sauf les SOUS-DÉTAILS (C16+C14, stéarique). Un sous-détail est
+ * par construction colinéaire avec son parent : le garder ferait compter deux
+ * fois la même information dans la similarité cosinus et étirerait artificiellement
+ * l'axe « gras saturé » de l'ACP.
+ */
+const NUT = RDA.filter((r) => r.key !== 'kcal' && !r.parent).map((r) => ({ key: r.key, label: r.label, unit: r.unit }));
 const NUT_LABEL = new Map(NUT.map((n) => [n.key, n.label]));
 const NUT_UNIT = new Map(NUT.map((n) => [n.key, n.unit]));
 const NUT_RDA = new Map(RDA.map((r) => [r.key, r.rda]));

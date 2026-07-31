@@ -133,6 +133,8 @@ export interface Target {
   optimalNote?: string;
   /** Compat. : vrai si c'est une limite (goal === 'limit'). */
   upperLimit?: boolean;
+  /** Sous-détail d'un autre nutriment : pas de tuile propre dans le bilan (cf. RdaEntry.parent). */
+  parent?: NutrientKey;
 }
 
 /** Calories par kg de poids selon le niveau d'activité (maintien). */
@@ -159,6 +161,7 @@ export function computeTargets(profile: Profile): Target[] {
       role: r.role,
       optimalNote: r.optimalNote,
       upperLimit: r.goal === 'limit',
+      ...(r.parent ? { parent: r.parent } : {}),
     };
 
     if (r.key === 'kcal') {

@@ -9,7 +9,25 @@ export interface Nutrients {
   glucides: number;
   lipides: number;
   fibres: number;
+  /**
+   * g — TOTAL des acides gras saturés. Fourre-tout : il additionne des acides
+   * gras qui ne se comportent pas pareil (cf. les deux sous-ensembles ci-dessous).
+   * Sert de filet de sécurité (plafond haut) ; le vrai plafond porte sur
+   * `agSaturesLdl`.
+   */
   agSatures: number;
+  /**
+   * g — palmitique (C16:0) + myristique (C14:0), sous-ensemble d'`agSatures`.
+   * Ce sont EUX qui font monter le LDL (beurre, crème, fromage, viande grasse,
+   * huile de palme) : c'est sur eux que porte le plafond qui compte.
+   */
+  agSaturesLdl: number;
+  /**
+   * g — acide stéarique (C18:0), sous-ensemble d'`agSatures`. Le « neutre » :
+   * le foie le désature vite en acide oléique, il ne fait pas monter le LDL
+   * (chocolat noir, bœuf, agneau). Repère haut, poids faible.
+   */
+  agSaturesStearique: number;
   agTrans: number; // g (huiles hydrogénées, fritures ; trace naturelle chez les ruminants)
   agMonoInsatures: number; // g (total AG mono-insaturés)
   agPolyInsatures: number; // g (total AG poly-insaturés)
@@ -155,7 +173,8 @@ export interface ComputedItem {
 
 export const EMPTY_NUTRIENTS: Nutrients = {
   kcal: 0, proteines: 0, glucides: 0, lipides: 0, fibres: 0,
-  agSatures: 0, agTrans: 0, agMonoInsatures: 0, agPolyInsatures: 0, omega3: 0, omega6: 0, omega9: 0,
+  agSatures: 0, agSaturesLdl: 0, agSaturesStearique: 0,
+  agTrans: 0, agMonoInsatures: 0, agPolyInsatures: 0, omega3: 0, omega6: 0, omega9: 0,
   omega3Ala: 0, omega3Epa: 0, omega3Dha: 0,
   fer: 0, magnesium: 0, potassium: 0, calcium: 0, zinc: 0, sodium: 0,
   selenium: 0, iode: 0,

@@ -2,7 +2,7 @@ import { useMemo, useRef, useState } from 'react';
 import { scaleLinear } from 'd3-scale';
 import { line as d3line } from 'd3-shape';
 import { extent as d3extent } from 'd3-array';
-import { useStore, todayStr } from '../store/store';
+import { useStore, todayStr, isDayCounted } from '../store/store';
 import { computeWeight } from '../weight/compute';
 import type { WeightEntry } from '../weight/types';
 import {
@@ -27,6 +27,9 @@ const C = {
 };
 
 const DAY_MS = 86_400_000;
+
+/** Fenêtres proposées pour la moyenne mobile (en jours) — mêmes choix que Stats. */
+const MA_WINDOWS = [3, 7, 14, 30];
 
 /** Timestamp d'une pesée (date + heure) pour l'axe temporel. */
 function entryMs(e: WeightEntry): number {
@@ -72,8 +75,44 @@ interface Series {
   rightAxis?: boolean;
   /** Dessiner les points individuels (sinon ligne seule). */
   drawPoints?: boolean;
+  /**
+   * Survolable sans dessiner de points. Les courbes lissées n'ont pas de survol
+   * par défaut (on veut atterrir sur une vraie mesure) — sauf quand elles sont
+   * SEULES à l'écran, sinon le graphe n'aurait plus aucun tooltip.
+   */
+  hoverable?: boolean;
   /** Unité affichée dans le tooltip (défaut : unité du graphe). */
   unit?: string;
+}
+
+/**
+ * kcal mangées par jour sur une plage, prêtes à superposer à la courbe de poids.
+ *
+ * Ne comptent que les jours ENREGISTRÉS : un jour vide est un jour non rempli,
+ * pas un jour à 0 kcal — le moyenner à 0 écraserait la courbe. Deux exceptions,
+ * portées par `mutedDays` (même règle que les moyennes de Stats, pour que les
+ * deux racontent la même histoire) :
+ *  - un jour vide explicitement compté (jeûne) vaut bien 0 ;
+ *  - un jour muté (mal rempli) est ignoré même s'il contient des entrées.
+ */
+export function dailyKcalPoints(
+  journal: { date: string; items: { nutrients: { kcal: number } }[] }[],
+  mutedDays: Record<string, boolean>,
+  range: { start: string; end: string },
+): SeriesPoint[] {
+  const kcalByDate = new Map<string, number>();
+  for (const e of journal) {
+    const kcal = e.items.reduce((a, it) => a + it.nutrients.kcal, 0);
+    kcalByDate.set(e.date, (kcalByDate.get(e.date) ?? 0) + kcal);
+  }
+  const out: SeriesPoint[] = [];
+  for (let t = dayMs(range.start); t <= dayMs(range.end); t += DAY_MS) {
+    const date = todayStr(new Date(t));
+    const kcal = kcalByDate.get(date);
+    if (!isDayCounted(mutedDays, kcal != null, date)) continue;
+    out.push({ t, value: kcal ?? 0 });
+  }
+  return out;
 }
 
 /** Moyenne mobile : pour chaque point, moyenne des valeurs des `days` jours précédents (inclus). */
@@ -136,9 +175,13 @@ export function WeightChart({ onEditEntry }: { onEditEntry?: (id: string) => voi
   const setWeightConfig = useStore((s) => s.setWeightConfig);
   const sexe = useStore((s) => s.profile.sexe);
 
+  const mutedDays = useStore((s) => s.mutedDays);
+
   const [period, setPeriod] = useState<PeriodState>(defaultPeriodState);
   const [mode, setMode] = useState<ChartMode>('poids');
   const [showMa, setShowMa] = useState(true);
+  /** Fenêtre de la moyenne mobile, en jours (réglable comme dans Stats). */
+  const [maWindow, setMaWindow] = useState(7);
   const [showKcal, setShowKcal] = useState(false);
   /** Ne garder que les pesées comparables (à jeun ET nu). */
   const [comparableOnly, setComparableOnly] = useState(false);
@@ -209,26 +252,11 @@ export function WeightChart({ onEditEntry }: { onEditEntry?: (id: string) => voi
     }
   }, [mode, muscleUnit, inRange, computedByEntry]);
 
-  /** Moyenne kcal des 7 jours précédant chaque jour de la période (journal). */
-  const kcalPoints: SeriesPoint[] = useMemo(() => {
-    if (mode !== 'poids' || !showKcal) return [];
-    const kcalByDate = new Map<string, number>();
-    for (const e of journal) {
-      const kcal = e.items.reduce((a, it) => a + it.nutrients.kcal, 0);
-      kcalByDate.set(e.date, (kcalByDate.get(e.date) ?? 0) + kcal);
-    }
-    const out: SeriesPoint[] = [];
-    for (let t = dayMs(range.start); t <= dayMs(range.end); t += DAY_MS) {
-      // moyenne des jours enregistrés parmi les 7 jours PRÉCÉDENTS (pas le jour même)
-      const vals: number[] = [];
-      for (let k = 1; k <= 7; k++) {
-        const v = kcalByDate.get(todayStr(new Date(t - k * DAY_MS)));
-        if (v != null) vals.push(v);
-      }
-      if (vals.length > 0) out.push({ t, value: vals.reduce((a, v) => a + v, 0) / vals.length });
-    }
-    return out;
-  }, [mode, showKcal, journal, range]);
+  /** kcal mangées, un point par jour enregistré de la période (cf. dailyKcalPoints). */
+  const kcalPoints: SeriesPoint[] = useMemo(
+    () => (mode !== 'poids' || !showKcal ? [] : dailyKcalPoints(journal, mutedDays, range)),
+    [mode, showKcal, journal, range, mutedDays],
+  );
 
   /**
    * Séries du mode « Métabolismes » : HB / MSJ / balance (cases à cocher),
@@ -288,11 +316,13 @@ export function WeightChart({ onEditEntry }: { onEditEntry?: (id: string) => voi
   }, [points]);
 
   // Objectif de poids : ligne cible + estimation de la date d'atteinte au rythme
-  // actuel (pente de la moyenne mobile 7 j sur les 30 derniers jours de données).
+  // actuel (pente de la moyenne mobile sur les 30 derniers jours de données).
+  // Même fenêtre que la courbe affichée : la tendance annoncée doit être celle
+  // qu'on voit, sinon élargir le lissage donnerait une ETA contredite par le graphe.
   const objectif = weightConfig.objectifPoids;
   const eta = useMemo(() => {
     if (mode !== 'poids' || objectif == null || points.length < 2) return null;
-    const ma = movingAverage(points, 7);
+    const ma = movingAverage(points, maWindow);
     const lastT = ma[ma.length - 1].t;
     const recent = ma.filter((p) => p.t >= lastT - 30 * DAY_MS);
     const slope = slopePerDay(recent.length >= 2 ? recent : ma);
@@ -312,7 +342,7 @@ export function WeightChart({ onEditEntry }: { onEditEntry?: (id: string) => voi
       year: 'numeric',
     });
     return { label: `atteint vers le ${when}`, perWeek };
-  }, [mode, objectif, points]);
+  }, [mode, objectif, points, maWindow]);
 
   const isComposite = mode === 'metabolismes' || mode === 'autres';
   const unit =
@@ -323,7 +353,14 @@ export function WeightChart({ onEditEntry }: { onEditEntry?: (id: string) => voi
     : mode === 'autres' ? 'kg'
     : 'kg';
 
-  /** Assemble les séries à tracer selon le mode et les options. */
+  /**
+   * Assemble les séries à tracer selon le mode et les options.
+   *
+   * Moyenne mobile active ⇒ on n'affiche QUE les courbes lissées (mesures,
+   * squelettique, kcal). Superposer brut + lissé pour trois séries rendait le
+   * graphe illisible. Contrepartie assumée : les points de pesée (et donc le
+   * clic pour éditer) ne reviennent qu'en décochant la moyenne mobile.
+   */
   const series: Series[] = useMemo(() => {
     if (mode === 'metabolismes') return metaboSeries;
     if (mode === 'autres') return autresSeries;
@@ -331,23 +368,41 @@ export function WeightChart({ onEditEntry }: { onEditEntry?: (id: string) => voi
       mode === 'masseMusculaire'
         ? muscleUnit === 'kg' ? 'Masse musculaire (kg)' : 'Masse musculaire (%)'
         : MODE_CHIPS.find((c) => c.key === mode)!.label;
-    const out: Series[] = [{ label, color: C.accent, points, drawPoints: true }];
+    const smoothed = showMa && points.length >= 2;
+    const ma = (p: SeriesPoint[]) => movingAverage(p, maWindow);
+    const suffix = ` · moy. ${maWindow} j`;
+
+    const out: Series[] = smoothed
+      ? [{ label: label + suffix, color: C.accent2, points: ma(points), hoverable: true }]
+      : [{ label, color: C.accent, points, drawPoints: true }];
+
     // En kg, la part squelettique (× 0,9, cf. compute.ts) accompagne la courbe.
     if (mode === 'masseMusculaire' && muscleUnit === 'kg') {
       const skel = inRange.flatMap((e) => {
         const v = computedByEntry.get(e.id)?.masseMusculaireSquelettique;
         return v == null ? [] : [{ e, t: entryMs(e), value: v }];
       });
-      out.push({ label: 'dont squelettique (× 0,9)', color: C.violet, points: skel, dashed: true });
+      out.push({
+        label: `dont squelettique (× 0,9)${smoothed ? suffix : ''}`,
+        color: C.violet,
+        points: smoothed && skel.length >= 2 ? ma(skel) : skel,
+        dashed: true,
+      });
     }
-    if (showMa && points.length >= 2) {
-      out.push({ label: 'Moyenne mobile 7 j', color: C.accent2, points: movingAverage(points, 7), dashed: false });
-    }
+
     if (kcalPoints.length > 0) {
-      out.push({ label: 'kcal moy. 7 j précédents', color: C.warn, points: kcalPoints, rightAxis: true, dashed: true, unit: 'kcal' });
+      const lisse = smoothed && kcalPoints.length >= 2;
+      out.push({
+        label: lisse ? `kcal mangées${suffix}` : 'kcal mangées (par jour)',
+        color: C.warn,
+        points: lisse ? ma(kcalPoints) : kcalPoints,
+        rightAxis: true,
+        dashed: true,
+        unit: 'kcal',
+      });
     }
     return out;
-  }, [mode, muscleUnit, points, showMa, kcalPoints, metaboSeries, autresSeries, inRange, computedByEntry]);
+  }, [mode, muscleUnit, points, showMa, maWindow, kcalPoints, metaboSeries, autresSeries, inRange, computedByEntry]);
 
   const targetLine = mode === 'poids' && objectif != null ? { value: objectif, label: `objectif ${fmt(objectif, 1)} kg` } : null;
   const hasHollow = series.some((s) => s.points.some((p) => p.hollow));
@@ -411,15 +466,34 @@ export function WeightChart({ onEditEntry }: { onEditEntry?: (id: string) => voi
               </button>
             </span>
           )}
-          <label className="small" style={{ display: 'flex', alignItems: 'center', gap: 6, cursor: 'pointer' }}>
-            <input type="checkbox" checked={showMa} onChange={(e) => setShowMa(e.target.checked)} style={{ width: 'auto' }} />
-            Moyenne mobile 7 j
-          </label>
+          <span className="row" style={{ gap: 6, alignItems: 'center' }} data-tip="Lisse le bruit des pesées. Active, elle remplace les courbes brutes (y compris les kcal) au lieu de s'y ajouter — décochez-la pour revoir les mesures et cliquer un point.">
+            <label className="small" style={{ display: 'flex', alignItems: 'center', gap: 6, cursor: 'pointer' }}>
+              <input type="checkbox" checked={showMa} onChange={(e) => setShowMa(e.target.checked)} style={{ width: 'auto' }} />
+              Moyenne mobile
+            </label>
+            <select
+              value={maWindow}
+              onChange={(e) => setMaWindow(Number(e.target.value))}
+              disabled={!showMa}
+              style={{ opacity: showMa ? 1 : 0.5, width: 'auto' }}
+              aria-label="Fenêtre de la moyenne mobile"
+            >
+              {MA_WINDOWS.map((w) => (
+                <option key={w} value={w}>
+                  {w} j
+                </option>
+              ))}
+            </select>
+          </span>
           {mode === 'poids' && (
             <>
-              <label className="small" style={{ display: 'flex', alignItems: 'center', gap: 6, cursor: 'pointer' }}>
+              <label
+                className="small"
+                style={{ display: 'flex', alignItems: 'center', gap: 6, cursor: 'pointer' }}
+                data-tip="Jours enregistrés uniquement : un jour vide est un jour non rempli, pas un jour à 0 kcal. Exception : un jour vide marqué « compté » sur le calendrier (jeûne) vaut bien 0."
+              >
                 <input type="checkbox" checked={showKcal} onChange={(e) => setShowKcal(e.target.checked)} style={{ width: 'auto' }} />
-                Superposer kcal mangées (moy. 7 j précédents)
+                Superposer kcal mangées
               </label>
               <label className="small" style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
                 Objectif (kg)
@@ -601,7 +675,7 @@ function MultiLineChart({
     let bd = Infinity;
     let bestDx = Infinity;
     series.forEach((s, si) => {
-      if (!s.drawPoints && !s.rightAxis) return; // séries lissées : pas de survol dédié
+      if (!s.drawPoints && !s.rightAxis && !s.hoverable) return; // séries lissées : pas de survol dédié
       const yScale = yScaleFor(s);
       s.points.forEach((p, pi) => {
         const dx = xs(p.t) - x;

@@ -11,6 +11,138 @@ import { EMPTY_NUTRIENTS } from './types';
 /** Diviseur appliqué à l'ALA brut pour son équivalent EPA/DHA (rendement de conversion ≈ 10 %). */
 const ALA_EQUIVALENT_DIVISOR = 10;
 
+/**
+ * Répartition des AG saturés : part de (C16 palmitique + C14 myristique) et part
+ * de C18 stéarique DANS les AG saturés totaux de l'aliment. Le reste (laurique
+ * C12, chaînes courtes des laitages, C20/C22 des oléagineux) n'est pas détaillé.
+ *
+ * Pourquoi une table à part plutôt que deux champs dans chaque ligne : ce sont
+ * des RATIOS, stables par aliment et indépendants du gras total — les lister
+ * ensemble se relit et se corrige, alors que deux nombres noyés dans 40 autres
+ * ne se vérifient jamais. Sources : CIQUAL / USDA (profils d'acides gras).
+ *
+ * Ne sont renseignés que les aliments à impact fort ou moyen (ceux-ci couvrent
+ * ~95 % des AG saturés réellement consommés) ; les autres suivent le profil de
+ * leur catégorie, cf. SFA_SPLIT_BY_CATEGORY.
+ */
+const SFA_SPLIT_BY_FOOD: Record<string, readonly [ldl: number, stearique: number]> = {
+  // — Matière grasse laitière : beaucoup de palmitique + myristique, peu de stéarique,
+  //   et ~20 % de chaînes courtes/laurique non détaillées.
+  beurre: [0.62, 0.18],
+  'creme-fraiche': [0.62, 0.18],
+  emmental: [0.62, 0.18],
+  parmesan: [0.62, 0.18],
+  camembert: [0.62, 0.18],
+  mozzarella: [0.62, 0.18],
+  'yaourt-grec': [0.62, 0.18],
+  'yaourt-nature': [0.62, 0.18],
+  'fromage-blanc': [0.62, 0.18],
+  'lait-entier': [0.62, 0.18],
+  whey: [0.62, 0.18],
+
+  // — Cacao : le cas emblématique. Le beurre de cacao est majoritairement
+  //   STÉARIQUE (neutre) — d'où un chocolat noir bien moins « mauvais » que son
+  //   chiffre d'AG saturés ne le laisse croire.
+  'chocolat-noir-85': [0.43, 0.56],
+  'chocolat-noir-70': [0.43, 0.56],
+  'chocolat-poudre': [0.45, 0.53],
+  'chocolat-lait': [0.48, 0.48],
+  'chocolat-blanc': [0.50, 0.45],
+  // Pâte à tartiner : huile de palme (palmitique quasi pur) qui domine le cacao.
+  'pate-tartiner': [0.80, 0.16],
+
+  // — Huiles et oléagineux
+  'huile-olive': [0.79, 0.19],
+  'huile-colza': [0.62, 0.26],
+  'beurre-cacahuete': [0.58, 0.14], // + C20/C22 (arachidique, béhénique) non détaillés
+  noix: [0.72, 0.22],
+  noisettes: [0.66, 0.30],
+  amandes: [0.80, 0.19],
+  'graines-lin': [0.56, 0.38],
+  'graines-chia': [0.67, 0.26],
+  mayonnaise: [0.62, 0.32],
+  vinaigrette: [0.60, 0.36],
+  avocat: [0.93, 0.04],
+
+  // — Viandes : le bœuf et surtout l'agneau apportent beaucoup de stéarique,
+  //   le poulet presque pas.
+  entrecote: [0.66, 0.34],
+  bavette: [0.66, 0.34],
+  rumsteck: [0.66, 0.34],
+  'steak-hache-15': [0.66, 0.34],
+  'steak-hache-5': [0.66, 0.34],
+  agneau: [0.54, 0.42],
+  merguez: [0.60, 0.37],
+  'cote-porc': [0.66, 0.32],
+  'filet-mignon-porc': [0.66, 0.32],
+  'jambon-blanc': [0.66, 0.32],
+  lardons: [0.66, 0.32],
+  saucisse: [0.66, 0.32],
+  saucisson: [0.66, 0.32],
+  'aile-poulet': [0.76, 0.20],
+  'cuisse-poulet': [0.76, 0.20],
+
+  // — Poissons et œuf : palmitique dominant, stéarique marginal.
+  saumon: [0.78, 0.17],
+  'saumon-fume': [0.78, 0.17],
+  maquereau: [0.78, 0.16],
+  sardines: [0.80, 0.13],
+  oeuf: [0.74, 0.25],
+
+  // — Sucré / frit : beurre pour les viennoiseries, huile de palme pour l'industriel.
+  croissant: [0.63, 0.19],
+  'pain-chocolat': [0.63, 0.19],
+  madeleine: [0.72, 0.16],
+  cookie: [0.72, 0.16],
+  'petit-beurre': [0.72, 0.16],
+  glace: [0.65, 0.18],
+  chips: [0.80, 0.14],
+  frites: [0.78, 0.15],
+  pizza: [0.66, 0.20],
+  avoine: [0.85, 0.09],
+};
+
+/**
+ * Profil par défaut d'une catégorie, pour les aliments non listés ci-dessus.
+ * Volontairement grossier : à ces niveaux d'AG saturés (souvent < 1 g/100 g),
+ * l'erreur d'estimation pèse moins qu'un trou dans la répartition.
+ */
+const SFA_SPLIT_BY_CATEGORY: Record<FoodCategory, readonly [ldl: number, stearique: number]> = {
+  fruit: [0.90, 0.05],
+  legume: [0.85, 0.06],
+  feculent: [0.85, 0.08],
+  viande: [0.66, 0.31],
+  poisson: [0.78, 0.16],
+  'oeuf-laitier': [0.64, 0.20],
+  'sucre-snack': [0.70, 0.20],
+  'matiere-grasse': [0.70, 0.20],
+  boisson: [0.75, 0.15],
+  plat: [0.70, 0.20],
+  supplement: [0.65, 0.20],
+  autre: [0.72, 0.18],
+};
+
+/**
+ * Répartition (C16+C14 / C18) des AG saturés d'un aliment. Sert aussi aux
+ * aliments estimés par l'IA quand elle n'a pas renseigné le détail (cf.
+ * extraction/schema.ts) : mieux vaut une estimation par catégorie qu'une
+ * répartition vide qui ferait mentir la ligne « dont ».
+ */
+export function splitSaturated(
+  agSatures: number,
+  categorie: FoodCategory,
+  foodId?: string,
+): { agSaturesLdl: number; agSaturesStearique: number } {
+  const [ldl, stearique] =
+    (foodId ? SFA_SPLIT_BY_FOOD[foodId] : undefined) ?? SFA_SPLIT_BY_CATEGORY[categorie];
+  return { agSaturesLdl: round2(agSatures * ldl), agSaturesStearique: round2(agSatures * stearique) };
+}
+
+/** Arrondi à 2 décimales : évite les 1.9000000000000001 dans la base. */
+function round2(v: number): number {
+  return Math.round(v * 100) / 100;
+}
+
 function f(
   id: string,
   nom: string,
@@ -27,6 +159,9 @@ function f(
     omega3Ala > 0 || omega3Epa > 0 || omega3Dha > 0
       ? omega3Ala / ALA_EQUIVALENT_DIVISOR + omega3Epa + omega3Dha
       : (n.omega3 ?? 0);
+  // Répartition des AG saturés : dérivée du profil de l'aliment (ou de sa
+  // catégorie), sauf si la ligne la donne explicitement.
+  const split = splitSaturated(n.agSatures ?? 0, categorie, id);
   return {
     id,
     nom,
@@ -34,7 +169,7 @@ function f(
     aliases,
     pieceGrams: opts.piece,
     unitGrams: opts.unitGrams,
-    n: { ...EMPTY_NUTRIENTS, ...n, omega3 },
+    n: { ...EMPTY_NUTRIENTS, ...split, ...n, omega3 },
   };
 }
 
