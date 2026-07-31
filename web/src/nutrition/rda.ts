@@ -85,9 +85,9 @@ export const RDA: RdaEntry[] = [
   },
   {
     key: 'agSaturesLdl', parent: 'agSatures',
-    label: 'AG saturés à limiter (C16+C14)', unit: 'g', rda: 16, goal: 'limit', optimalLow: 11, importance: 1.2,
+    label: 'AG saturés à limiter (C16+C14)', unit: 'g', rda: 15, goal: 'limit', optimalLow: 10, importance: 1.2,
     role: 'Palmitique et myristique : beurre, crème, fromage, viande grasse, huile de palme. Ils freinent l\'élimination du LDL par le foie — en excès, LDL en hausse et plaques artérielles à long terme.',
-    optimalNote: 'C\'est LE plafond qui compte : 16 g/j pour 2000 kcal, idéal ≤ 11 g — soit ~72 % de l\'ancien plafond « AG saturés » (22 g), la part typique de ces deux acides dans une alimentation occidentale. À apport constant, ni plus ni moins sévère qu\'avant : simplement dirigé sur les bons acides gras.',
+    optimalNote: 'C\'est LE plafond qui compte, et c\'est une VRAIE limite, pas un prorata de l\'ancienne : le « moins de 10 % de l\'énergie » des recommandations vise les saturés qui élèvent le LDL, et l\'American Heart Association descend à 7 % pour la prévention cardiovasculaire — soit ≈ 15 g pour 2000 kcal, idéal ≤ 10 g. Lue ainsi, elle est plus exigeante que l\'ancien plafond de 22 g sur le total, puisque le stéarique n\'y est plus compté.',
   },
   {
     key: 'agSaturesStearique', parent: 'agSatures',

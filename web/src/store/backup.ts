@@ -5,7 +5,7 @@
  *  - CSV : exports lisibles (tableur) du journal et des pesées — lecture seule.
  */
 
-import { useStore, todayStr } from './store';
+import { useStore, todayStr, resyncEntries, effectiveFoods, normalizeNutrients } from './store';
 import type { JournalEntry, FavoriteMeal, FoodOverrides, SttEngine, ExtractionMode } from './store';
 import type { Food } from '../nutrition/types';
 import type { Profile } from '../nutrition/targets';
@@ -95,10 +95,17 @@ export function importBackup(text: string): string {
   if (b.app !== 'foodrecorder' || !Array.isArray(b.entries) || !Array.isArray(b.weightEntries)) {
     throw new Error('Ce fichier ne ressemble pas à une sauvegarde FoodRecorder.');
   }
+  // Recalcul depuis la base ACTUELLE, exactement comme à l'hydratation
+  // (mergePersisted) : une sauvegarde est par nature plus vieille que le code
+  // qui la relit. Sans ça, un nutriment ajouté depuis (la répartition des AG
+  // saturés, hier les oméga 3 détaillés) reste absent des items importés — et
+  // ressort en « NaN » ou en 0 dans le bilan jusqu'au prochain rechargement.
+  const customFoods = (b.customFoods ?? []).map((food) => ({ ...food, n: normalizeNutrients(food.n) }));
+  const foodOverrides = b.foodOverrides ?? {};
   useStore.setState({
-    entries: b.entries,
-    customFoods: b.customFoods ?? [],
-    foodOverrides: b.foodOverrides ?? {},
+    entries: resyncEntries(b.entries, effectiveFoods(customFoods, foodOverrides)),
+    customFoods,
+    foodOverrides,
     favoriteMeals: b.favoriteMeals ?? [],
     ...(b.profile ? { profile: b.profile } : {}),
     weightEntries: b.weightEntries,

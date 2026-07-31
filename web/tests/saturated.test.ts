@@ -51,8 +51,10 @@ describe('cibles', () => {
   const get = (key: string) => targets.find((t) => t.key === key)!;
 
   it('le plafond qui compte porte sur C16+C14, pas sur le total', () => {
-    expect(get('agSaturesLdl').ajr).toBe(16);
-    expect(get('agSaturesLdl').optimal).toBe(11);
+    // 15 g ≈ 7 % de l'énergie (seuil AHA), appliqué aux seuls saturés qui élèvent
+    // le LDL — une vraie limite, pas un prorata de l'ancien plafond du total.
+    expect(get('agSaturesLdl').ajr).toBe(15);
+    expect(get('agSaturesLdl').optimal).toBe(10);
     // Le total n'est plus qu'un filet de sécurité, nettement plus haut.
     expect(get('agSatures').ajr).toBe(30);
   });

@@ -65,8 +65,10 @@ function topContributors(items: JournalItem[], key: NutrientKey, parts: SubPart[
     if (v <= 0) continue;
     const cur = byName.get(it.nomAffiche) ?? { nom: it.nomAffiche, amount: 0, parts: parts.map(() => 0) };
     cur.amount += v;
+    // `?? 0` : un item peut venir d'un snapshot antérieur à l'ajout d'un
+    // sous-nutriment — un trou doit rester un 0, jamais un NaN affiché.
     parts.forEach((p, i) => {
-      cur.parts[i] += it.nutrients[p.key];
+      cur.parts[i] += it.nutrients[p.key] ?? 0;
     });
     byName.set(it.nomAffiche, cur);
   }

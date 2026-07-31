@@ -132,7 +132,10 @@ function SaturatedFatGuide() {
           est le plus puissant des deux, mais le palmitique est de très loin le plus abondant.
         </div>
         <div className="small" style={{ marginTop: 4, color: 'var(--warn)' }}>
-          C'est sur eux que porte le plafond qui compte : <strong>16 g/j</strong> pour 2000 kcal, idéal ≤ 11 g.
+          C'est sur eux que porte le plafond qui compte : <strong>15 g/j</strong> pour 2000 kcal, idéal ≤ 10 g —
+          soit les 7 % de l'énergie visés par l'American Heart Association, appliqués aux seuls saturés qui
+          élèvent le LDL. Plus exigeant que l'ancien plafond de 22 g sur le total, puisque le stéarique n'y est
+          plus compté.
         </div>
       </div>
 
@@ -167,7 +170,7 @@ function SaturatedFatGuide() {
         Une même dose de chocolat noir à 85 % et de beurre donne le même chiffre dans le bilan, pas le même
         effet. À l'inverse, un plat industriel « pas si gras » à l'huile de palme apporte du palmitique presque
         pur. C'est pour ça que la tuile « AG saturés » du bilan porte une ligne « dont … » : son total n'est
-        plus qu'un <em>filet de sécurité</em> (plafond 30 g, poids réduit), le vrai plafond étant sur les 16 g
+        plus qu'un <em>filet de sécurité</em> (plafond 30 g, poids réduit), le vrai plafond étant sur les 15 g
         de C16+C14. Survolez la tuile pour voir, aliment par aliment, ce que chacun apporte de l'un et de l'autre.
       </div>
     </div>

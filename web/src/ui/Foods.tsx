@@ -23,8 +23,34 @@ const BASE_MACRO_KEYS = new Set<keyof Nutrients>(['kcal', 'proteines', 'glucides
  * impossible à corriger — un champ non renseigné reste traité comme zéro.
  */
 const OPTIONAL_MICROS: { key: keyof Nutrients; label: string }[] = RDA.filter(
-  (r: RdaEntry) => !BASE_MACRO_KEYS.has(r.key),
+  (r: RdaEntry) => !BASE_MACRO_KEYS.has(r.key) && !r.parent,
 ).map((r) => ({ key: r.key, label: `${r.label} (${r.unit})` }));
+
+/**
+ * Sous-détails d'un nutriment composite : ils ont leur propre bloc de saisie
+ * plutôt que d'être noyés dans la liste des micronutriments, parce qu'ils ne
+ * s'additionnent pas au reste — ce sont des MORCEAUX d'un total déjà saisi, et
+ * on veut pouvoir vérifier d'un coup d'œil que la somme reste cohérente.
+ */
+const SUB_DETAIL_GROUPS: { total: keyof Nutrients; totalLabel: string; parts: { key: keyof Nutrients; label: string; hint: string }[] }[] = [
+  {
+    total: 'agSatures',
+    totalLabel: 'AG saturés',
+    parts: [
+      { key: 'agSaturesLdl', label: 'dont C16+C14 (g)', hint: 'palmitique + myristique — ceux qui font monter le LDL' },
+      { key: 'agSaturesStearique', label: 'dont C18 stéarique (g)', hint: 'neutre sur le LDL (beurre de cacao, bœuf)' },
+    ],
+  },
+  {
+    total: 'omega3',
+    totalLabel: 'Oméga 3',
+    parts: [
+      { key: 'omega3Ala', label: 'dont ALA (g)', hint: 'végétal brut — ne compte que pour 1/10 dans la cible' },
+      { key: 'omega3Epa', label: 'dont EPA (g)', hint: 'marin/animal, compte en direct' },
+      { key: 'omega3Dha', label: 'dont DHA (g)', hint: 'marin/animal, compte en direct' },
+    ],
+  },
+];
 
 type Mode = 'liste' | 'classement' | 'consommation' | 'explorer' | 'comparer';
 
@@ -242,6 +268,47 @@ function FoodRow({ food, modified, onEdit, onCompare }: { food: Food; modified: 
 }
 
 /**
+ * Saisie des sous-détails d'un nutriment composite (répartition des AG saturés,
+ * des oméga 3). Affiche le total de référence et signale une somme incohérente :
+ * ce sont des morceaux, ils ne peuvent pas dépasser le tout. Sans ce garde-fou,
+ * une coquille passerait inaperçue et fausserait le plafond qui compte.
+ */
+function SubDetailFields({
+  group,
+  n,
+  setField,
+}: {
+  group: (typeof SUB_DETAIL_GROUPS)[number];
+  n: Partial<Nutrients>;
+  setField: (key: keyof Nutrients, v: string) => void;
+}) {
+  const total = (n[group.total] as number | undefined) ?? 0;
+  const sum = group.parts.reduce((a, p) => a + ((n[p.key] as number | undefined) ?? 0), 0);
+  const incoherent = sum > total + 0.01;
+  return (
+    <div style={{ marginTop: 10 }}>
+      <div className="small" style={{ color: 'var(--muted)' }}>
+        Répartition — {group.totalLabel} : <strong className="mono">{total || 0} g</strong> au total, dont{' '}
+        <span className="mono" style={incoherent ? { color: 'var(--danger)' } : undefined}>{sum.toFixed(2)} g</span> détaillés.
+        {incoherent && ' ⚠ la somme dépasse le total.'}
+      </div>
+      <div className="row wrap-form" style={{ marginTop: 6 }}>
+        {group.parts.map((p) => (
+          <label className="field" key={p.key} data-tip={p.hint}>
+            {p.label}
+            <input
+              value={(n[p.key] as number | undefined) ?? ''}
+              onChange={(e) => setField(p.key, e.target.value)}
+              inputMode="decimal"
+            />
+          </label>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+/**
  * Formulaire d'ajout (food absent) ou d'édition (food fourni) d'un aliment.
  * À l'ajout : crée un aliment perso. À l'édition : override banque ou édition perso.
  */
@@ -318,14 +385,19 @@ function FoodForm({ food, submitLabel, onDone }: { food?: Food; submitLabel: str
         {showMicros ? '− Masquer les micronutriments' : '+ Micronutriments (optionnel)'}
       </button>
       {showMicros && (
-        <div className="row wrap-form" style={{ marginTop: 10 }}>
-          {OPTIONAL_MICROS.map((m) => (
-            <label className="field" key={m.key}>
-              {m.label}
-              <input value={(n[m.key] as number | undefined) ?? ''} onChange={(e) => setField(m.key, e.target.value)} inputMode="decimal" />
-            </label>
+        <>
+          <div className="row wrap-form" style={{ marginTop: 10 }}>
+            {OPTIONAL_MICROS.map((m) => (
+              <label className="field" key={m.key}>
+                {m.label}
+                <input value={(n[m.key] as number | undefined) ?? ''} onChange={(e) => setField(m.key, e.target.value)} inputMode="decimal" />
+              </label>
+            ))}
+          </div>
+          {SUB_DETAIL_GROUPS.map((g) => (
+            <SubDetailFields key={g.total} group={g} n={n} setField={setField} />
           ))}
-        </div>
+        </>
       )}
 
       <div className="row" style={{ marginTop: 14, justifyContent: 'flex-end', gap: 8 }}>

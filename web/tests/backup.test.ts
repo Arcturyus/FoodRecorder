@@ -124,6 +124,43 @@ describe('aller-retour export → import', () => {
     expect(resume).toContain('2 jour(s)');
   });
 
+  it('recalcule les items depuis la base ACTUELLE (nutriments ajoutés depuis la sauvegarde)', () => {
+    // Sauvegarde « d'avant » : l'item ne connaît pas la répartition des AG saturés.
+    const vieux = JSON.stringify({
+      app: 'foodrecorder',
+      version: 1,
+      entries: [
+        {
+          id: 'e1',
+          date: '2026-07-20',
+          createdAt: 1,
+          transcript: '',
+          source: 'manuel',
+          items: [
+            {
+              id: 'i1',
+              foodId: 'beurre',
+              nomAffiche: 'Beurre',
+              quantite: 20,
+              unite: 'g',
+              grams: 20,
+              nutrients: { kcal: 149, agSatures: 11 },
+              estimation: false,
+              douteux: false,
+            },
+          ],
+        },
+      ],
+      weightEntries: [],
+    });
+    importBackup(vieux);
+    const item = useStore.getState().entries[0].items[0];
+    // Sans recalcul, la clé serait absente → NaN affiché dans le bilan.
+    expect(item.nutrients.agSaturesLdl).toBeGreaterThan(0);
+    expect(item.nutrients.agSaturesStearique).toBeGreaterThan(0);
+    expect(Number.isNaN(item.nutrients.agSaturesLdl)).toBe(false);
+  });
+
   it('importe une vieille sauvegarde sans les champs récents (valeurs par défaut)', () => {
     const vieux = JSON.stringify({ app: 'foodrecorder', version: 1, entries: [], weightEntries: [] });
     expect(() => importBackup(vieux)).not.toThrow();
