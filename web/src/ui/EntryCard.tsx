@@ -1,11 +1,14 @@
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import type { JournalEntry, JournalItem } from '../store/store';
 import { useStore, useEffectiveFoods, todayStr } from '../store/store';
 import { matchFood } from '../nutrition/match';
-import { UNITS, EMPTY_NUTRIENTS } from '../nutrition/types';
-import type { NutrientKey, Nutrients } from '../nutrition/types';
+import { normalizeForMatch } from '../nutrition/normalize';
+import { UNITS } from '../nutrition/types';
+import type { Food, NutrientKey } from '../nutrition/types';
 import { computeTargets } from '../nutrition/targets';
-import { fmt, round, UNIT_LABELS } from './format';
+import { fmt, UNIT_LABELS } from './format';
+import { DETAIL_GROUPS, SHORT_LABELS, draftToContribution, nutrientsToDraft } from './itemDetail';
+import { DayPickerButton, relativeDayLabel } from './DayPicker';
 import { NumberField } from './NumberField';
 
 /** Carte récap d'une entrée enregistrée, avec édition en place (plan §Phase 4). */
@@ -20,6 +23,11 @@ export function EntryCard({ entry }: { entry: JournalEntry }) {
   const kcal = entry.items.reduce((a, it) => a + it.nutrients.kcal, 0);
   const time = new Date(entry.createdAt).toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' });
   const isPast = entry.date !== todayStr();
+
+  function copyTo(date: string) {
+    duplicateEntry(entry.id, date);
+    setSaved(`Repas recopié ${relativeDayLabel(date)}.`);
+  }
 
   function confirmRemoveEntry() {
     const count = entry.items.length;
@@ -57,17 +65,16 @@ export function EntryCard({ entry }: { entry: JournalEntry }) {
         </span>
         <div className="row">
           {isPast && (
-            <button
-              className="ghost small"
-              data-tip="Recopie ce repas tel quel sur aujourd'hui"
-              onClick={() => {
-                duplicateEntry(entry.id);
-                setSaved("Repas dupliqué sur aujourd'hui.");
-              }}
-            >
+            <button className="ghost small" data-tip="Recopie ce repas tel quel sur aujourd'hui" onClick={() => copyTo(todayStr())}>
               ⧉ Auj.
             </button>
           )}
+          <DayPickerButton
+            label="⧉ Copier"
+            tip="Recopier ce repas sur un autre jour (il a aussi été mangé hier, l'oubli d'un jour passé…)"
+            exclude={entry.date}
+            onPick={copyTo}
+          />
           <button className="ghost small" data-tip="Enregistrer comme repas favori réutilisable" onClick={saveAsFavorite}>
             ☆ Favori
           </button>
@@ -112,7 +119,6 @@ export function EntryCard({ entry }: { entry: JournalEntry }) {
 function ItemRow({ entryId, item, canDeleteItem }: { entryId: string; item: JournalItem; canDeleteItem: boolean }) {
   const updateItem = useStore((s) => s.updateItem);
   const removeItem = useStore((s) => s.removeItem);
-  const foods = useEffectiveFoods();
   const [open, setOpen] = useState(false);
   const [editingItem, setEditingItem] = useState(false);
 
@@ -122,28 +128,9 @@ function ItemRow({ entryId, item, canDeleteItem }: { entryId: string; item: Jour
   }
 
   if (editingItem) {
-    // Alternatives proposées par le matching pour corriger l'aliment.
-    const alts = matchFood(item.nomAffiche, foods).alternatives;
-    const options = dedupeFoods([
-      ...(item.foodId ? foods.filter((f) => f.id === item.foodId) : []),
-      ...alts,
-      ...foods,
-    ]);
-
     return (
       <div className="item-row item-row-edit">
-        <select
-          className="item-row-edit-food"
-          value={item.foodId ?? ''}
-          onChange={(e) => updateItem(entryId, item.id, { foodId: e.target.value || null })}
-        >
-          {!item.foodId && <option value="">{item.nomAffiche} (non trouvé)</option>}
-          {options.map((f) => (
-            <option key={f.id} value={f.id}>
-              {f.nom}
-            </option>
-          ))}
-        </select>
+        <ItemFoodField entryId={entryId} item={item} />
         <NumberField
           min={0}
           step={1}
@@ -230,13 +217,115 @@ function ItemRow({ entryId, item, canDeleteItem }: { entryId: string; item: Jour
   );
 }
 
-/** Nutriments détaillés d'un item, regroupés par famille (ordre d'affichage). */
-const DETAIL_GROUPS: { title: string; keys: NutrientKey[] }[] = [
-  { title: 'Macros', keys: ['kcal', 'proteines', 'glucides', 'lipides', 'fibres'] },
-  { title: 'Lipides & oméga', keys: ['agSatures', 'agTrans', 'agMonoInsatures', 'agPolyInsatures', 'omega3', 'omega6', 'omega9'] },
-  { title: 'Minéraux', keys: ['fer', 'magnesium', 'potassium', 'calcium', 'zinc', 'sodium', 'selenium', 'iode'] },
-  { title: 'Vitamines', keys: ['vitA', 'vitC', 'vitD', 'vitE', 'vitK1', 'vitK2', 'vitB1', 'vitB2', 'vitB3', 'vitB5', 'vitB6', 'vitB9', 'vitB12'] },
-  { title: 'Autres', keys: ['creatine'] },
+/** Nombre de suggestions d'aliments montrées sous le champ. */
+const SUGGESTIONS_SHOWN = 8;
+
+/**
+ * Champ « quel aliment est-ce ? » : recherche dans la banque (un menu déroulant
+ * de 150 entrées est inutilisable au doigt) ET nom libre. Le nom libre est ce
+ * qui permet de corriger un plat estimé par l'IA — « pizza » → « pizza
+ * 4 fromages » — ou un nom mal entendu à la dictée, sans supprimer la ligne et
+ * tout redire.
+ */
+function ItemFoodField({ entryId, item }: { entryId: string; item: JournalItem }) {
+  const updateItem = useStore((s) => s.updateItem);
+  const renameItem = useStore((s) => s.renameItem);
+  const foods = useEffectiveFoods();
+  const [text, setText] = useState(item.nomAffiche);
+  const [open, setOpen] = useState(false);
+  const box = useRef<HTMLSpanElement>(null);
+
+  // Le nom peut changer sous nos pieds (choix d'un aliment, « Rétablir »).
+  useEffect(() => setText(item.nomAffiche), [item.nomAffiche]);
+
+  const results = useMemo(() => {
+    const q = normalizeForMatch(text.trim());
+    if (!q) return [];
+    // Le matching de l'app d'abord (il rattrape fautes et alias), puis le
+    // recoupement direct sur le libellé pour tout le reste.
+    const m = matchFood(text, foods);
+    const byName = foods.filter((f) => [f.nom, ...f.aliases].some((h) => normalizeForMatch(h).includes(q)));
+    return dedupeFoods([...(m.food ? [m.food] : []), ...m.alternatives, ...byName]).slice(0, SUGGESTIONS_SHOWN);
+  }, [text, foods]);
+
+  const clean = text.trim();
+  /** Le texte tapé ne désigne aucun aliment exactement : il vaut comme nom libre. */
+  const isFreeName = clean !== '' && clean !== item.nomAffiche && !results.some((f) => f.nom === clean);
+
+  function pickFood(f: Food) {
+    updateItem(entryId, item.id, { foodId: f.id });
+    setOpen(false);
+  }
+
+  function keepFreeName() {
+    renameItem(entryId, item.id, text);
+    setOpen(false);
+  }
+
+  return (
+    <span
+      className="item-food-field"
+      ref={box}
+      onBlur={(e) => {
+        // Un clic sur une suggestion garde le focus dans le champ composé.
+        if (box.current?.contains(e.relatedTarget as Node)) return;
+        if (isFreeName) keepFreeName();
+        setOpen(false);
+      }}
+    >
+      <input
+        value={text}
+        aria-label="Nom de l'aliment"
+        placeholder="Nom de l'aliment"
+        onChange={(e) => {
+          setText(e.target.value);
+          setOpen(true);
+        }}
+        onFocus={() => setOpen(true)}
+        onKeyDown={(e) => {
+          if (e.key === 'Enter') {
+            e.preventDefault();
+            if (isFreeName) keepFreeName();
+            else setOpen(false);
+          }
+          if (e.key === 'Escape') {
+            setText(item.nomAffiche);
+            setOpen(false);
+          }
+        }}
+      />
+      {open && (results.length > 0 || isFreeName) && (
+        <div className="food-suggest">
+          {isFreeName && (
+            <button className="food-suggest-free" onMouseDown={(e) => e.preventDefault()} onClick={keepFreeName}>
+              Garder « {clean} »<small>nom libre — les apports actuels sont conservés</small>
+            </button>
+          )}
+          {results.map((f) => (
+            <button
+              key={f.id}
+              className={f.id === item.foodId ? 'on' : ''}
+              onMouseDown={(e) => e.preventDefault()}
+              onClick={() => pickFood(f)}
+            >
+              {f.nom}
+              <small>{fmt(f.n.kcal)} kcal/100 g</small>
+            </button>
+          ))}
+        </div>
+      )}
+    </span>
+  );
+}
+
+/**
+ * Sous-parts d'un nutriment qui ne doivent jamais dépasser leur total (le
+ * détail est éditable : rien n'empêche de saisir 20 g de C16 sous 10 g d'AG
+ * saturés, autant le dire).
+ */
+const SPLIT_CHECKS: { parent: NutrientKey; parts: NutrientKey[]; label: string }[] = [
+  { parent: 'agSatures', parts: ['agSaturesLdl', 'agSaturesStearique'], label: 'AG saturés' },
+  { parent: 'omega3', parts: ['omega3Ala', 'omega3Epa', 'omega3Dha'], label: 'oméga 3' },
 ];
 
 /**
@@ -255,28 +344,23 @@ function ItemDetail({ entryId, item }: { entryId: string; item: JournalItem }) {
   const [draft, setDraft] = useState<Record<string, string>>({});
 
   const startEdit = () => {
-    const d: Record<string, string> = {};
-    for (const g of DETAIL_GROUPS) {
-      for (const k of g.keys) {
-        const v = item.nutrients[k] ?? 0;
-        d[k] = v ? String(round(v, v < 10 ? 2 : 0)) : '';
-      }
-    }
-    setDraft(d);
+    setDraft(nutrientsToDraft(item.nutrients));
     setEditing(true);
   };
 
   const save = () => {
-    const contribution: Nutrients = { ...EMPTY_NUTRIENTS };
-    for (const g of DETAIL_GROUPS) {
-      for (const k of g.keys) {
-        const raw = draft[k];
-        contribution[k] = !raw ? 0 : parseFloat(raw.replace(',', '.')) || 0;
-      }
-    }
-    setItemNutrients(entryId, item.id, contribution);
+    setItemNutrients(entryId, item.id, draftToContribution(item.nutrients, draft));
     setEditing(false);
   };
+
+  /** Sous-parts saisies au-dessus de leur total : signalé sans bloquer. */
+  const splitWarnings = useMemo(() => {
+    if (!editing) return [];
+    const num = (k: NutrientKey) => parseFloat((draft[k] ?? '').replace(',', '.')) || 0;
+    return SPLIT_CHECKS.filter((c) => c.parts.reduce((a, k) => a + num(k), 0) > num(c.parent) * 1.01 + 0.001).map(
+      (c) => c.label,
+    );
+  }, [editing, draft]);
 
   return (
     <div className="item-detail">
@@ -315,7 +399,13 @@ function ItemDetail({ entryId, item }: { entryId: string; item: JournalItem }) {
       {editing && (
         <p className="small item-detail-hint">
           Corrigez ce que cet aliment a réellement apporté cette fois (ex. un pain plus protéiné). Les valeurs
-          rescalent si vous changez la quantité, et l'aliment de la base n'est pas modifié.
+          rescalent si vous changez la quantité, et l'aliment de la base n'est pas modifié. Les lignes « ↳ » sont un
+          détail de la ligne au-dessus (ex. C16+C14 dans les AG saturés) : elles ne s'ajoutent pas au total.
+        </p>
+      )}
+      {splitWarnings.length > 0 && (
+        <p className="small item-detail-warn">
+          ⚠ Le détail dépasse le total pour : {splitWarnings.join(', ')}. Vérifiez les lignes « ↳ ».
         </p>
       )}
       {DETAIL_GROUPS.map((g) => (
@@ -328,8 +418,10 @@ function ItemDetail({ entryId, item }: { entryId: string; item: JournalItem }) {
               const value = item.nutrients[k] ?? 0;
               const pct = t.optimal > 0 ? (value / t.optimal) * 100 : 0;
               return (
-                <div className={`idg-cell${!editing && value <= 0 ? ' zero' : ''}`} key={k}>
-                  <span className="idg-label">{t.label}</span>
+                <div className={`idg-cell${!editing && value <= 0 ? ' zero' : ''}${t.parent ? ' sub' : ''}`} key={k}>
+                  <span className="idg-label" data-tip={SHORT_LABELS[k] ? t.label : undefined}>
+                    {SHORT_LABELS[k] ?? t.label}
+                  </span>
                   {editing ? (
                     <span className="idg-input">
                       <input

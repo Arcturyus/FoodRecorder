@@ -375,7 +375,7 @@ header.app-head .sub { color: var(--muted); font-size: 13px; }
   /* Édition : le sélecteur d'aliment prend toute la largeur, sur sa propre ligne ;
      quantité / unité / suppression se répartissent en dessous. */
   .item-row-edit { grid-template-columns: 1fr 88px auto; }
-  .item-row-edit .item-row-edit-food { grid-column: 1 / -1; }
+  .item-row-edit .item-food-field { grid-column: 1 / -1; }
 }
 /* Actions d'une ligne d'aliment (détail + suppression), regroupées dans la
    dernière colonne pour ne pas élargir la grille. */
@@ -405,6 +405,10 @@ header.app-head .sub { color: var(--muted); font-size: 13px; }
 }
 .item-detail-head { display: flex; justify-content: space-between; align-items: center; gap: 10px; flex-wrap: wrap; }
 .item-detail-hint { margin: 6px 0 2px; color: var(--muted); }
+.item-detail-warn {
+  margin: 6px 0 2px; padding: 6px 10px; color: var(--warn);
+  background: rgba(245, 166, 35, 0.1); border: 1px solid rgba(245, 166, 35, 0.3); border-radius: 8px;
+}
 .item-detail-group { margin-top: 10px; }
 .idg-title {
   font-size: 10px; text-transform: uppercase; letter-spacing: 0.05em;
@@ -413,6 +417,10 @@ header.app-head .sub { color: var(--muted); font-size: 13px; }
 .idg-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 4px 14px; }
 .idg-cell { display: flex; justify-content: space-between; align-items: center; gap: 8px; font-size: 12px; min-height: 24px; }
 .idg-cell.zero { opacity: 0.4; }
+/* Sous-détail d'un nutriment (C16+C14 sous les AG saturés, ALA/EPA/DHA sous les
+   oméga 3) : décalé sous son parent, comme sous les tuiles du bilan. */
+.idg-cell.sub .idg-label { padding-left: 12px; color: var(--muted); }
+.idg-cell.sub .idg-label::before { content: '↳ '; color: var(--border); }
 .idg-label { color: var(--text); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .idg-val { color: var(--accent); white-space: nowrap; font-size: 11px; }
 .idg-val small { color: var(--muted); }
@@ -1168,3 +1176,80 @@ button.nutrient-toggle:hover { background: none; color: var(--accent); }
   background: var(--panel-2);
   white-space: nowrap;
 }
+
+/* --------------------------------------------------------------------------
+   Choix du jour : recopier un repas / une journée vers un autre jour, et
+   bascule de l'onglet du jour sur une date passée.
+   -------------------------------------------------------------------------- */
+.day-pick { position: relative; display: inline-flex; }
+.day-pop {
+  position: absolute;
+  top: calc(100% + 6px);
+  right: 0;
+  z-index: 40;
+  min-width: 208px;
+  padding: 10px;
+  background: var(--panel-2);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  box-shadow: 0 12px 32px rgba(0, 0, 0, 0.5);
+}
+.day-pop-title {
+  font-size: 10px; text-transform: uppercase; letter-spacing: 0.05em;
+  color: var(--muted); margin-bottom: 6px;
+}
+.day-pop-shortcuts { display: flex; flex-wrap: wrap; gap: 6px; }
+.day-pop-shortcuts button { flex: 1 1 auto; }
+.day-pop-shortcuts button:hover { border-color: var(--accent); color: var(--accent); }
+.day-pop-date {
+  display: flex; flex-direction: column; gap: 4px; margin-top: 10px;
+  font-size: 11px; color: var(--muted);
+}
+.day-pop-date input { width: 100%; }
+
+/* Bandeau « quel jour je consulte » en tête de l'onglet du jour. */
+.day-switch {
+  display: flex; align-items: center; justify-content: space-between;
+  flex-wrap: wrap; gap: 8px;
+  margin-bottom: 14px; padding: 8px 12px;
+  background: var(--panel); border: 1px solid var(--border); border-radius: var(--radius);
+  font-size: 13px; color: var(--muted);
+}
+/* Un jour passé se voit : on ne saisit pas sur hier sans le savoir. */
+.day-switch.past {
+  border-color: var(--accent);
+  background: linear-gradient(90deg, rgba(255, 159, 67, 0.12), transparent 60%), var(--panel);
+}
+.day-switch.past .day-switch-label strong { color: var(--accent); text-transform: capitalize; }
+
+/* --------------------------------------------------------------------------
+   Champ « quel aliment est-ce ? » : recherche dans la banque + nom libre.
+   -------------------------------------------------------------------------- */
+.item-food-field { position: relative; display: block; }
+.item-food-field input { width: 100%; }
+.food-suggest {
+  position: absolute;
+  top: calc(100% + 4px);
+  left: 0;
+  right: 0;
+  z-index: 40;
+  max-height: 244px;
+  overflow-y: auto;
+  padding: 4px;
+  background: var(--panel-2);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  box-shadow: 0 12px 32px rgba(0, 0, 0, 0.5);
+}
+.food-suggest button {
+  display: flex; align-items: baseline; justify-content: space-between; gap: 10px;
+  width: 100%; padding: 7px 9px; text-align: left;
+  background: none; border: none; border-radius: 7px; font-size: 13px; color: var(--text);
+}
+.food-suggest button small { color: var(--muted); font-size: 11px; white-space: nowrap; }
+.food-suggest button:hover { background: var(--border); color: var(--accent); }
+.food-suggest button.on { color: var(--accent); }
+/* Le nom libre est une action à part : c'est ce qui corrige un plat estimé par
+   l'IA, alors qu'il n'existe dans aucune banque. */
+.food-suggest-free { border-bottom: 1px solid var(--border) !important; border-radius: 7px 7px 0 0 !important; }
+.food-suggest-free small { color: var(--muted); font-style: italic; }

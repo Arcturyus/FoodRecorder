@@ -1,9 +1,5 @@
-import { useEffect, useMemo, useState } from 'react';
-import { useStore, dayTotals, todayStr } from './store/store';
-import type { JournalItem } from './store/store';
-import { EMPTY_NUTRIENTS } from './nutrition/types';
-import { dayKcalUncertainty } from './nutrition/uncertainty';
-import { sunVitDForDate } from './sun/vitaminD';
+import { useEffect, useState } from 'react';
+import { todayStr } from './store/store';
 import { isSyncConfigured } from './sync/supabase';
 import { runSyncTick } from './sync/poller';
 import { runProfileSyncTick } from './sync/profileSync';
@@ -12,14 +8,8 @@ import { runAutoSaveTick } from './store/autosave';
 
 /** Intervalle entre deux vérifications de la file de synchro (30 s). */
 const SYNC_INTERVAL_MS = 30_000;
-import { Capture } from './ui/Capture';
-import { Sun } from './ui/Sun';
-import { ManualAdd } from './ui/ManualAdd';
-import { FavoriteMeals } from './ui/FavoriteMeals';
-import { EntryCard } from './ui/EntryCard';
-import { Totals } from './ui/Totals';
-import { DayAdviceCard } from './ui/DayAdvice';
-import { DayNote } from './ui/DayNote';
+import { DayView } from './ui/DayView';
+import { DaySwitcher } from './ui/DayPicker';
 import { Foods } from './ui/Foods';
 import { Stats } from './ui/Stats';
 import { Weight } from './ui/Weight';
@@ -58,36 +48,23 @@ const ALL_TABS: TabMeta[] = [...PRIMARY_TABS, ...SECONDARY_TABS];
 export function App() {
   const [tab, setTab] = useState<Tab>('jour');
   const [showMore, setShowMore] = useState(false);
-  const entries = useStore((s) => s.entries);
-  const today = todayStr();
+  /**
+   * Jour affiché par l'onglet « Aujourd'hui ». Reste sur aujourd'hui par défaut
+   * (le cas de loin le plus fréquent : zéro clic), mais peut basculer sur un
+   * jour passé pour rattraper un oubli sans passer par le calendrier.
+   */
+  const [dayDate, setDayDate] = useState(todayStr());
 
-  const sunExposures = useStore((s) => s.sunExposures);
-
-  const todayEntries = useMemo(() => entries.filter((e) => e.date === today), [entries, today]);
-  // Le soleil n'est pas un aliment : son gain de vitamine D estimé s'ajoute au
-  // bilan du jour via un pseudo-item (visible dans l'infobulle « Principaux apports »).
-  const sunVitD = useMemo(() => sunVitDForDate(sunExposures, today), [sunExposures, today]);
-  const todayItems = useMemo(() => {
-    const items = todayEntries.flatMap((e) => e.items);
-    if (sunVitD <= 0) return items;
-    const sunItem: JournalItem = {
-      id: 'sun-today',
-      foodId: null,
-      nomAffiche: '☀️ Soleil (exposition)',
-      quantite: 1,
-      unite: 'g',
-      grams: 0,
-      nutrients: { ...EMPTY_NUTRIENTS, vitD: sunVitD },
-      estimation: true,
-      douteux: false,
-    };
-    return [...items, sunItem];
-  }, [todayEntries, sunVitD]);
-  const totals = useMemo(() => {
-    const t = dayTotals(entries, today);
-    return sunVitD > 0 ? { ...t, vitD: t.vitD + sunVitD } : t;
-  }, [entries, today, sunVitD]);
-  const kcalUnc = useMemo(() => dayKcalUncertainty(todayEntries), [todayEntries]);
+  /**
+   * Changer d'onglet remet le jour affiché sur aujourd'hui : un jour passé
+   * resté sélectionné ferait enregistrer le repas suivant sur la mauvaise date.
+   * On ne le garde donc que le temps où l'on travaille dessus.
+   */
+  function goTab(id: Tab) {
+    if (id === 'jour') setDayDate(todayStr());
+    setTab(id);
+    setShowMore(false);
+  }
 
   // Suit les changements locaux pour la sync par profil (no-op tant qu'aucun profil n'est joint).
   useEffect(() => {
@@ -120,7 +97,7 @@ export function App() {
       {/* Barre d'onglets du haut : ordinateur (masquée sur mobile via CSS). */}
       <nav className="tabs">
         {ALL_TABS.map((t) => (
-          <button key={t.id} className={tab === t.id ? 'active' : ''} onClick={() => setTab(t.id)}>
+          <button key={t.id} className={tab === t.id ? 'active' : ''} onClick={() => goTab(t.id)}>
             {t.label}
           </button>
         ))}
@@ -128,20 +105,8 @@ export function App() {
 
       {tab === 'jour' && (
         <>
-          <Capture />
-          <FavoriteMeals />
-          <ManualAdd />
-          <Totals totals={totals} items={todayItems} incertitude={kcalUnc} />
-          {todayEntries.length === 0 ? (
-            <div className="panel">
-              <div className="empty">Aucune entrée aujourd'hui. Dictez ou tapez votre premier repas.</div>
-            </div>
-          ) : (
-            todayEntries.map((e) => <EntryCard key={e.id} entry={e} />)
-          )}
-          <Sun />
-          <DayNote date={today} />
-          <DayAdviceCard totals={totals} />
+          <DaySwitcher date={dayDate} onChange={setDayDate} />
+          <DayView date={dayDate} />
         </>
       )}
 
@@ -161,10 +126,7 @@ export function App() {
               <button
                 key={t.id}
                 className={`more-item ${tab === t.id ? 'active' : ''}`}
-                onClick={() => {
-                  setTab(t.id);
-                  setShowMore(false);
-                }}
+                onClick={() => goTab(t.id)}
               >
                 <span className="more-icon">{t.icon}</span> {t.label}
               </button>
@@ -179,10 +141,7 @@ export function App() {
           <button
             key={t.id}
             className={`tabbar-btn ${tab === t.id ? 'active' : ''}`}
-            onClick={() => {
-              setTab(t.id);
-              setShowMore(false);
-            }}
+            onClick={() => goTab(t.id)}
           >
             <span className="tabbar-icon">{t.icon}</span>
             <span className="tabbar-label">{t.short}</span>

@@ -302,6 +302,14 @@ interface AppState {
   addFoodEntry: (food: Food, quantite: number, unite: Unit, date?: string) => string;
   updateItem: (entryId: string, itemId: string, patch: Partial<JournalItem>) => void;
   /**
+   * Renomme un aliment du journal en texte libre (« pizza » → « pizza 4
+   * fromages ») : corrige un nom mal entendu ou trop vague sans avoir à
+   * supprimer l'item et tout redicter. Le nom est aussi re-matché contre la
+   * banque quand rien n'est encore associé, de sorte que corriger le nom peut
+   * suffire à retrouver le bon aliment.
+   */
+  renameItem: (entryId: string, itemId: string, nom: string) => void;
+  /**
    * Ajuste « pour cette fois » les valeurs d'un item : `contribution` = apports
    * réels pour la quantité mangée (ce qui s'affiche dans le bilan). `null` annule
    * l'ajustement et rétablit les valeurs de l'aliment / estimation.
@@ -497,6 +505,32 @@ export const useStore = create<AppState>()(
                         ? { quantiteMin: undefined, quantiteMax: undefined }
                         : {};
                     return recomputeItem({ ...base, ...patch, ...clearRange }, effectiveFoods(get().customFoods, get().foodOverrides));
+                  }),
+                },
+          ),
+        })),
+
+      renameItem: (entryId, itemId, nom) =>
+        set((s) => ({
+          entries: s.entries.map((e) =>
+            e.id !== entryId
+              ? e
+              : {
+                  ...e,
+                  items: e.items.map((it) => {
+                    if (it.id !== itemId) return it;
+                    const clean = nom.trim();
+                    if (!clean || clean === it.nomAffiche) return it;
+                    // Un item lié à la banque reprend le nom de son aliment à
+                    // chaque recalcul : pour que le nom libre tienne, on fige
+                    // ses apports « pour cette fois » (l'aliment reste attaché,
+                    // il sert encore à convertir pièces/portions en grammes).
+                    // « ↺ Rétablir » ramène donc aussi le nom d'origine.
+                    const base =
+                      it.foodId && !it.customN && !it.iaEstime
+                        ? { ...it, customN: per100g(it.nutrients, it.grams) }
+                        : it;
+                    return recomputeItem({ ...base, nomAffiche: clean }, effectiveFoods(get().customFoods, get().foodOverrides));
                   }),
                 },
           ),

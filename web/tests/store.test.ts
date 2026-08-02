@@ -268,6 +268,74 @@ describe('ajustement « pour cette fois » (setItemNutrients)', () => {
   });
 });
 
+describe('renommage d’un aliment du journal (renameItem)', () => {
+  it('renomme un aliment de la banque en gardant ses apports', () => {
+    const entryId = useStore.getState().addFoodEntry(banane, 1, 'piece');
+    const item = useStore.getState().entries.find((e) => e.id === entryId)!.items[0];
+    const kcal = item.nutrients.kcal;
+
+    useStore.getState().renameItem(entryId, item.id, 'banane bien mûre');
+
+    const after = useStore.getState().entries.find((e) => e.id === entryId)!.items[0];
+    expect(after.nomAffiche).toBe('banane bien mûre');
+    expect(after.nutrients.kcal).toBeCloseTo(kcal, 5);
+    // L'aliment reste attaché (conversion pièce → grammes), mais ses apports
+    // sont figés « pour cette fois » pour que le nom libre ne soit pas réécrit.
+    expect(after.foodId).toBe('banane');
+    expect(after.customN).toBeDefined();
+  });
+
+  it('le nom libre survit à un changement de quantité (rescale)', () => {
+    const entryId = useStore.getState().addFoodEntry(banane, 1, 'piece');
+    const item = useStore.getState().entries.find((e) => e.id === entryId)!.items[0];
+    const kcal = item.nutrients.kcal;
+    useStore.getState().renameItem(entryId, item.id, 'grosse banane');
+    useStore.getState().updateItem(entryId, item.id, { quantite: 2 });
+
+    const after = useStore.getState().entries.find((e) => e.id === entryId)!.items[0];
+    expect(after.nomAffiche).toBe('grosse banane');
+    expect(after.nutrients.kcal).toBeCloseTo(kcal * 2, 4);
+  });
+
+  it('corriger le nom d’un aliment non résolu le re-matche sur la banque', () => {
+    // « tarte flambée » n'est pas dans la banque : l'item reste non résolu.
+    const entryId = useStore.getState().addEntry('', [{ aliment: 'tarte flambée', quantite: 1, unite: 'piece', estimation: false }], 'manuel');
+    const item = useStore.getState().entries.find((e) => e.id === entryId)!.items[0];
+    expect(item.foodId).toBeNull();
+    useStore.getState().renameItem(entryId, item.id, 'banane');
+
+    const after = useStore.getState().entries.find((e) => e.id === entryId)!.items[0];
+    expect(after.foodId).toBe('banane');
+    expect(after.nutrients.kcal).toBeGreaterThan(0);
+  });
+
+  it('garde l’estimation IA d’un plat hors banque quand on précise son nom', () => {
+    // Hors banque, sinon l'item serait résolu par le matching et non par l'IA.
+    const entryId = useStore.getState().addEntry('', [iaItem('tarte flambée')], 'llm');
+    const item = useStore.getState().entries.find((e) => e.id === entryId)!.items[0];
+    const kcal = item.nutrients.kcal;
+    expect(item.foodId).toBeNull();
+    expect(kcal).toBeGreaterThan(0);
+
+    useStore.getState().renameItem(entryId, item.id, 'tarte flambée maison');
+
+    const after = useStore.getState().entries.find((e) => e.id === entryId)!.items[0];
+    expect(after.nomAffiche).toBe('tarte flambée maison');
+    expect(after.nutrients.kcal).toBeCloseTo(kcal, 5);
+  });
+
+  it('un nom vide ou inchangé ne touche à rien', () => {
+    const entryId = useStore.getState().addFoodEntry(banane, 1, 'piece');
+    const item = useStore.getState().entries.find((e) => e.id === entryId)!.items[0];
+    useStore.getState().renameItem(entryId, item.id, '   ');
+    useStore.getState().renameItem(entryId, item.id, item.nomAffiche);
+
+    const after = useStore.getState().entries.find((e) => e.id === entryId)!.items[0];
+    expect(after.foodId).toBe('banane');
+    expect(after.customN).toBeUndefined();
+  });
+});
+
 describe('export / import (sauvegarde)', () => {
   it('le JSON exporté se ré-importe à l’identique', () => {
     useStore.getState().addFoodEntry(banane, 1, 'piece');

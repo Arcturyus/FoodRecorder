@@ -8,29 +8,12 @@ import { normalizeForMatch } from '../nutrition/normalize';
 import { dayKcalUncertainty } from '../nutrition/uncertainty';
 import { categorizeNames } from '../extraction/categorize';
 import type { Food, FoodCategory } from '../nutrition/types';
-import { Capture } from './Capture';
-import { EntryCard } from './EntryCard';
-import { ManualAdd } from './ManualAdd';
-import { Sun } from './Sun';
-import { DayNote } from './DayNote';
+import { DayView } from './DayView';
+import { DayPickerButton, dayLabel, daysAgo, relativeDayLabel } from './DayPicker';
 import { UncertaintyBadge } from './UncertaintyBadge';
 import { fmt, CATEGORY_LABELS } from './format';
 
 const WEEKDAYS = ['L', 'M', 'M', 'J', 'V', 'S', 'D'];
-
-/** Date locale N jours avant aujourd'hui. */
-function daysAgo(n: number): string {
-  const d = new Date();
-  d.setDate(d.getDate() - n);
-  return todayStr(d);
-}
-
-function dayLabel(date: string, short = false): string {
-  return new Date(`${date}T00:00:00`).toLocaleDateString(
-    'fr-FR',
-    short ? { day: 'numeric', month: 'short' } : { weekday: 'long', day: 'numeric', month: 'long' },
-  );
-}
 
 /**
  * Onglet Historique : calendrier mensuel navigable. Chaque jour rempli montre ses
@@ -621,6 +604,11 @@ function DayEditor({
   const hasEntries = dayEntries.length > 0;
   const counted = isDayCounted(mutedDays, hasEntries, date);
 
+  function copyDayTo(target: string) {
+    duplicateDay(date, target);
+    setFlash(`Journée du ${dayLabel(date, true)} recopiée ${relativeDayLabel(target)} (${dayEntries.length} repas).`);
+  }
+
   return (
     <div className="panel" style={{ borderLeft: '3px solid var(--accent)' }}>
       <div className="row" style={{ justifyContent: 'space-between' }}>
@@ -641,17 +629,24 @@ function DayEditor({
         <button className="ghost small" onClick={() => onChangeDate(daysAgo(2))}>
           Avant-hier
         </button>
-        {date !== today && dayEntries.length > 0 && (
-          <button
-            className="ghost small"
-            data-tip="Recopie toutes les entrées de ce jour sur aujourd'hui (journées qui se ressemblent)"
-            onClick={() => {
-              duplicateDay(date);
-              setFlash(`Journée du ${dayLabel(date, true)} dupliquée sur aujourd'hui (${dayEntries.length} repas).`);
-            }}
-          >
-            ⧉ Dupliquer ce jour → aujourd'hui
-          </button>
+        {dayEntries.length > 0 && (
+          <>
+            {date !== today && (
+              <button
+                className="ghost small"
+                data-tip="Recopie toutes les entrées de ce jour sur aujourd'hui (journées qui se ressemblent)"
+                onClick={() => copyDayTo(today)}
+              >
+                ⧉ Dupliquer → aujourd'hui
+              </button>
+            )}
+            <DayPickerButton
+              label="⧉ Dupliquer vers…"
+              tip="Recopier toute cette journée sur un autre jour (journée déjà vécue à l'identique, oubli d'hier…)"
+              exclude={date}
+              onPick={copyDayTo}
+            />
+          </>
         )}
         <span className="small mono" style={{ marginLeft: 'auto' }}>
           {fmt(kcal)} kcal ce jour
@@ -659,9 +654,8 @@ function DayEditor({
         </span>
       </div>
       <div className="hint">
-        « Modifier » sur une entrée : corriger aliments/quantités, ou changer sa date si elle a été saisie le mauvais
-        jour. « ⧉ Auj. » sur une entrée recopie ce repas sur aujourd'hui. L'ajout ci-dessous enregistre directement
-        sur ce jour.
+        Ce jour se consulte et se corrige comme aujourd'hui : bilan des nutriments, saisie, favoris. Sur une entrée,
+        « Options » permet aussi de changer sa date, et « ⧉ Copier » de la recopier sur un autre jour.
       </div>
 
       <label className="row small" style={{ gap: 8, alignItems: 'center', cursor: 'pointer', marginTop: 4 }}>
@@ -673,17 +667,7 @@ function DayEditor({
 
       {flash && <div className="status">{flash}</div>}
 
-      <DayNote key={date} date={date} />
-
-      {dayEntries.length === 0 ? (
-        <div className="empty">Aucune entrée ce jour — ajoutez ce que vous avez mangé ci-dessous.</div>
-      ) : (
-        dayEntries.map((e) => <EntryCard key={e.id} entry={e} />)
-      )}
-
-      <Capture date={date} title={`Dicter, taper ou photographier un repas du ${dayLabel(date, true)}`} />
-      <ManualAdd date={date} title={`Ajouter un aliment au ${dayLabel(date, true)}`} />
-      <Sun date={date} />
+      <DayView date={date} />
     </div>
   );
 }
