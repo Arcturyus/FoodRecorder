@@ -9,7 +9,7 @@ import { runAutoSaveTick } from './store/autosave';
 /** Intervalle entre deux vérifications de la file de synchro (30 s). */
 const SYNC_INTERVAL_MS = 30_000;
 import { DayView } from './ui/DayView';
-import { DaySwitcher } from './ui/DayPicker';
+import { DaySwitcher, dayLabel } from './ui/DayPicker';
 import { Foods } from './ui/Foods';
 import { Stats } from './ui/Stats';
 import { Weight } from './ui/Weight';
@@ -56,6 +56,15 @@ export function App() {
   const [dayDate, setDayDate] = useState(todayStr());
 
   /**
+   * Sur l'onglet « Aujourd'hui », remplace le libellé par la date (« 2 août »)
+   * dès qu'on n'est plus sur le jour courant : sans ça, le seul indice qu'on a
+   * changé de jour est le petit bandeau du DaySwitcher.
+   */
+  const jourIsToday = dayDate === todayStr();
+  const jourLabel = jourIsToday ? "Aujourd'hui" : dayLabel(dayDate, true);
+  const jourShort = jourIsToday ? 'Jour' : dayLabel(dayDate, true);
+
+  /**
    * Changer d'onglet remet le jour affiché sur aujourd'hui : un jour passé
    * resté sélectionné ferait enregistrer le repas suivant sur la mauvaise date.
    * On ne le garde donc que le temps où l'on travaille dessus.
@@ -98,7 +107,7 @@ export function App() {
       <nav className="tabs">
         {ALL_TABS.map((t) => (
           <button key={t.id} className={tab === t.id ? 'active' : ''} onClick={() => goTab(t.id)}>
-            {t.label}
+            {t.id === 'jour' ? jourLabel : t.label}
           </button>
         ))}
       </nav>
@@ -144,7 +153,7 @@ export function App() {
             onClick={() => goTab(t.id)}
           >
             <span className="tabbar-icon">{t.icon}</span>
-            <span className="tabbar-label">{t.short}</span>
+            <span className="tabbar-label">{t.id === 'jour' ? jourShort : t.short}</span>
           </button>
         ))}
         <button
