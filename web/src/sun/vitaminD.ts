@@ -188,9 +188,18 @@ export const SUN_DAY_CAP = 150;
 
 /**
  * Facteur saisonnier France (janv → déc) : intensité UVB relative à la
- * mi-journée. Quasi nul de novembre à février (« hiver de la vitamine D »).
+ * mi-journée, au 15 de chaque mois (`monthFactor` interpole linéairement
+ * entre ces points pour les autres jours). Quasi nul de novembre à février
+ * (« hiver de la vitamine D »), symétrique autour du solstice de juin —
+ * l'écart printemps/automne réel (ozone stratosphérique plus épais au
+ * printemps) est de l'ordre de quelques %, trop faible et trop incertain
+ * pour être représenté fidèlement ici.
  */
-const MONTH_FACTOR = [0.03, 0.08, 0.3, 0.6, 0.85, 1, 1, 0.9, 0.65, 0.35, 0.08, 0.03];
+const MONTH_FACTOR = [0.03, 0.08, 0.325, 0.625, 0.875, 1, 1, 0.875, 0.625, 0.325, 0.08, 0.03];
+
+/** Jours cumulés avant le 1er de chaque mois (année non bissextile — approximation suffisante ici). */
+const DAYS_BEFORE_MONTH = [0, 31, 59, 90, 120, 151, 181, 212, 243, 273, 304, 334];
+const YEAR_DAYS = 365;
 
 /** Heure décimale depuis « HH:MM » (null si illisible). */
 function parseHour(heure: string): number | null {
@@ -236,9 +245,24 @@ export function hourIntegral(heure: string, dureeMin: number, fSaison: number): 
   return sum;
 }
 
+/**
+ * f_saison au jour `date`, interpolé linéairement entre les valeurs de
+ * `MONTH_FACTOR`, chacune ancrée au 15 de son mois (pas de saut brutal au
+ * changement de mois).
+ */
 export function monthFactor(date: string): number {
-  const month = Number(date.slice(5, 7));
-  return MONTH_FACTOR[(month || 1) - 1] ?? 0;
+  const month = Number(date.slice(5, 7)) || 1;
+  const day = Number(date.slice(8, 10)) || 15;
+  const doy = DAYS_BEFORE_MONTH[(month - 1 + 12) % 12] + day;
+  // Position dans l'année, décalée pour que 0 corresponde au 15 janvier.
+  const rel = ((doy - 15) % YEAR_DAYS + YEAR_DAYS) % YEAR_DAYS;
+
+  let i = 0;
+  while (i < 11 && DAYS_BEFORE_MONTH[i + 1] <= rel) i++;
+  const next = (i + 1) % 12;
+  const spanEnd = next === 0 ? YEAR_DAYS : DAYS_BEFORE_MONTH[next];
+  const t = (rel - DAYS_BEFORE_MONTH[i]) / (spanEnd - DAYS_BEFORE_MONTH[i]);
+  return MONTH_FACTOR[i] + t * (MONTH_FACTOR[next] - MONTH_FACTOR[i]);
 }
 
 /**
