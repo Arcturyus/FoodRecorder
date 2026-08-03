@@ -2,7 +2,10 @@ import { createContext, useContext, useEffect, useMemo, useRef, useState } from 
 import { scaleLinear, scaleLog, scaleSqrt } from 'd3-scale';
 import { extent, max as d3max, mean as d3mean, quantile } from 'd3-array';
 import { RDA } from '../nutrition/rda';
+import { computeTargets } from '../nutrition/targets';
+import { portionGrams } from '../nutrition/recommend';
 import type { Food, FoodCategory, NutrientKey } from '../nutrition/types';
+import { useStore } from '../store/store';
 import { fmt } from './format';
 
 /**
@@ -14,17 +17,22 @@ import { fmt } from './format';
  * On reste volontairement en D3 pur (SVG maison, d3-scale/array/shape).
  */
 
-/** Palette alignée sur les variables CSS du thème (dark). */
+/**
+ * Palette alignée sur les variables CSS du thème (dark, marron). `accent` et
+ * `danger` restent bleu/rouge : ce sont les couleurs du dégradé divergent de la
+ * matrice de corrélation (cf. corrColor), pas des couleurs de thème — elles
+ * doivent correspondre exactement aux cellules qu'elles légendent.
+ */
 const C = {
   accent: '#5b8cff',
-  accent2: '#3ecf8e',
-  warn: '#f5a623',
+  accent2: '#7bc96f', // = --accent-2
+  warn: '#f5a623', // = --warn
   danger: '#ef5d5d',
-  muted: '#9aa2b1',
-  border: '#2a2f3a',
-  text: '#e6e8ec',
-  panel: '#181b22',
-  panel2: '#1f232c',
+  muted: '#a89f8f', // = --muted
+  border: '#35302a', // = --border
+  text: '#f0ece4', // = --text
+  panel: '#1b1815', // = --panel
+  panel2: '#242019', // = --panel-2
 };
 
 /** Couleur par catégorie d'aliment (encodage constant sur toutes les vues). */
@@ -260,6 +268,10 @@ function ScatterView() {
   const svgRef = useRef<SVGSVGElement>(null);
   const [hover, setHover] = useState<{ i: number; px: number; py: number } | null>(null);
   const explorable = useExplorable();
+  const profile = useStore((s) => s.profile);
+  const targets = useMemo(() => computeTargets(profile), [profile]);
+  const tx = targets.find((r) => r.key === xk);
+  const ty = targets.find((r) => r.key === yk);
 
   // Zoom / pan (molette + glisser). Transform en pixels, indépendant des échelles :
   // on l'applique en rééchelonnant xs/ys (cf. rescaleAxis), pas en transformant le
@@ -443,6 +455,10 @@ function ScatterView() {
           <NutSelect label="Axe Y" value={yk} onChange={(k) => setYk(k as NutrientKey)} />
           <NutSelect label="Taille des bulles" value={sizeK} onChange={setSizeK} allowNone />
         </div>
+        <div className="row small" style={{ gap: 14, marginTop: 8 }}>
+          <span><i className="ref-legend ajr" /> AJR (100 g qui couvre le besoin du jour)</span>
+          <span><i className="ref-legend opti" /> Optimal (cible perf/santé)</span>
+        </div>
         <div className="row" style={{ gap: 6, marginTop: 12, flexWrap: 'wrap' }}>
           <button className={`ghost small ${logX ? 'chip-active' : ''}`} onClick={() => setLogX((v) => !v)}>
             X log
@@ -540,6 +556,28 @@ function ScatterView() {
             <line x1={cx(medX)} x2={cx(medX)} y1={m.top} y2={H - m.bottom} stroke={C.muted} strokeWidth={1} strokeDasharray="2 4" opacity={0.6} />
             <line x1={m.left} x2={W - m.right} y1={cy(medY)} y2={cy(medY)} stroke={C.muted} strokeWidth={1} strokeDasharray="2 4" opacity={0.6} />
 
+            {/*
+              Repères AJR / optimal (profil utilisateur) : à quelle valeur pour 100 g
+              cet axe atteint le besoin du jour. Un aliment situé au-delà de ce repère
+              couvre déjà tout l'AJR (ou la cible optimale) rien qu'avec 100 g — ça
+              répond directement à « cet aliment rapporte-t-il beaucoup ou non ».
+              Les positions sont bornées au cadre du graphique (pas de clipPath ici),
+              sinon un AJR hors échelle (ex. kcal/j, bien plus grand que 100 g de
+              n'importe quel aliment) déborderait sur les axes/étiquettes.
+            */}
+            {tx && tx.ajr > 0 && cx(tx.ajr) >= m.left && cx(tx.ajr) <= W - m.right && (
+              <line x1={cx(tx.ajr)} x2={cx(tx.ajr)} y1={m.top} y2={H - m.bottom} stroke={C.text} strokeWidth={1} strokeDasharray="1 3" opacity={0.5} />
+            )}
+            {tx && tx.optimal > 0 && tx.optimal !== tx.ajr && cx(tx.optimal) >= m.left && cx(tx.optimal) <= W - m.right && (
+              <line x1={cx(tx.optimal)} x2={cx(tx.optimal)} y1={m.top} y2={H - m.bottom} stroke={C.accent2} strokeWidth={1} strokeDasharray="5 2" opacity={0.8} />
+            )}
+            {ty && ty.ajr > 0 && cy(ty.ajr) >= m.top && cy(ty.ajr) <= H - m.bottom && (
+              <line x1={m.left} x2={W - m.right} y1={cy(ty.ajr)} y2={cy(ty.ajr)} stroke={C.text} strokeWidth={1} strokeDasharray="1 3" opacity={0.5} />
+            )}
+            {ty && ty.optimal > 0 && ty.optimal !== ty.ajr && cy(ty.optimal) >= m.top && cy(ty.optimal) <= H - m.bottom && (
+              <line x1={m.left} x2={W - m.right} y1={cy(ty.optimal)} y2={cy(ty.optimal)} stroke={C.accent2} strokeWidth={1} strokeDasharray="5 2" opacity={0.8} />
+            )}
+
             {/* axes ticks labels */}
             {xTicks.map((t) => (
               <text key={`xt${t}`} x={vxs(t)} y={H - m.bottom + 16} fill={C.muted} fontSize={10} textAnchor="middle">
@@ -609,24 +647,59 @@ function ScatterView() {
             </g>
           </svg>
 
-          {hover && (
-            <Tooltip px={hover.px} py={hover.py}>
-              <strong>{points[hover.i].f.nom}</strong>
-              {frontierSet.has(points[hover.i].f.id) && pareto && (
-                <span style={{ color: C.accent2 }}> · Pareto</span>
-              )}
-              <br />
-              {NUT_LABEL.get(xk)} : {fmt(points[hover.i].x, points[hover.i].x < 10 ? 1 : 0)} {NUT_UNIT.get(xk)}
-              <br />
-              {NUT_LABEL.get(yk)} : {fmt(points[hover.i].y, points[hover.i].y < 10 ? 1 : 0)} {NUT_UNIT.get(yk)}
-              {sizeK !== 'none' && (
-                <>
-                  <br />
-                  {NUT_LABEL.get(sizeK)} : {fmt(points[hover.i].s, points[hover.i].s < 10 ? 1 : 0)} {NUT_UNIT.get(sizeK)}
-                </>
-              )}
-            </Tooltip>
-          )}
+          {hover && (() => {
+            const p = points[hover.i];
+            const portionG = portionGrams(p.f);
+            const factor = portionG / 100;
+            // % AJR / optimal pour la portion réaliste de l'aliment (pas les 100 g
+            // de l'axe) : c'est ce qu'on mange vraiment qui répond à « ça rapporte
+            // beaucoup ou non », d'où un calcul distinct des repères de l'échelle.
+            const detail = (k: NutrientKey, per100: number) => {
+              const t = targets.find((r) => r.key === k);
+              if (!t || t.ajr <= 0) return null;
+              const amount = per100 * factor;
+              return {
+                amount,
+                unit: t.unit,
+                pctAjr: (amount / t.ajr) * 100,
+                pctOpt: t.optimal > 0 && t.optimal !== t.ajr ? (amount / t.optimal) * 100 : null,
+              };
+            };
+            const dx = detail(xk, p.x);
+            const dy = detail(yk, p.y);
+            return (
+              <Tooltip px={hover.px} py={hover.py}>
+                <strong>{p.f.nom}</strong>
+                {frontierSet.has(p.f.id) && pareto && <span style={{ color: C.accent2 }}> · Pareto</span>}
+                <br />
+                {NUT_LABEL.get(xk)} : {fmt(p.x, p.x < 10 ? 1 : 0)} {NUT_UNIT.get(xk)} /100 g
+                <br />
+                {NUT_LABEL.get(yk)} : {fmt(p.y, p.y < 10 ? 1 : 0)} {NUT_UNIT.get(yk)} /100 g
+                {sizeK !== 'none' && (
+                  <>
+                    <br />
+                    {NUT_LABEL.get(sizeK)} : {fmt(p.s, p.s < 10 ? 1 : 0)} {NUT_UNIT.get(sizeK)}
+                  </>
+                )}
+                <br />
+                <span style={{ color: C.muted }}>Portion ≈ {fmt(portionG)} g</span>
+                {dx && (
+                  <>
+                    <br />
+                    {fmt(dx.amount, dx.amount < 10 ? 1 : 0)} {dx.unit} de {NUT_LABEL.get(xk)} · {fmt(dx.pctAjr)} % AJR
+                    {dx.pctOpt != null ? ` · ${fmt(dx.pctOpt)} % opti` : ''}
+                  </>
+                )}
+                {dy && (
+                  <>
+                    <br />
+                    {fmt(dy.amount, dy.amount < 10 ? 1 : 0)} {dy.unit} de {NUT_LABEL.get(yk)} · {fmt(dy.pctAjr)} % AJR
+                    {dy.pctOpt != null ? ` · ${fmt(dy.pctOpt)} % opti` : ''}
+                  </>
+                )}
+              </Tooltip>
+            );
+          })()}
         </div>
         <p className="small" style={{ marginTop: 0 }}>
           Ctrl + molette (ou pincer à deux doigts) pour zoomer, glisser (un doigt ou la souris) pour déplacer. Les
@@ -645,7 +718,7 @@ function ScatterView() {
             surpasse à la fois en {NUT_LABEL.get(yk)} ({yGoal === 'max' ? 'plus' : 'moins'}) et en{' '}
             {NUT_LABEL.get(xk)} ({xGoal === 'max' ? 'plus' : 'moins'}), plus tous ceux déjà à la valeur limite
             (ex. 0 g) sur un axe minimisé/maximisé — indépassables sur cet axe, quel que soit l'autre. Pointillés
-            gris = médianes.
+            gris = médianes, clairs = AJR, verts = optimal (100 g qui couvrent le besoin du jour, selon votre profil).
           </p>
         )}
       </div>

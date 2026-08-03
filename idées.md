@@ -3,6 +3,7 @@
 
 - [ ] sur l'onglet Poids agregat par semaines ou mois possible (comme stats)
 
+
 - [ ] conseils du jour, pour les micro surtout mais en fait les deux prend en compte les deux/3 jours avnat, voir les 10 jours avnat mais avec une decroissance d'influence plus on s'éloigne d'aujourdhui (vous etiez en manque de X ces derniers jours donc nous vous recommandons X1 X2...)
 
 ## 1. Base de données : fer & graisses saturées détaillées
