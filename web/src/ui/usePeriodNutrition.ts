@@ -11,8 +11,10 @@ import {
   datesInRange,
   rangeDays,
   defaultPeriodState,
+  weighDates,
 } from './PeriodSelector';
 import type { PeriodState } from './PeriodSelector';
+import { decayWeightedTotals, DECAY_HALF_LIFE_DEFAULT } from '../nutrition/recommend';
 
 const KEYS = Object.keys(EMPTY_NUTRIENTS) as NutrientKey[];
 
@@ -31,6 +33,12 @@ export interface PeriodNutrition {
   setIncludeToday: (v: boolean) => void;
   excludeSupplements: boolean;
   setExcludeSupplements: (v: boolean) => void;
+  /** Pondération dégressive : les jours récents pèsent plus dans TOUTES les moyennes. */
+  decayOn: boolean;
+  setDecayOn: (v: boolean) => void;
+  /** Demi-vie de la pondération, en jours (un jour de N j pèse moitié moins). */
+  halfLife: number;
+  setHalfLife: (v: number) => void;
 
   // Dérivés.
   targets: Target[];
@@ -70,6 +78,13 @@ export function usePeriodNutrition(): PeriodNutrition {
    * toutes les analyses : ce que l'alimentation seule apporte vraiment.
    */
   const [excludeSupplements, setExcludeSupplements] = useState(false);
+  /**
+   * Pondération dégressive de la période : un jour ancien compte moins qu'un
+   * jour récent. Éteinte par défaut — la moyenne simple reste la lecture de
+   * référence, la pondérée répond à « où j'en suis EN CE MOMENT ».
+   */
+  const [decayOn, setDecayOn] = useState(false);
+  const [halfLife, setHalfLife] = useState(DECAY_HALF_LIFE_DEFAULT);
   const today = todayStr();
 
   const foods = useEffectiveFoods();
@@ -142,17 +157,24 @@ export function usePeriodNutrition(): PeriodNutrition {
     [windowDates, byDate, mutedDays],
   );
 
-  /** Moyenne journalière de chaque nutriment sur les jours comptés de la fenêtre. */
+  /**
+   * Moyenne journalière de chaque nutriment sur les jours comptés de la fenêtre.
+   * Pondération dégressive active, c'est la même moyenne mais avec des poids
+   * décroissants vers le passé : le résultat reste homogène à UNE journée, donc
+   * comparable aux mêmes cibles journalières — tout ce qui consomme `averages`
+   * (couverture, macros, recommandations) suit sans le savoir.
+   */
   const averages = useMemo(() => {
+    if (recorded.length === 0) return { ...EMPTY_NUTRIENTS };
+    if (decayOn) return decayWeightedTotals(weighDates(recorded, byDateVitD, halfLife));
     const a = { ...EMPTY_NUTRIENTS };
-    if (recorded.length === 0) return a;
     for (const d of recorded) {
       const t = byDateVitD.get(d)!;
       for (const k of KEYS) a[k] += t[k];
     }
     for (const k of KEYS) a[k] /= recorded.length;
     return a;
-  }, [recorded, byDateVitD]);
+  }, [recorded, byDateVitD, decayOn, halfLife]);
 
   /**
    * Apport vitamine D total par jour (alimentation + soleil), tous jours « connus ».
@@ -178,6 +200,10 @@ export function usePeriodNutrition(): PeriodNutrition {
     setIncludeToday,
     excludeSupplements,
     setExcludeSupplements,
+    decayOn,
+    setDecayOn,
+    halfLife,
+    setHalfLife,
     targets,
     targetByKey,
     byDate,

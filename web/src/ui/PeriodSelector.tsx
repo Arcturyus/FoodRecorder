@@ -1,4 +1,7 @@
 import { todayStr } from '../store/store';
+import { decayWeight, HALF_LIFE_CHOICES, decayWindowDays } from '../nutrition/recommend';
+import type { WeightedDay } from '../nutrition/recommend';
+import type { Nutrients } from '../nutrition/types';
 
 /**
  * Sélecteur de période réutilisable (onglets Stats et Poids).
@@ -130,6 +133,79 @@ export function groupDates(dates: string[], g: Granularity): DateBucket[] {
     else map.set(k, [d]);
   }
   return [...map.entries()].map(([key, ds]) => ({ key, label: bucketLabel(key, g), date: ds[0], dates: ds }));
+}
+
+// ---------------------------------------------------------------------------
+// Pondération dégressive : les jours récents pèsent plus
+// ---------------------------------------------------------------------------
+
+/** Décalage en jours entre deux dates (YYYY-MM-DD) : `from` − `to`. */
+export function daysBetween(from: string, to: string): number {
+  const a = new Date(`${from}T12:00:00`).getTime();
+  const b = new Date(`${to}T12:00:00`).getTime();
+  return Math.round((a - b) / 86_400_000);
+}
+
+/** Date située `n` jours avant `date`. */
+export function shiftDays(date: string, n: number): string {
+  const d = new Date(`${date}T12:00:00`);
+  d.setDate(d.getDate() - n);
+  return todayStr(d);
+}
+
+/**
+ * Pondère des dates déjà connues (cas d'une période choisie) : le jour le plus
+ * récent porte le poids 1, les autres décroissent d'un facteur ½ par demi-vie.
+ * Les dates sans totaux sont ignorées, jamais comptées comme des zéros.
+ */
+export function weighDates(
+  dates: string[],
+  byDate: Map<string, Nutrients>,
+  halfLife: number,
+): WeightedDay[] {
+  if (dates.length === 0) return [];
+  const anchor = dates[dates.length - 1];
+  return dates.flatMap((date) => {
+    const totals = byDate.get(date);
+    return totals ? [{ date, weight: decayWeight(daysBetween(anchor, date), halfLife), totals }] : [];
+  });
+}
+
+/**
+ * Sélecteur de demi-vie : à quelle vitesse un jour passé perd son influence.
+ * `unit` suit la granularité de l'écran (« j », « sem. », « mois ») quand la
+ * pondération s'applique à des points agrégés.
+ */
+export function HalfLifeSelector({
+  value,
+  onChange,
+  unit = 'j',
+  tip,
+}: {
+  value: number;
+  onChange: (v: number) => void;
+  unit?: string;
+  tip?: string;
+}) {
+  return (
+    <label
+      className="row small"
+      style={{ gap: 6, alignItems: 'center' }}
+      data-tip={
+        tip ??
+        `Un jour vieux de ${value} jour(s) compte moitié moins que le plus récent ; au-delà de ${decayWindowDays(value)} jours, un jour ne pèserait plus que 10 %.`
+      }
+    >
+      <span style={{ color: 'var(--muted)' }}>Demi-vie</span>
+      <select value={value} onChange={(e) => onChange(Number(e.target.value))} aria-label="Demi-vie de la pondération">
+        {HALF_LIFE_CHOICES.map((h) => (
+          <option key={h} value={h}>
+            {h} {unit}
+          </option>
+        ))}
+      </select>
+    </label>
+  );
 }
 
 /** Unité d'un pas de temps, pour les libellés (« 7 j », « 7 sem. », « 7 mois »). */

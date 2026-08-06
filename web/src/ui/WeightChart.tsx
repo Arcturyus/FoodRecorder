@@ -9,8 +9,11 @@ import {
   PeriodSelector,
   resolveRange,
   defaultPeriodState,
+  GranularitySelector,
+  groupDates,
+  granularityUnit,
 } from './PeriodSelector';
-import type { PeriodState } from './PeriodSelector';
+import type { PeriodState, Granularity } from './PeriodSelector';
 import { fmt } from './format';
 import { NumberField } from './NumberField';
 
@@ -124,6 +127,27 @@ function movingAverage(points: SeriesPoint[], days: number): SeriesPoint[] {
   });
 }
 
+/**
+ * Agrège des points par semaine/mois : un point par groupe, moyenne des valeurs
+ * (comme les moyennes journalières par groupe de Stats). En granularité « jour »,
+ * renvoie les points tels quels — un par mesure, avec entrée et statut hollow
+ * conservés (clic pour éditer, pesées non comparables grisées).
+ */
+function aggregateByGranularity(points: SeriesPoint[], g: Granularity): SeriesPoint[] {
+  if (g === 'jour' || points.length === 0) return points;
+  const byDate = new Map<string, SeriesPoint[]>();
+  for (const p of points) {
+    const date = todayStr(new Date(p.t));
+    const arr = byDate.get(date);
+    if (arr) arr.push(p);
+    else byDate.set(date, [p]);
+  }
+  return groupDates([...byDate.keys()], g).map((b) => {
+    const pts = b.dates.flatMap((d) => byDate.get(d)!);
+    return { t: dayMs(b.date), value: pts.reduce((a, p) => a + p.value, 0) / pts.length };
+  });
+}
+
 /** Pente (unité/jour) par régression linéaire simple. `null` si < 2 points. */
 function slopePerDay(points: SeriesPoint[]): number | null {
   if (points.length < 2) return null;
@@ -178,6 +202,8 @@ export function WeightChart({ onEditEntry }: { onEditEntry?: (id: string) => voi
   const mutedDays = useStore((s) => s.mutedDays);
 
   const [period, setPeriod] = useState<PeriodState>(defaultPeriodState);
+  /** Pas de temps : un point par mesure, ou une moyenne par semaine/mois (comme Stats). */
+  const [gran, setGran] = useState<Granularity>('jour');
   const [mode, setMode] = useState<ChartMode>('poids');
   const [showMa, setShowMa] = useState(true);
   /** Fenêtre de la moyenne mobile, en jours (réglable comme dans Stats). */
@@ -234,28 +260,34 @@ export function WeightChart({ onEditEntry }: { onEditEntry?: (id: string) => voi
         const v = get(e);
         return v == null ? [] : [{ e, t: entryMs(e), value: v, hollow: !isComparable(e) }];
       });
-    switch (mode) {
-      case 'poids':
-        return base((e) => e.poids);
-      case 'masseGrasse':
-        return base((e) => e.masseGrasse);
-      case 'eau':
-        return base((e) => e.eau);
-      case 'masseMusculaire':
-        return muscleUnit === '%'
-          ? base((e) => e.masseMusculaire)
-          : base((e) => (e.masseMusculaire != null ? (e.poids * e.masseMusculaire) / 100 : null));
-      case 'imc':
-        return base((e) => computedByEntry.get(e.id)?.imc);
-      default:
-        return [];
-    }
-  }, [mode, muscleUnit, inRange, computedByEntry]);
+    const raw = (() => {
+      switch (mode) {
+        case 'poids':
+          return base((e) => e.poids);
+        case 'masseGrasse':
+          return base((e) => e.masseGrasse);
+        case 'eau':
+          return base((e) => e.eau);
+        case 'masseMusculaire':
+          return muscleUnit === '%'
+            ? base((e) => e.masseMusculaire)
+            : base((e) => (e.masseMusculaire != null ? (e.poids * e.masseMusculaire) / 100 : null));
+        case 'imc':
+          return base((e) => computedByEntry.get(e.id)?.imc);
+        default:
+          return [];
+      }
+    })();
+    return aggregateByGranularity(raw, gran);
+  }, [mode, muscleUnit, inRange, computedByEntry, gran]);
 
   /** kcal mangées, un point par jour enregistré de la période (cf. dailyKcalPoints). */
   const kcalPoints: SeriesPoint[] = useMemo(
-    () => (mode !== 'poids' || !showKcal ? [] : dailyKcalPoints(journal, mutedDays, range)),
-    [mode, showKcal, journal, range, mutedDays],
+    () =>
+      mode !== 'poids' || !showKcal
+        ? []
+        : aggregateByGranularity(dailyKcalPoints(journal, mutedDays, range), gran),
+    [mode, showKcal, journal, range, mutedDays, gran],
   );
 
   /**
@@ -278,11 +310,11 @@ export function WeightChart({ onEditEntry }: { onEditEntry?: (id: string) => voi
       if (e.metabolismeBasalMachine != null) machine.push({ e, t, value: e.metabolismeBasalMachine * mult });
     }
     const out: Series[] = [];
-    if (metaboShow.hb) out.push({ label: `Harris-Benedict${suffix}`, color: C.accent, points: hb, drawPoints: true });
-    if (metaboShow.msj) out.push({ label: `Mifflin-St Jeor${suffix}`, color: C.accent2, points: msj, drawPoints: true });
-    if (metaboShow.machine) out.push({ label: `Balance${suffix}`, color: C.warn, points: machine, drawPoints: true });
+    if (metaboShow.hb) out.push({ label: `Harris-Benedict${suffix}`, color: C.accent, points: aggregateByGranularity(hb, gran), drawPoints: true });
+    if (metaboShow.msj) out.push({ label: `Mifflin-St Jeor${suffix}`, color: C.accent2, points: aggregateByGranularity(msj, gran), drawPoints: true });
+    if (metaboShow.machine) out.push({ label: `Balance${suffix}`, color: C.warn, points: aggregateByGranularity(machine, gran), drawPoints: true });
     return out;
-  }, [mode, inRange, computedByEntry, weightConfig.activityMultiplier, metaboShow, withActivity]);
+  }, [mode, inRange, computedByEntry, weightConfig.activityMultiplier, metaboShow, withActivity, gran]);
 
   /** Séries du mode « Autres » : masse osseuse (axe gauche) + graisse viscérale (axe droit). */
   const autresSeries: Series[] = useMemo(() => {
@@ -295,10 +327,10 @@ export function WeightChart({ onEditEntry }: { onEditEntry?: (id: string) => voi
       if (e.graisseViscerale != null) visc.push({ e, t, value: e.graisseViscerale, hollow: !isComparable(e) });
     }
     return [
-      { label: 'Masse osseuse', color: C.accent, points: os, drawPoints: true, unit: 'kg' },
-      { label: 'Graisse viscérale', color: C.violet, points: visc, drawPoints: true, rightAxis: true, unit: '' },
+      { label: 'Masse osseuse', color: C.accent, points: aggregateByGranularity(os, gran), drawPoints: true, unit: 'kg' },
+      { label: 'Graisse viscérale', color: C.violet, points: aggregateByGranularity(visc, gran), drawPoints: true, rightAxis: true, unit: '' },
     ];
-  }, [mode, inRange]);
+  }, [mode, inRange, gran]);
 
   const stats = useMemo(() => {
     if (points.length === 0) return null;
@@ -378,10 +410,13 @@ export function WeightChart({ onEditEntry }: { onEditEntry?: (id: string) => voi
 
     // En kg, la part squelettique (× 0,9, cf. compute.ts) accompagne la courbe.
     if (mode === 'masseMusculaire' && muscleUnit === 'kg') {
-      const skel = inRange.flatMap((e) => {
-        const v = computedByEntry.get(e.id)?.masseMusculaireSquelettique;
-        return v == null ? [] : [{ e, t: entryMs(e), value: v }];
-      });
+      const skel = aggregateByGranularity(
+        inRange.flatMap((e) => {
+          const v = computedByEntry.get(e.id)?.masseMusculaireSquelettique;
+          return v == null ? [] : [{ e, t: entryMs(e), value: v }];
+        }),
+        gran,
+      );
       out.push({
         label: `dont squelettique (× 0,9)${smoothed ? suffix : ''}`,
         color: C.violet,
@@ -402,7 +437,7 @@ export function WeightChart({ onEditEntry }: { onEditEntry?: (id: string) => voi
       });
     }
     return out;
-  }, [mode, muscleUnit, points, showMa, maWindow, kcalPoints, metaboSeries, autresSeries, inRange, computedByEntry]);
+  }, [mode, muscleUnit, points, showMa, maWindow, kcalPoints, metaboSeries, autresSeries, inRange, computedByEntry, gran]);
 
   const targetLine = mode === 'poids' && objectif != null ? { value: objectif, label: `objectif ${fmt(objectif, 1)} kg` } : null;
   const hasHollow = series.some((s) => s.points.some((p) => p.hollow));
@@ -428,6 +463,11 @@ export function WeightChart({ onEditEntry }: { onEditEntry?: (id: string) => voi
       </div>
 
       <div className="row" style={{ gap: 14, flexWrap: 'wrap', alignItems: 'center', marginBottom: 6 }}>
+        <GranularitySelector
+          value={gran}
+          onChange={setGran}
+          tip="Un point par mesure, ou une moyenne par semaine / par mois — plus lisible sur les longues périodes."
+        />
         <label className="small" style={{ display: 'flex', alignItems: 'center', gap: 6, cursor: 'pointer' }} data-tip="Exclut les pesées non à jeun ou habillées, au lieu de simplement les griser">
           <input type="checkbox" checked={comparableOnly} onChange={(e) => setComparableOnly(e.target.checked)} style={{ width: 'auto' }} />
           À jeun &amp; nu uniquement
@@ -545,7 +585,8 @@ export function WeightChart({ onEditEntry }: { onEditEntry?: (id: string) => voi
 
       {stats && !isComposite && (
         <div className="hint" style={{ marginTop: -2 }}>
-          {points.length} mesure(s) · dernier <strong>{fmt(stats.last, 1)} {unit}</strong> · variation{' '}
+          {points.length} {gran === 'jour' ? 'mesure(s)' : `point(s) (${granularityUnit(gran)})`} · dernier{' '}
+          <strong>{fmt(stats.last, 1)} {unit}</strong> · variation{' '}
           <strong style={{ color: stats.delta === 0 ? C.muted : stats.delta > 0 ? C.warn : C.accent2 }}>
             {stats.delta > 0 ? '+' : ''}
             {fmt(stats.delta, 1)} {unit}
@@ -574,7 +615,8 @@ export function WeightChart({ onEditEntry }: { onEditEntry?: (id: string) => voi
       />
 
       <div className="hint" style={{ marginTop: 4 }}>
-        Glisser sur le graphe pour zoomer sur une plage · cliquer un point pour éditer la pesée.
+        Glisser sur le graphe pour zoomer sur une plage
+        {gran === 'jour' && ' · cliquer un point pour éditer la pesée'}.
       </div>
 
       <div className="row small" style={{ gap: 14, marginTop: 8, flexWrap: 'wrap', color: C.muted }}>
@@ -608,6 +650,20 @@ export function WeightChart({ onEditEntry }: { onEditEntry?: (id: string) => voi
       </div>
     </div>
   );
+}
+
+/**
+ * Marge verticale d'un axe autour de [v0, v1]. En dessous d'un écart négligeable
+ * (série quasi constante — fréquent après agrégation par semaine/mois, où la
+ * moyenne de valeurs identiques peut dériver de quelques 1e-15 par arrondi
+ * flottant), l'écart est traité comme nul : sans ce garde-fou, `(v1-v0)*0.15`
+ * reste non nul et échappe au repli `|| fallback`, ce qui produit un domaine
+ * quasi plat et des graduations dupliquées (clés React en doublon).
+ */
+function axisPad(v0: number, v1: number): number {
+  const span = v1 - v0;
+  const negligible = span <= 1e-6 * Math.max(1, Math.abs(v0), Math.abs(v1));
+  return negligible ? Math.max(1, Math.abs(v0) * 0.02) : span * 0.15;
 }
 
 /**
@@ -654,12 +710,12 @@ function MultiLineChart({
   const leftVals = leftSeries.flatMap((s) => s.points.map((p) => p.value));
   if (target) leftVals.push(target.value);
   const [v0, v1] = [Math.min(...leftVals), Math.max(...leftVals)];
-  const pad = (v1 - v0) * 0.15 || Math.max(1, v0 * 0.02);
+  const pad = axisPad(v0, v1);
   const ys = scaleLinear().domain([v0 - pad, v1 + pad]).nice().range([H - m.bottom, m.top]);
 
   const rightVals = rightSeries.flatMap((s) => s.points.map((p) => p.value));
   const [r0, r1] = rightVals.length > 0 ? [Math.min(...rightVals), Math.max(...rightVals)] : [0, 1];
-  const rpad = (r1 - r0) * 0.15 || Math.max(1, r0 * 0.02);
+  const rpad = axisPad(r0, r1);
   const yr = scaleLinear().domain([r0 - rpad, r1 + rpad]).nice().range([H - m.bottom, m.top]);
 
   const yScaleFor = (s: Series) => (s.rightAxis ? yr : ys);

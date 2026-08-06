@@ -1,4 +1,5 @@
 import type { Food, Nutrients, NutrientKey } from './types';
+import { EMPTY_NUTRIENTS } from './types';
 import type { Target } from './targets';
 import { RATIOS, computeRatio } from './ratios';
 import { RDA } from './rda';
@@ -296,6 +297,62 @@ export function rankFoods(foods: Food[], analysis: GapAnalysis, params: RecoPara
 }
 
 // ---------------------------------------------------------------------------
+// Pondération « ces derniers jours » (décroissance exponentielle)
+// ---------------------------------------------------------------------------
+
+/**
+ * Portée d'un conseil : la journée en cours, ou une moyenne pondérée des jours
+ * précédents (le récent pèse plus). Les deux passent par le MÊME moteur — seuls
+ * le total d'entrée, le seuil d'avancement et la formulation changent.
+ */
+export type AdviceScope = 'jour' | 'recents';
+
+/** Demi-vie par défaut de la pondération, en jours (un jour de 3 j pèse moitié moins). */
+export const DECAY_HALF_LIFE_DEFAULT = 3;
+/** Demi-vies proposées à l'écran (jours). */
+export const HALF_LIFE_CHOICES = [1, 2, 3, 5, 7, 14];
+/** Poids relatif sous lequel un jour ne compte plus : c'est lui qui borne la fenêtre. */
+const DECAY_MIN_WEIGHT = 0.1;
+
+/** Poids d'un jour vieux de `age` jours : 1 le jour d'ancrage, ½ à chaque demi-vie. */
+export function decayWeight(age: number, halfLife: number): number {
+  return Math.pow(0.5, age / Math.max(0.5, halfLife));
+}
+
+/**
+ * Profondeur de la fenêtre DÉDUITE de la demi-vie : on remonte tant qu'un jour
+ * pèse au moins `DECAY_MIN_WEIGHT` du plus récent (demi-vie 3 j → 10 jours).
+ * Un seul réglage à comprendre — la demi-vie — plutôt que deux qui interagissent.
+ */
+export function decayWindowDays(halfLife: number): number {
+  const ratio = Math.log(DECAY_MIN_WEIGHT) / Math.log(0.5); // ≈ 3,32 demi-vies
+  return Math.max(1, Math.ceil(ratio * Math.max(0.5, halfLife)));
+}
+
+/** Un jour de la fenêtre pondérée : ses totaux et le poids qu'il porte. */
+export interface WeightedDay {
+  date: string;
+  weight: number;
+  totals: Nutrients;
+}
+
+/**
+ * Moyenne pondérée d'un ensemble de journées. Le résultat est homogène à UNE
+ * journée (somme des poids au dénominateur) : il se compare donc exactement aux
+ * mêmes cibles journalières que les totaux du jour, et traverse `dayAdvice` /
+ * `macroAdvice` sans aucune adaptation des seuils.
+ */
+export function decayWeightedTotals(days: WeightedDay[]): Nutrients {
+  const out = { ...EMPTY_NUTRIENTS };
+  const sum = days.reduce((a, d) => a + d.weight, 0);
+  if (sum <= 0) return out;
+  const keys = Object.keys(EMPTY_NUTRIENTS) as NutrientKey[];
+  for (const d of days) for (const k of keys) out[k] += (d.totals[k] ?? 0) * d.weight;
+  for (const k of keys) out[k] /= sum;
+  return out;
+}
+
+// ---------------------------------------------------------------------------
 // Conseils du jour (section courte de l'écran Aujourd'hui)
 // ---------------------------------------------------------------------------
 
@@ -445,6 +502,11 @@ function foodOpts(consumedIds: Set<string>, extra: Partial<Parameters<typeof top
  * petit-déjeuner). Chaque alerte est notée par sévérité (0..~2+) pour prioriser
  * les 6 plus parlantes si tout ne tient pas. Renvoie [] tant que la journée est
  * trop peu avancée.
+ *
+ * En portée « recents », `totals` est la moyenne pondérée de journées TERMINÉES
+ * (cf. `decayWeightedTotals`) : le seuil d'avancement ne s'applique pas et la
+ * couverture se compare à la cible pleine (p = 1) et non au rythme d'un jour en
+ * cours. Seules les formulations changent — les seuils, eux, sont les mêmes.
  */
 export function dayAdvice(
   totals: Nutrients,
@@ -452,12 +514,15 @@ export function dayAdvice(
   foods: Food[],
   consumedIds: Set<string> = new Set(),
   importance: ImportanceFn = NEUTRAL_IMPORTANCE,
+  scope: AdviceScope = 'jour',
 ): DayAdviceItem[] {
   const kcalT = targets.find((t) => t.key === 'kcal');
   if (!kcalT || kcalT.optimal <= 0) return [];
   const progress = totals.kcal / kcalT.optimal;
-  if (progress < DAY_MIN_PROGRESS) return [];
-  const p = Math.min(1, progress);
+  if (scope === 'jour' ? progress < DAY_MIN_PROGRESS : progress <= 0) return [];
+  const p = scope === 'jour' ? Math.min(1, progress) : 1;
+  /** « d'ici ce soir » n'a aucun sens sur une moyenne de jours déjà passés. */
+  const horizon = scope === 'jour' ? "d'ici ce soir" : 'par jour';
 
   const scored: { item: DayAdviceItem; rank: number }[] = [];
 
@@ -473,7 +538,13 @@ export function dayAdvice(
       item: {
         kind: 'excess',
         target: t,
-        text: `${t.label} : ${Math.round((v / t.ajr) * 100)} % du plafond journalier déjà atteint — évitez d'en rajouter d'ici ce soir.`,
+        text:
+          scope === 'jour'
+            ? `${t.label} : ${Math.round((v / t.ajr) * 100)} % du plafond journalier déjà atteint — évitez d'en rajouter d'ici ce soir.`
+            // Volontairement factuel : c'est le compte de jours dépassés affiché
+            // juste en dessous qui dit si l'excès est installé ou isolé — une
+            // moyenne seule ne permet pas de trancher.
+            : `${t.label} : ${Math.round((v / t.ajr) * 100)} % du plafond journalier en moyenne sur la fenêtre.`,
         supplements: [],
         foodSuggestions: [],
       },
@@ -493,7 +564,7 @@ export function dayAdvice(
       suggestionUnit = 'g';
       const need = Math.max(0, totals.omega6 / def.optimal - totals.omega3);
       severity = need / Math.max(1, totals.omega3 || 1);
-      text = `Rapport ${def.label} à ${r.text} (idéal ≤ ${def.optimal}:1) : trop d'oméga-6 pour vos oméga-3 — il faudrait environ ${roundNeed(need)} g d'oméga-3 en plus aujourd'hui (ou moins d'huiles riches en ω6).`;
+      text = `Rapport ${def.label} à ${r.text} (idéal ≤ ${def.optimal}:1) : trop d'oméga-6 pour vos oméga-3 — il faudrait environ ${roundNeed(need)} g d'oméga-3 en plus ${scope === 'jour' ? "aujourd'hui" : 'par jour'} (ou moins d'huiles riches en ω6).`;
       suggestions = topSourcesFor('omega3', need || 1, foods, foodOpts(consumedIds, { exclude: 'omega6', excludeFactor: def.optimal }));
     } else if (def.key === 'kna') {
       const need = Math.max(0, def.optimal * totals.sodium - totals.potassium);
@@ -531,7 +602,10 @@ export function dayAdvice(
       item: {
         kind: 'deficit',
         target: t,
-        text: `${t.label} : ${Math.round(relCov * 100)} % du rythme attendu — il manque encore ${roundNeed(need)} ${t.unit} d'ici ce soir.`,
+        text:
+          scope === 'jour'
+            ? `${t.label} : ${Math.round(relCov * 100)} % du rythme attendu — il manque encore ${roundNeed(need)} ${t.unit} ${horizon}.`
+            : `${t.label} : ${Math.round(relCov * 100)} % de la cible en moyenne — il manquait environ ${roundNeed(need)} ${t.unit} ${horizon}.`,
         supplements: topSourcesFor(t.key, need, foods, { supplements: true, limit: 1 })
           .filter((s) => s.amount >= need * 0.2),
         foodSuggestions: topSourcesFor(t.key, need, foods, foodOpts(consumedIds)),
@@ -543,6 +617,82 @@ export function dayAdvice(
     .sort((a, b) => b.rank - a.rank)
     .slice(0, DAY_MAX_ITEMS)
     .map((s) => s.item);
+}
+
+// ---------------------------------------------------------------------------
+// Classement « les plus bas en ce moment » (toujours affiché)
+// ---------------------------------------------------------------------------
+
+/** Nombre de nutriments listés dans le classement des manques. */
+export const LOWEST_COUNT = 5;
+
+/**
+ * Nutriments écartés du classement : la créatine s'obtient surtout par
+ * complément et son manque n'est pas un problème de santé — c'est même ce qui a
+ * motivé les poids d'importance. Au pourcentage de cible elle serait presque
+ * toujours en tête et masquerait les vrais manques. Le collagène, lui, reste :
+ * son importance faible (0,6) suffit à le faire redescendre quand il le faut.
+ */
+const LOWEST_EXCLUDED: NutrientKey[] = ['creatine'];
+
+/** Un nutriment du classement des manques, avec de quoi le combler. */
+export interface LowCoverage {
+  target: Target;
+  /** Apport constaté (unité du nutriment). */
+  value: number;
+  /** Couverture 0..1+ : part de la cible atteinte, rapportée au rythme du jour en portée « jour ». */
+  coverage: number;
+  /** Ce qu'il reste à couvrir pour atteindre la cible. */
+  missing: number;
+  /** Meilleure source alimentaire de la base, si elle existe. */
+  best: Suggestion | null;
+}
+
+/**
+ * Les nutriments les plus bas EN CE MOMENT — la question « qu'est-ce qui me
+ * manque le plus ? », à laquelle les alertes ne répondent pas : elles ont un
+ * seuil (45 % du rythme attendu) et disparaissent entièrement dès que rien n'est
+ * assez grave, ce qui laisse croire à tort que tout est couvert.
+ *
+ * Le tri est celui des alertes — manque × importance — pour que les deux listes
+ * racontent la même histoire, et il ne retient que les nutriments « à couvrir »
+ * hors calories et macros secondaires, qui ont leur propre section.
+ */
+export function lowestCoverage(
+  totals: Nutrients,
+  targets: Target[],
+  foods: Food[],
+  importance: ImportanceFn = NEUTRAL_IMPORTANCE,
+  scope: AdviceScope = 'jour',
+  limit = LOWEST_COUNT,
+): LowCoverage[] {
+  const kcalT = targets.find((t) => t.key === 'kcal');
+  // Rythme attendu : en portée « jour », un nutriment n'est pas « bas » s'il
+  // suit simplement l'avancement calorique de la journée.
+  const p =
+    scope === 'jour' && kcalT && kcalT.optimal > 0
+      ? Math.min(1, Math.max(totals.kcal / kcalT.optimal, 0.01))
+      : 1;
+
+  return targets
+    .filter((t) => t.goal === 'atLeast' && t.key !== 'kcal' && t.optimal > 0)
+    .filter((t) => !MACRO_SECONDARY_KEYS.includes(t.key))
+    .filter((t) => !LOWEST_EXCLUDED.includes(t.key) && importance(t.key) > 0)
+    .map((t) => {
+      const coverage = totals[t.key] / t.optimal / p;
+      return { t, coverage, rank: (1 - Math.min(1, coverage)) * importance(t.key) };
+    })
+    .filter(({ coverage }) => coverage < 1) // rien à dire d'un nutriment déjà couvert
+    .sort((a, b) => b.rank - a.rank || a.coverage - b.coverage)
+    .slice(0, limit)
+    .map(({ t, coverage }) => {
+      const missing = Math.max(0, t.optimal - totals[t.key]);
+      // Pas de `consumedIds` ici : sur UNE seule suggestion, la garantie « au
+      // moins un aliment déjà mangé » remplacerait la meilleure source par une
+      // source familière parfois bien plus pauvre.
+      const best = topSourcesFor(t.key, missing || t.optimal, foods, { supplements: false, limit: 1 })[0];
+      return { target: t, value: totals[t.key], coverage, missing, best: best ?? null };
+    });
 }
 
 function roundNeed(v: number): number {
@@ -610,6 +760,7 @@ export function macroAdvice(
   foods: Food[],
   consumedIds: Set<string> = new Set(),
   importance: ImportanceFn = NEUTRAL_IMPORTANCE,
+  scope: AdviceScope = 'jour',
 ): MacroAdvice | null {
   if (totals.kcal <= 0) return null; // rien mangé aujourd'hui : rien à conseiller
   const kcalT = targets.find((t) => t.key === 'kcal');
@@ -629,8 +780,9 @@ export function macroAdvice(
   const kcalDone = kcalLeft <= Math.max(50, 0.03 * kcalT.optimal);
   if (protDone && kcalDone) return null; // rien à compléter
 
-  // Macros secondaires en retard sur le rythme calorique du jour.
-  const p = Math.min(1, Math.max(kcalPct, 0.01));
+  // Macros secondaires en retard sur le rythme calorique du jour. Sur une
+  // moyenne de journées terminées, le « rythme » est celui d'un jour entier.
+  const p = scope === 'jour' ? Math.min(1, Math.max(kcalPct, 0.01)) : 1;
   const lagging = MACRO_SECONDARY_KEYS
     .map((key) => targets.find((t) => t.key === key))
     .filter((t): t is Target => !!t && t.optimal > 0 && importance(t.key) > 0)
@@ -643,16 +795,24 @@ export function macroAdvice(
   let text: string;
   if (protDone) {
     tone = 'protDone';
-    text = `Protéines bouclées — il te reste environ ${roundNeed(Math.max(0, kcalLeft))} kcal, à compléter plus librement.`;
+    text = scope === 'jour'
+      ? `Protéines bouclées — il te reste environ ${roundNeed(Math.max(0, kcalLeft))} kcal, à compléter plus librement.`
+      : `Protéines bouclées en moyenne — il restait environ ${roundNeed(Math.max(0, kcalLeft))} kcal par jour, à compléter plus librement.`;
   } else if (proteinBehind) {
     tone = 'lean';
     const head = kcalLeft <= 0
-      ? `Objectif calorique atteint mais il manque encore ${roundNeed(protLeft)} g de protéines`
-      : `Calories bien avancées (${Math.round(kcalPct * 100)} %) mais pas les protéines (${Math.round(protPct * 100)} %)`;
+      ? scope === 'jour'
+        ? `Objectif calorique atteint mais il manque encore ${roundNeed(protLeft)} g de protéines`
+        : `Objectif calorique atteint en moyenne mais il manquait ${roundNeed(protLeft)} g de protéines par jour`
+      : scope === 'jour'
+        ? `Calories bien avancées (${Math.round(kcalPct * 100)} %) mais pas les protéines (${Math.round(protPct * 100)} %)`
+        : `Calories couvertes à ${Math.round(kcalPct * 100)} % en moyenne mais protéines à ${Math.round(protPct * 100)} %`;
     text = `${head} : privilégie des aliments très protéinés et peu caloriques (volaille maigre, poisson blanc, fromage blanc 0 %, œufs…).`;
   } else {
     tone = 'balanced';
-    text = `Il reste environ ${roundNeed(Math.max(0, kcalLeft))} kcal et ${roundNeed(protLeft)} g de protéines : ces aliments t'en rapprochent.`;
+    text = scope === 'jour'
+      ? `Il reste environ ${roundNeed(Math.max(0, kcalLeft))} kcal et ${roundNeed(protLeft)} g de protéines : ces aliments t'en rapprochent.`
+      : `Il manquait en moyenne ${roundNeed(Math.max(0, kcalLeft))} kcal et ${roundNeed(protLeft)} g de protéines par jour : ces aliments comblent l'écart.`;
   }
 
   const suggestions = rankMacroFoods(foods, { kcalLeft, protLeft, lagging, consumedIds });

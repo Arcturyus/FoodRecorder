@@ -8,9 +8,17 @@ import type { NutrientKey, Nutrients } from '../nutrition/types';
 import { EMPTY_NUTRIENTS } from '../nutrition/types';
 import { NUTRIENT_GROUPS } from '../nutrition/groups';
 import { Omega3Breakdown } from './Totals';
-import { PeriodSelector, GranularitySelector, groupDates, granularityUnit } from './PeriodSelector';
+import {
+  PeriodSelector,
+  GranularitySelector,
+  HalfLifeSelector,
+  groupDates,
+  granularityUnit,
+} from './PeriodSelector';
 import type { Granularity } from './PeriodSelector';
+import { decayWeight, decayWindowDays } from '../nutrition/recommend';
 import { usePeriodNutrition } from './usePeriodNutrition';
+import { PeriodAdviceCard } from './DayAdvice';
 import { fmt } from './format';
 
 /** Toutes les clés de nutriments (moyennes par groupe de dates). */
@@ -54,6 +62,33 @@ export function movingAverage(values: (number | null)[], window: number): (numbe
   });
 }
 
+/**
+ * Moyenne DÉGRESSIVE glissante : chaque point moyenne les pas de temps qui le
+ * précèdent, pondérés par ½ à chaque demi-vie — la valeur affichée un jour donné
+ * répond donc à « où j'en étais ces derniers jours, le récent comptant plus »,
+ * là où la moyenne mobile met tous les jours de sa fenêtre sur le même plan.
+ *
+ * La profondeur est celle de `decayWindowDays` (au-delà, un pas pèserait moins
+ * de 10 %) : le lissage des courbes et les conseils pondérés d'une même demi-vie
+ * regardent ainsi exactement les mêmes jours. Les trous sont ignorés (jamais
+ * comptés comme des zéros), et un point sans aucun antécédent reste null.
+ */
+export function decayAverage(values: (number | null)[], halfLife: number): (number | null)[] {
+  const depth = decayWindowDays(halfLife);
+  return values.map((_, i) => {
+    let num = 0;
+    let den = 0;
+    for (let j = Math.max(0, i - depth); j <= i; j++) {
+      const v = values[j];
+      if (v == null) continue;
+      const w = decayWeight(i - j, halfLife);
+      num += v * w;
+      den += w;
+    }
+    return den > 0 ? num / den : null;
+  });
+}
+
 function dayMs(date: string): number {
   return new Date(`${date}T12:00:00`).getTime();
 }
@@ -78,6 +113,10 @@ export function Stats() {
     setIncludeToday,
     excludeSupplements,
     setExcludeSupplements,
+    decayOn,
+    setDecayOn,
+    halfLife,
+    setHalfLife,
     targets,
     targetByKey,
     byDateVitD,
@@ -107,6 +146,18 @@ export function Stats() {
 
   const toggle = (id: string) =>
     setSelected((prev) => (prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id]));
+
+  /**
+   * Lissage des courbes : moyenne mobile classique, ou moyenne dégressive dès
+   * que la pondération globale est active — les courbes disent alors la même
+   * chose que les moyennes et les conseils, avec la même demi-vie.
+   */
+  const smooth = useMemo(
+    () => (raws: (number | null)[]) => (decayOn ? decayAverage(raws, halfLife) : movingAverage(raws, maWindow)),
+    [decayOn, halfLife, maWindow],
+  );
+  /** La courbe lissée s'affiche d'office quand la pondération est active. */
+  const smoothOn = decayOn || maOn;
 
   /**
    * Points de l'axe temps : un par jour enregistré, ou un par semaine/mois selon
@@ -160,7 +211,7 @@ export function Stats() {
           const objective = ratioDef.optimal;
           const values = bucketAverages.map((a) => computeRatio(ratioDef, a).value);
           const raws = values.map((v) => (v == null ? null : (v / objective) * 100));
-          const ma = movingAverage(raws, maWindow);
+          const ma = smooth(raws);
           return {
             id,
             kind: 'ratio' as const,
@@ -177,7 +228,7 @@ export function Stats() {
         const objective = t.goal === 'limit' ? t.ajr : t.optimal;
         const values = bucketAverages.map((a) => a[id as NutrientKey]);
         const raws = values.map((v) => (objective > 0 ? (v / objective) * 100 : 0));
-        const ma = movingAverage(raws, maWindow);
+        const ma = smooth(raws);
         return {
           id,
           kind: 'nutrient' as const,
@@ -189,7 +240,7 @@ export function Stats() {
           points: values.map((v, k) => point(k, v, raws[k], ma[k])),
         };
       }),
-    [selected, targetByKey, buckets, bucketAverages, maWindow],
+    [selected, targetByKey, buckets, bucketAverages, smooth],
   );
 
   const colorById = useMemo(() => new Map(series.map((s) => [s.id, s.color])), [series]);
@@ -222,10 +273,31 @@ export function Stats() {
             />
             Sans les suppléments
           </label>
+          <label
+            className="row small"
+            style={{ gap: 6, alignItems: 'center', cursor: 'pointer' }}
+            data-tip="Les jours récents pèsent plus que les anciens dans TOUT l'écran : courbes lissées, couverture moyenne, répartition des macros et conseils. Répond à « où j'en suis en ce moment » plutôt qu'à « quelle a été ma moyenne sur la période »."
+          >
+            <input type="checkbox" checked={decayOn} onChange={(e) => setDecayOn(e.target.checked)} />
+            Pondération dégressive
+          </label>
+          <HalfLifeSelector
+            value={halfLife}
+            onChange={setHalfLife}
+            tip={`Vitesse à laquelle un jour perd son influence : à ${halfLife} j d'écart il compte moitié moins, et au-delà de ${decayWindowDays(halfLife)} jours il ne pèse plus rien. Sert à la pondération dégressive et aux conseils sur la période.`}
+          />
         </div>
         <div className="hint">
           {recorded.length} jour(s) enregistré(s) sur cette période ({days} j
           {!includeToday && ", aujourd'hui exclu"}) — tout est recalculé sur la période.
+          {decayOn && (
+            <>
+              {' '}
+              <strong>Pondération dégressive</strong> (demi-vie {halfLife} j) : partout ci-dessous, le jour le plus
+              récent compte 1 et chaque tranche de {halfLife} j vers le passé divise le poids par deux. Les moyennes
+              restent journalières — donc comparables aux mêmes cibles — mais reflètent votre situation récente.
+            </>
+          )}
           {excludeSupplements && (
             <>
               {' '}
@@ -256,23 +328,37 @@ export function Stats() {
               onChange={setGran}
               tip="Un point par jour, ou une moyenne journalière par semaine / par mois — plus lisible sur les longues périodes."
             />
-            <label className="row small" style={{ gap: 6, alignItems: 'center', cursor: 'pointer' }}>
-              <input type="checkbox" checked={maOn} onChange={(e) => setMaOn(e.target.checked)} />
-              Moyenne mobile
-            </label>
-            <select
-              value={maWindow}
-              onChange={(e) => setMaWindow(Number(e.target.value))}
-              disabled={!maOn}
-              style={{ opacity: maOn ? 1 : 0.5 }}
-              aria-label="Fenêtre de la moyenne mobile"
-            >
-              {MA_WINDOWS.map((w) => (
-                <option key={w} value={w}>
-                  {w} {granularityUnit(gran)}
-                </option>
-              ))}
-            </select>
+            {decayOn ? (
+              // La pondération globale pilote déjà le lissage : deux réglages
+              // concurrents (fenêtre plate + demi-vie) ne feraient qu'embrouiller.
+              <span
+                className="small"
+                style={{ color: 'var(--muted)' }}
+                data-tip={`Chaque point moyenne les ${granularityUnit(gran) === 'j' ? 'jours' : 'pas de temps'} qui le précèdent, le plus récent comptant le plus (demi-vie ${halfLife} ${granularityUnit(gran)}). Décochez « Pondération dégressive » pour revenir à la moyenne mobile.`}
+              >
+                Lissage : moyenne pondérée ({halfLife} {granularityUnit(gran)})
+              </span>
+            ) : (
+              <>
+                <label className="row small" style={{ gap: 6, alignItems: 'center', cursor: 'pointer' }}>
+                  <input type="checkbox" checked={maOn} onChange={(e) => setMaOn(e.target.checked)} />
+                  Moyenne mobile
+                </label>
+                <select
+                  value={maWindow}
+                  onChange={(e) => setMaWindow(Number(e.target.value))}
+                  disabled={!maOn}
+                  style={{ opacity: maOn ? 1 : 0.5 }}
+                  aria-label="Fenêtre de la moyenne mobile"
+                >
+                  {MA_WINDOWS.map((w) => (
+                    <option key={w} value={w}>
+                      {w} {granularityUnit(gran)}
+                    </option>
+                  ))}
+                </select>
+              </>
+            )}
           </div>
         </div>
         <p className="small" style={{ marginTop: 2 }}>
@@ -281,14 +367,17 @@ export function Stats() {
           {gran !== 'jour' &&
             ` Un point = ${gran === 'semaine' ? 'une semaine' : 'un mois'} (${buckets.length} au total), en moyenne PAR JOUR des jours enregistrés — comparable à la cible journalière.`}
           {selected.includes('vitD') && ' La vitamine D inclut l\'apport du soleil ☀️.'}
-          {maOn && ' La moyenne mobile lisse le bruit ; la courbe brute reste en trait fin.'}
+          {decayOn
+            ? ` Chaque point de la courbe épaisse est la moyenne pondérée des ${decayWindowDays(halfLife)} ${granularityUnit(gran)} qui le précèdent (demi-vie ${halfLife} ${granularityUnit(gran)}) : une carence comblée depuis s'efface, une carence installée reste. La courbe brute reste en trait fin.`
+            : maOn && ' La moyenne mobile lisse le bruit ; la courbe brute reste en trait fin.'}
           {logY && ' Axe log : les valeurs à 0 % (aucun apport) ne sont pas représentables et laissent un trou.'}
         </p>
         <MultiTrend
           series={series}
           windowDates={windowDates}
-          maOn={maOn}
-          maWindow={maWindow}
+          maOn={smoothOn}
+          maWindow={decayOn ? halfLife : maWindow}
+          maLabel={decayOn ? 'moy. pondérée' : 'moy. mobile'}
           maUnit={granularityUnit(gran)}
           logY={logY}
         />
@@ -296,9 +385,10 @@ export function Stats() {
       </div>
 
       <div className="panel">
-        <h2>Couverture moyenne vs objectifs</h2>
+        <h2>Couverture moyenne vs objectifs{decayOn && ' (pondérée)'}</h2>
         <p className="small" style={{ marginTop: -6 }}>
-          Barres triées du moins couvert au mieux couvert (moyenne/jour sur la période).{' '}
+          Barres triées du moins couvert au mieux couvert (moyenne/jour sur la période
+          {decayOn && `, pondérée : demi-vie ${halfLife} j`}).{' '}
           <span className="ref-legend ajr" /> AJR · <span className="ref-legend opti" /> objectif optimal (100 %).
           Cliquez un nutriment pour l'ajouter à la tendance. La vitamine D inclut l'apport du soleil ☀️.
         </p>
@@ -306,9 +396,11 @@ export function Stats() {
       </div>
 
       <div className="panel">
-        <h2>Répartition des calories (macros, moyenne/jour)</h2>
+        <h2>Répartition des calories (macros, moyenne/jour{decayOn && ' pondérée'})</h2>
         <MacroDonut totals={averages} />
       </div>
+
+      <PeriodAdviceCard byDate={byDateVitD} dates={recorded} daysLabel={`${days} j`} halfLife={halfLife} />
     </>
   );
 }
@@ -368,6 +460,7 @@ function MultiTrend({
   windowDates,
   maOn,
   maWindow,
+  maLabel,
   maUnit,
   logY,
 }: {
@@ -375,6 +468,8 @@ function MultiTrend({
   windowDates: string[];
   maOn: boolean;
   maWindow: number;
+  /** Nom du lissage dans l'info-bulle (« moy. mobile » ou « moy. pondérée »). */
+  maLabel: string;
   /** Unité d'un pas de temps (« j », « sem. », « mois »), pour la légende. */
   maUnit: string;
   logY: boolean;
@@ -515,7 +610,7 @@ function MultiTrend({
               </div>
             );
           })}
-          {maOn && <div className="small" style={{ marginTop: 4, color: C.muted }}>moyenne mobile {maWindow} {maUnit}</div>}
+          {maOn && <div className="small" style={{ marginTop: 4, color: C.muted }}>{maLabel} {maWindow} {maUnit}</div>}
         </Tooltip>
       )}
     </div>

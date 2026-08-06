@@ -1,7 +1,9 @@
 import { useMemo, useState } from 'react';
-import type { Nutrients } from '../nutrition/types';
-import { useStore, useEffectiveFoods } from '../store/store';
+import type { Nutrients, NutrientKey } from '../nutrition/types';
+import { useStore, useEffectiveFoods, dayTotals, isDayCounted, todayStr } from '../store/store';
 import { computeTargets } from '../nutrition/targets';
+import type { Target } from '../nutrition/targets';
+import { sunVitDForDate } from '../sun/vitaminD';
 import {
   dayAdvice,
   macroAdvice,
@@ -9,8 +11,22 @@ import {
   DAY_FOOD_SUGGESTIONS,
   MACRO_MAX_SUGGESTIONS,
   makeImportanceFn,
+  lowestCoverage,
+  decayWeight,
+  decayWindowDays,
+  decayWeightedTotals,
+  DECAY_HALF_LIFE_DEFAULT,
 } from '../nutrition/recommend';
-import type { DayAdviceItem, Suggestion, MacroAdvice, MacroSuggestion } from '../nutrition/recommend';
+import type {
+  DayAdviceItem,
+  Suggestion,
+  MacroAdvice,
+  MacroSuggestion,
+  AdviceScope,
+  WeightedDay,
+  LowCoverage,
+} from '../nutrition/recommend';
+import { HalfLifeSelector, shiftDays, weighDates } from './PeriodSelector';
 import { fmt } from './format';
 
 const KIND_ICON: Record<DayAdviceItem['kind'], string> = {
@@ -111,13 +127,31 @@ function MacroSection({ macro, consumedIds }: { macro: MacroAdvice; consumedIds:
 }
 
 /** Une alerte micronutriment : situation + suppléments/aliments qui la corrigent. */
-function AdviceItemCard({ it, consumedIds }: { it: DayAdviceItem; consumedIds: Set<string> }) {
+function AdviceItemCard({
+  it,
+  consumedIds,
+  exceeded,
+}: {
+  it: DayAdviceItem;
+  consumedIds: Set<string>;
+  /** Plafonds : « dépassé N jours sur M » de la fenêtre (mode « derniers jours »). */
+  exceeded?: { days: number; total: number };
+}) {
   const sugg = useSuggestionPage(it.foodSuggestions, DAY_FOOD_SUGGESTIONS);
   return (
     <div className="advice-item">
       <div className="small">
         {KIND_ICON[it.kind]} <strong>{it.target?.label ?? it.ratioLabel}</strong> — {it.text}
       </div>
+      {exceeded && (
+        <div
+          className="small"
+          style={{ opacity: 0.8, marginTop: 3 }}
+          data-tip="Une moyenne peut cacher un seul jour très excessif : ce compte dit si le dépassement est régulier ou isolé."
+        >
+          Plafond dépassé <strong>{exceeded.days} jour(s) sur {exceeded.total}</strong>.
+        </div>
+      )}
       {(it.supplements.length > 0 || it.foodSuggestions.length > 0) && (
         <div className="row advice-sugg" style={{ gap: 6, flexWrap: 'wrap', marginTop: 4 }}>
           {it.supplements.map((s) => (
@@ -134,13 +168,127 @@ function AdviceItemCard({ it, consumedIds }: { it: DayAdviceItem; consumedIds: S
 }
 
 /**
- * Conseils du jour : les points les plus « choquants » de la journée en cours
- * (plafond dépassé, rapport hors zone, nutriment très en retard), classés par
- * sévérité — avec pour chacun le supplément et/ou plusieurs aliments variés
- * (catégories différentes, dont un déjà connu si possible) qui règlent le
- * problème. Invisible tant que la journée est trop peu avancée pour juger.
+ * « Les plus bas en ce moment » : classement compact des nutriments les moins
+ * couverts, avec pour chacun la meilleure source alimentaire. Toujours présent,
+ * même quand rien ne déclenche d'alerte — c'est ce qui manque *relativement*,
+ * pas ce qui est alarmant.
  */
-export function DayAdviceCard({ totals }: { totals: Nutrients }) {
+function LowestBlock({ lows, scope, consumedIds }: { lows: LowCoverage[]; scope: AdviceScope; consumedIds: Set<string> }) {
+  if (lows.length === 0) {
+    return (
+      <div className="advice-item small" style={{ opacity: 0.8 }}>
+        ✅ Tous les nutriments suivis sont au-dessus de leur cible
+        {scope === 'jour' ? ' au rythme de la journée' : ' en moyenne'}.
+      </div>
+    );
+  }
+  return (
+    <div className="advice-item">
+      <div className="small" style={{ color: 'var(--muted)', marginBottom: 6 }}>
+        📊 Les plus bas {scope === 'jour' ? 'à cet instant' : 'en ce moment'} — classés par manque × importance, et
+        l'aliment le plus riche pour chacun.
+      </div>
+      <div className="low-list">
+        {lows.map((l) => {
+          const pct = Math.round(Math.min(1, l.coverage) * 100);
+          return (
+            <div key={l.target.key} className="low-row">
+              <span className="low-name small">{l.target.label}</span>
+              <span className="low-bar" data-tip={`${fmt(l.value, l.value < 10 ? 1 : 0)} ${l.target.unit} sur ${fmt(l.target.optimal, l.target.optimal < 10 ? 1 : 0)} ${l.target.unit} visés`}>
+                <span className="low-fill" style={{ width: `${pct}%` }} />
+              </span>
+              <span className="mono small low-pct">{pct} %</span>
+              {l.best && (
+                <span className="advice-chip low-food" data-tip={consumedIds.has(l.best.food.id) ? 'Déjà présent dans votre journal' : undefined}>
+                  {l.best.food.nom}
+                  {consumedIds.has(l.best.food.id) && <span className="advice-known">✓</span>}
+                  <span className="mono small" style={{ opacity: 0.75 }}>
+                    {' '}({fmt(l.best.portionG, l.best.portionG < 10 ? 1 : 0)} g → {fmt(l.best.amount, l.best.amount < 10 ? 1 : 0)} {l.target.unit})
+                  </span>
+                </span>
+              )}
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Fenêtre pondérée « ces derniers jours »
+// ---------------------------------------------------------------------------
+
+/**
+ * Fenêtre pondérée précédant `anchor` : les `decayWindowDays(halfLife)` jours
+ * qui le précèdent, jours non comptés (mutés, non remplis) exclus, vitamine D du
+ * soleil incluse comme dans le bilan du jour.
+ *
+ * Le jour d'ancrage lui-même est HORS fenêtre : encore en cours, il tirerait
+ * mécaniquement la moyenne vers le bas et ferait bouger le conseil à chaque
+ * repas saisi. Le mode « Aujourd'hui » reste là pour la journée courante.
+ */
+function useRecentDays(anchor: string, halfLife: number): WeightedDay[] {
+  const entries = useStore((s) => s.entries);
+  const mutedDays = useStore((s) => s.mutedDays);
+  const sunExposures = useStore((s) => s.sunExposures);
+  return useMemo(() => {
+    const filled = new Set(entries.map((e) => e.date));
+    const out: WeightedDay[] = [];
+    for (let age = 1; age <= decayWindowDays(halfLife); age++) {
+      const date = shiftDays(anchor, age);
+      if (!isDayCounted(mutedDays, filled.has(date), date)) continue;
+      const t = dayTotals(entries, date);
+      const sun = sunVitDForDate(sunExposures, date);
+      out.push({
+        date,
+        weight: decayWeight(age, halfLife),
+        totals: sun > 0 ? { ...t, vitD: t.vitD + sun } : t,
+      });
+    }
+    return out;
+  }, [entries, mutedDays, sunExposures, anchor, halfLife]);
+}
+
+/** Pour chaque nutriment « limite », le nombre de jours de la fenêtre au-dessus du plafond. */
+function countExceededDays(days: WeightedDay[], targets: Target[]): Map<NutrientKey, number> {
+  const m = new Map<NutrientKey, number>();
+  for (const t of targets) {
+    if (t.goal !== 'limit' || t.ajr <= 0) continue;
+    m.set(t.key, days.filter((d) => (d.totals[t.key] ?? 0) > t.ajr).length);
+  }
+  return m;
+}
+
+// ---------------------------------------------------------------------------
+// Corps commun : sections macros + micronutriments pour un total donné
+// ---------------------------------------------------------------------------
+
+/**
+ * Rendu des conseils pour UN total journalier — celui du jour ou une moyenne
+ * pondérée. Tout le moteur (`macroAdvice`, `dayAdvice`) est le même : seule la
+ * portée change, ce qui garantit que les deux modes disent la même chose des
+ * mêmes chiffres.
+ */
+function AdviceBody({
+  totals,
+  scope,
+  exceeded,
+  windowSize,
+  gate,
+}: {
+  totals: Nutrients;
+  scope: AdviceScope;
+  /** Jours dépassés par nutriment « limite » (mode « derniers jours »). */
+  exceeded?: Map<NutrientKey, number>;
+  /** Nombre de jours réellement agrégés (dénominateur du « N jours sur M »). */
+  windowSize?: number;
+  /**
+   * Seuil d'avancement de la journée : en portée « jour », les alertes
+   * micronutriments restent masquées tant que la journée est trop peu avancée.
+   */
+  gate?: { progress: number };
+}) {
   const profile = useStore((s) => s.profile);
   const entries = useStore((s) => s.entries);
   const nutrientImportance = useStore((s) => s.nutrientImportance);
@@ -155,61 +303,220 @@ export function DayAdviceCard({ totals }: { totals: Nutrients }) {
     return set;
   }, [entries]);
 
-  const kcalT = targets.find((t) => t.key === 'kcal');
-  const progress = kcalT && kcalT.optimal > 0 ? totals.kcal / kcalT.optimal : 0;
   const items = useMemo(
-    () => dayAdvice(totals, targets, foods, consumedIds, importance),
-    [totals, targets, foods, consumedIds, importance],
+    () => dayAdvice(totals, targets, foods, consumedIds, importance, scope),
+    [totals, targets, foods, consumedIds, importance, scope],
   );
   const macro = useMemo(
-    () => macroAdvice(totals, targets, foods, consumedIds, importance),
-    [totals, targets, foods, consumedIds, importance],
+    () => macroAdvice(totals, targets, foods, consumedIds, importance, scope),
+    [totals, targets, foods, consumedIds, importance, scope],
   );
 
-  // La section macros (kcal/protéines restantes) n'est pas soumise au seuil
-  // des 30 % : elle est utile dès la première entrée de la journée. Les
-  // alertes micronutriments (items), elles, restent masquées avant ce seuil.
-  if (!macro && progress < DAY_MIN_PROGRESS) return null;
+  const lows = useMemo(
+    () => lowestCoverage(totals, targets, foods, importance, scope),
+    [totals, targets, foods, importance, scope],
+  );
 
-  const nothing = !macro && items.length === 0;
+  /**
+   * Avant 30 % des calories du jour, les couvertures ne veulent rien dire : un
+   * seul petit-déjeuner mettrait tout le monde « très bas ». On le DIT, au lieu
+   * de faire disparaître la section.
+   */
+  const belowGate = gate != null && gate.progress < DAY_MIN_PROGRESS;
+
+  return (
+    <>
+      {macro && (
+        <>
+          <h3 className="advice-subhead">🍗 Compléter tes macros</h3>
+          <MacroSection macro={macro} consumedIds={consumedIds} />
+        </>
+      )}
+      <h3 className="advice-subhead">🔬 Micronutriments &amp; équilibre</h3>
+      {belowGate ? (
+        <div className="small" style={{ opacity: 0.7 }}>
+          ⏳ Conseils micronutriments disponibles à partir de 30 % des calories du jour (actuellement{' '}
+          {fmt(gate!.progress * 100)} %).
+        </div>
+      ) : (
+        <div className="advice-list">
+          <LowestBlock lows={lows} scope={scope} consumedIds={consumedIds} />
+          {items.length > 0 ? (
+            items.map((it, i) => {
+              const days = it.kind === 'excess' && it.target ? exceeded?.get(it.target.key) : undefined;
+              return (
+                <AdviceItemCard
+                  key={`${it.target?.key ?? it.ratioLabel ?? i}`}
+                  it={it}
+                  consumedIds={consumedIds}
+                  exceeded={days != null && windowSize ? { days, total: windowSize } : undefined}
+                />
+              );
+            })
+          ) : (
+            <div className="small" style={{ opacity: 0.7 }}>
+              ✅ Aucune alerte : aucun plafond dépassé, aucun rapport hors zone, rien sous 45 % du rythme attendu.
+            </div>
+          )}
+        </div>
+      )}
+    </>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Carte de l'écran Aujourd'hui (bascule jour ↔ derniers jours)
+// ---------------------------------------------------------------------------
+
+/**
+ * Conseils : les points les plus « choquants » de la journée en cours (plafond
+ * dépassé, rapport hors zone, nutriment très en retard), classés par sévérité —
+ * avec pour chacun le supplément et/ou plusieurs aliments variés (catégories
+ * différentes, dont un déjà connu si possible) qui règlent le problème.
+ *
+ * Une bascule change la carte ENTIÈRE de portée : « Ces derniers jours »
+ * remplace le total du jour par une moyenne pondérée des journées précédentes
+ * (le récent pèse plus, demi-vie réglable). Un manque installé — « vous étiez en
+ * manque de X ces derniers jours » — ne se voit pas sur une seule journée, qui
+ * peut être bonne ou mauvaise par hasard.
+ */
+export function DayAdviceCard({ totals, date }: { totals: Nutrients; date?: string }) {
+  const profile = useStore((s) => s.profile);
+  const targets = useMemo(() => computeTargets(profile), [profile]);
+
+  const [scope, setScope] = useState<AdviceScope>('jour');
+  const [halfLife, setHalfLife] = useState(DECAY_HALF_LIFE_DEFAULT);
+
+  const anchor = date ?? todayStr();
+  const recentDays = useRecentDays(anchor, halfLife);
+  const recentTotals = useMemo(() => decayWeightedTotals(recentDays), [recentDays]);
+  const exceeded = useMemo(() => countExceededDays(recentDays, targets), [recentDays, targets]);
+
+  const kcalT = targets.find((t) => t.key === 'kcal');
+  const progress = kcalT && kcalT.optimal > 0 ? totals.kcal / kcalT.optimal : 0;
+
+  // La carte disparaît quand la journée est trop peu avancée pour être jugée —
+  // sauf en mode « derniers jours », qui ne parle pas de la journée en cours.
+  const macroWorthShowing = totals.kcal > 0;
+  if (scope === 'jour' && !macroWorthShowing && progress < DAY_MIN_PROGRESS) return null;
+
+  const scopeSwitch = (
+    <div className="row" style={{ gap: 4, alignItems: 'center', flexWrap: 'wrap' }}>
+      <button
+        className={`small ${scope === 'jour' ? 'chip-active' : 'ghost'}`}
+        onClick={() => setScope('jour')}
+        data-tip="Conseils sur la seule journée affichée"
+      >
+        {anchor === todayStr() ? "Aujourd'hui" : 'Ce jour'}
+      </button>
+      <button
+        className={`small ${scope === 'recents' ? 'chip-active' : 'ghost'}`}
+        onClick={() => setScope('recents')}
+        data-tip="Conseils sur une moyenne pondérée des jours précédents : les manques installés, plutôt que les hasards d'une journée"
+      >
+        Ces derniers jours
+      </button>
+      {scope === 'recents' && <HalfLifeSelector value={halfLife} onChange={setHalfLife} />}
+    </div>
+  );
 
   return (
     <div className="panel">
-      <h2>💡 Conseils du jour</h2>
-      {nothing ? (
-        <div className="small" style={{ opacity: 0.8 }}>✅ Rien d'alarmant pour l'instant — la journée suit les objectifs.</div>
-      ) : (
-        <>
-          {macro && (
-            <>
-              <h3 className="advice-subhead">🍗 Compléter tes macros</h3>
-              <MacroSection macro={macro} consumedIds={consumedIds} />
-            </>
-          )}
-          {items.length > 0 ? (
-            <>
-              {macro && <h3 className="advice-subhead">🔬 Micronutriments &amp; équilibre</h3>}
-              <div className="advice-list">
-                {items.map((it, i) => (
-                  <AdviceItemCard key={`${it.target?.key ?? it.ratioLabel ?? i}`} it={it} consumedIds={consumedIds} />
-                ))}
-              </div>
-            </>
-          ) : macro && progress < DAY_MIN_PROGRESS ? (
-            <>
-              <h3 className="advice-subhead">🔬 Micronutriments &amp; équilibre</h3>
-              <div className="small" style={{ opacity: 0.7 }}>
-                ⏳ Conseils micronutriments disponibles à partir de 30 % des calories du jour (actuellement{' '}
-                {fmt(progress * 100)} %).
-              </div>
-            </>
-          ) : null}
-        </>
-      )}
-      <div className="hint" style={{ marginTop: 8 }}>
-        Basé sur la journée en cours, rapportée à son avancement calorique ({fmt(Math.min(100, progress * 100))} % de
-        l'objectif). L'analyse complète sur plusieurs jours est dans l'onglet Stats.
+      <div className="row" style={{ justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: 8 }}>
+        <h2 style={{ margin: 0 }}>💡 Conseils {scope === 'jour' ? 'du jour' : 'des derniers jours'}</h2>
+        {scopeSwitch}
       </div>
+      <div style={{ marginTop: 8 }}>
+        {scope === 'recents' && recentDays.length === 0 ? (
+          <div className="small" style={{ opacity: 0.8 }}>
+            Aucun jour enregistré dans les {decayWindowDays(halfLife)} jours précédents — rien à moyenner.
+          </div>
+        ) : (
+          <AdviceBody
+            key={scope}
+            totals={scope === 'jour' ? totals : recentTotals}
+            scope={scope}
+            exceeded={exceeded}
+            windowSize={recentDays.length}
+            gate={scope === 'jour' ? { progress } : undefined}
+          />
+        )}
+      </div>
+      <div className="hint" style={{ marginTop: 8 }}>
+        {scope === 'jour' ? (
+          <>
+            Basé sur la journée en cours, rapportée à son avancement calorique (
+            {fmt(Math.min(100, progress * 100))} % de l'objectif). L'analyse complète sur plusieurs jours est dans
+            l'onglet Stats.
+          </>
+        ) : (
+          <>
+            Moyenne pondérée des {recentDays.length} jour(s) enregistré(s) parmi les {decayWindowDays(halfLife)}{' '}
+            précédents (demi-vie {halfLife} j : hier compte ~{fmt(decayWeight(1, halfLife) * 100, 0)} %, il y a une
+            semaine ~{fmt(decayWeight(7, halfLife) * 100, 0)} %). La journée en cours est exclue : incomplète, elle
+            tirerait la moyenne vers le bas.
+          </>
+        )}
+      </div>
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Carte de l'écran Stats (pondération sur la période choisie)
+// ---------------------------------------------------------------------------
+
+/**
+ * Mêmes conseils, appliqués à la PÉRIODE sélectionnée dans Stats plutôt qu'à une
+ * fenêtre déduite de la demi-vie : le récent y pèse plus, mais tous les jours de
+ * la période comptent. Repliée par défaut — Stats est déjà dense, et c'est une
+ * lecture qu'on demande, pas qu'on subit.
+ */
+export function PeriodAdviceCard({
+  byDate,
+  dates,
+  daysLabel,
+  halfLife,
+}: {
+  /** Totaux par jour, vitamine D du soleil incluse (`byDateVitD` de la période). */
+  byDate: Map<string, Nutrients>;
+  /** Jours COMPTÉS de la période, triés du plus ancien au plus récent. */
+  dates: string[];
+  /** Libellé de la période, pour la phrase d'explication (« 30 jours »). */
+  daysLabel: string;
+  /** Demi-vie de la pondération — celle de l'écran, réglée une seule fois en haut. */
+  halfLife: number;
+}) {
+  const profile = useStore((s) => s.profile);
+  const targets = useMemo(() => computeTargets(profile), [profile]);
+  const [open, setOpen] = useState(false);
+
+  const weighted = useMemo(() => weighDates(dates, byDate, halfLife), [dates, byDate, halfLife]);
+  const totals = useMemo(() => decayWeightedTotals(weighted), [weighted]);
+  const exceeded = useMemo(() => countExceededDays(weighted, targets), [weighted, targets]);
+
+  return (
+    <div className="panel">
+      <div className="row" style={{ justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: 8 }}>
+        <h2 style={{ margin: 0 }}>💡 Conseils sur la période</h2>
+        <button className={open ? 'ghost' : 'primary'} onClick={() => setOpen((v) => !v)}>
+          {open ? 'Masquer' : '💡 Analyser la période'}
+        </button>
+      </div>
+      {open &&
+        (weighted.length === 0 ? (
+          <div className="empty">Aucun jour enregistré sur cette période.</div>
+        ) : (
+          <>
+            <p className="small" style={{ marginTop: 2 }}>
+              Mêmes conseils que sur l'écran Aujourd'hui, mais calculés sur une <strong>moyenne pondérée</strong> des{' '}
+              {weighted.length} jour(s) enregistré(s) de la période ({daysLabel}) : le jour le plus récent compte 1, et
+              chaque demi-vie de {halfLife} j divise le poids par deux. Un manque récent ressort donc plus fort qu'un
+              manque ancien déjà corrigé. La demi-vie se règle en haut de l'écran.
+            </p>
+            <AdviceBody totals={totals} scope="recents" exceeded={exceeded} windowSize={weighted.length} />
+          </>
+        ))}
     </div>
   );
 }

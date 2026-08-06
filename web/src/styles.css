@@ -1023,6 +1023,26 @@ button.chip-active:hover { filter: brightness(1.08); }
 .advice-subhead:first-of-type { margin-top: 4px; }
 .advice-macro { border-color: var(--accent); }
 
+/* « Les plus bas en ce moment » : une ligne par nutriment, barre de couverture
+   et aliment le plus riche. Le nom et la barre gardent une largeur fixe pour que
+   les barres s'alignent d'une ligne à l'autre — c'est la comparaison qui compte. */
+.low-list { display: flex; flex-direction: column; gap: 5px; }
+.low-row { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.low-name { flex: 0 0 108px; font-weight: 600; }
+.low-bar {
+  flex: 0 0 84px; height: 7px; border-radius: 999px;
+  background: var(--bg); border: 1px solid var(--border); overflow: hidden;
+}
+.low-fill { display: block; height: 100%; background: var(--grad); }
+.low-pct { flex: 0 0 38px; text-align: right; color: var(--muted); }
+.low-food { flex: 0 1 auto; min-width: 0; }
+@media (max-width: 520px) {
+  .low-name { flex-basis: 88px; }
+  .low-bar { flex-basis: 56px; }
+  /* L'aliment passe à la ligne plutôt que de comprimer la barre. */
+  .low-food { flex-basis: 100%; margin-left: 0; }
+}
+
 .reco-h3 { margin: 14px 0 6px; font-size: 15px; }
 .reco-list { display: flex; flex-direction: column; gap: 8px; }
 .reco-row {

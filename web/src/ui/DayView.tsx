@@ -81,7 +81,7 @@ export function DayView({ date }: { date: string }) {
       )}
       <Sun key={`sun-${date}`} date={isToday ? undefined : date} />
       <DayNote key={`note-${date}`} date={date} />
-      <DayAdviceCard totals={totals} />
+      <DayAdviceCard key={`advice-${date}`} totals={totals} date={date} />
     </>
   );
 }
