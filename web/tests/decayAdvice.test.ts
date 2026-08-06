@@ -96,12 +96,28 @@ describe('classement « les plus bas en ce moment »', () => {
     expect(keys).toEqual(['vitC']);
   });
 
-  it('l’importance départage : un petit manque important passe devant un gros manque secondaire', () => {
+  it('l’importance départage le classement par rang, hors garantie brute', () => {
     const totals = { ...EMPTY_NUTRIENTS, kcal: 2000, vitB9: 200, vitC: 10 };
-    // vitC manque bien plus, mais si B9 est jugé 5× plus important il passe devant.
+    // vitC manque bien plus, mais si B9 est jugé 5× plus important il passe devant
+    // — la garantie brute (testée séparément) est désactivée ici pour isoler le tri par rang.
     const imp = (k: string) => (k === 'vitB9' ? 5 : 0.2);
-    const keys = lowestCoverage(totals, targets, [], imp as never, 'recents').map((l) => l.target.key);
+    const keys = lowestCoverage(totals, targets, [], imp as never, 'recents', undefined, 0).map((l) => l.target.key);
     expect(keys[0]).toBe('vitB9');
+  });
+
+  it('les nutriments les plus manquants en brut sont toujours en tête, même peu importants', () => {
+    const manyTargets = [
+      ...targets,
+      target({ key: 'vitD', goal: 'atLeast', unit: 'µg', optimal: 10 }),
+      target({ key: 'vitE', goal: 'atLeast', unit: 'mg', optimal: 10 }),
+    ];
+    // vitB9 est très important mais presque couvert (90 %) ; vitC/vitD/vitE manquent
+    // bien plus mais sont jugés sans importance — ils doivent quand même apparaître en tête.
+    const totals = { ...EMPTY_NUTRIENTS, kcal: 2000, vitB9: 360, vitC: 5, vitD: 1, vitE: 1 };
+    const imp = (k: string) => (k === 'vitB9' ? 10 : 0.1);
+    const keys = lowestCoverage(totals, manyTargets, [], imp as never, 'recents').map((l) => l.target.key);
+    expect(keys.slice(0, 3).sort()).toEqual(['vitC', 'vitD', 'vitE']);
+    expect(keys).toContain('vitB9');
   });
 
   it('en portée « jour », la couverture est rapportée à l’avancement calorique', () => {

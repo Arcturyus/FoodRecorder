@@ -18,7 +18,6 @@ import {
 import type { Granularity } from './PeriodSelector';
 import { decayWeight, decayWindowDays } from '../nutrition/recommend';
 import { usePeriodNutrition } from './usePeriodNutrition';
-import { PeriodAdviceCard } from './DayAdvice';
 import { fmt } from './format';
 
 /** Toutes les clés de nutriments (moyennes par groupe de dates). */
@@ -276,7 +275,7 @@ export function Stats() {
           <label
             className="row small"
             style={{ gap: 6, alignItems: 'center', cursor: 'pointer' }}
-            data-tip="Les jours récents pèsent plus que les anciens dans TOUT l'écran : courbes lissées, couverture moyenne, répartition des macros et conseils. Répond à « où j'en suis en ce moment » plutôt qu'à « quelle a été ma moyenne sur la période »."
+            data-tip="Les jours récents pèsent plus que les anciens dans TOUT l'écran : courbes lissées, couverture moyenne, répartition des macros. Répond à « où j'en suis en ce moment » plutôt qu'à « quelle a été ma moyenne sur la période »."
           >
             <input type="checkbox" checked={decayOn} onChange={(e) => setDecayOn(e.target.checked)} />
             Pondération dégressive
@@ -284,7 +283,7 @@ export function Stats() {
           <HalfLifeSelector
             value={halfLife}
             onChange={setHalfLife}
-            tip={`Vitesse à laquelle un jour perd son influence : à ${halfLife} j d'écart il compte moitié moins, et au-delà de ${decayWindowDays(halfLife)} jours il ne pèse plus rien. Sert à la pondération dégressive et aux conseils sur la période.`}
+            tip={`Vitesse à laquelle un jour perd son influence : à ${halfLife} j d'écart il compte moitié moins, et au-delà de ${decayWindowDays(halfLife)} jours il ne pèse plus rien. Sert à la pondération dégressive de cet écran.`}
           />
         </div>
         <div className="hint">
@@ -400,7 +399,6 @@ export function Stats() {
         <MacroDonut totals={averages} />
       </div>
 
-      <PeriodAdviceCard byDate={byDateVitD} dates={recorded} daysLabel={`${days} j`} halfLife={halfLife} />
     </>
   );
 }

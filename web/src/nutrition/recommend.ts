@@ -624,7 +624,15 @@ export function dayAdvice(
 // ---------------------------------------------------------------------------
 
 /** Nombre de nutriments listés dans le classement des manques. */
-export const LOWEST_COUNT = 5;
+export const LOWEST_COUNT = 10;
+
+/**
+ * Parmi ce total, le nombre toujours en tête de liste, classé par manque BRUT
+ * (indépendamment de l'importance) : sans ça, un nutriment très en retard mais
+ * jugé secondaire disparaît derrière des manques plus légers mais plus
+ * importants, et donne l'impression trompeuse qu'il est couvert.
+ */
+export const LOWEST_RAW_GUARANTEED = 3;
 
 /**
  * Nutriments écartés du classement : la créatine s'obtient surtout par
@@ -657,6 +665,11 @@ export interface LowCoverage {
  * Le tri est celui des alertes — manque × importance — pour que les deux listes
  * racontent la même histoire, et il ne retient que les nutriments « à couvrir »
  * hors calories et macros secondaires, qui ont leur propre section.
+ *
+ * Les `guaranteedRaw` premières places reviennent au manque BRUT (coverage la
+ * plus basse), sans pondérer par l'importance : le reste, classé manque ×
+ * importance, complète jusqu'à `limit`. Ça évite qu'un nutriment secondaire
+ * très en retard soit invisible juste parce que rien ne le juge important.
  */
 export function lowestCoverage(
   totals: Nutrients,
@@ -665,6 +678,7 @@ export function lowestCoverage(
   importance: ImportanceFn = NEUTRAL_IMPORTANCE,
   scope: AdviceScope = 'jour',
   limit = LOWEST_COUNT,
+  guaranteedRaw = LOWEST_RAW_GUARANTEED,
 ): LowCoverage[] {
   const kcalT = targets.find((t) => t.key === 'kcal');
   // Rythme attendu : en portée « jour », un nutriment n'est pas « bas » s'il
@@ -674,7 +688,7 @@ export function lowestCoverage(
       ? Math.min(1, Math.max(totals.kcal / kcalT.optimal, 0.01))
       : 1;
 
-  return targets
+  const candidates = targets
     .filter((t) => t.goal === 'atLeast' && t.key !== 'kcal' && t.optimal > 0)
     .filter((t) => !MACRO_SECONDARY_KEYS.includes(t.key))
     .filter((t) => !LOWEST_EXCLUDED.includes(t.key) && importance(t.key) > 0)
@@ -682,17 +696,22 @@ export function lowestCoverage(
       const coverage = totals[t.key] / t.optimal / p;
       return { t, coverage, rank: (1 - Math.min(1, coverage)) * importance(t.key) };
     })
-    .filter(({ coverage }) => coverage < 1) // rien à dire d'un nutriment déjà couvert
-    .sort((a, b) => b.rank - a.rank || a.coverage - b.coverage)
-    .slice(0, limit)
-    .map(({ t, coverage }) => {
-      const missing = Math.max(0, t.optimal - totals[t.key]);
-      // Pas de `consumedIds` ici : sur UNE seule suggestion, la garantie « au
-      // moins un aliment déjà mangé » remplacerait la meilleure source par une
-      // source familière parfois bien plus pauvre.
-      const best = topSourcesFor(t.key, missing || t.optimal, foods, { supplements: false, limit: 1 })[0];
-      return { target: t, value: totals[t.key], coverage, missing, best: best ?? null };
-    });
+    .filter(({ coverage }) => coverage < 1); // rien à dire d'un nutriment déjà couvert
+
+  const raw = [...candidates].sort((a, b) => a.coverage - b.coverage).slice(0, guaranteedRaw);
+  const rawKeys = new Set(raw.map(({ t }) => t.key));
+  const ranked = candidates
+    .filter(({ t }) => !rawKeys.has(t.key))
+    .sort((a, b) => b.rank - a.rank || a.coverage - b.coverage);
+
+  return [...raw, ...ranked.slice(0, Math.max(0, limit - raw.length))].map(({ t, coverage }) => {
+    const missing = Math.max(0, t.optimal - totals[t.key]);
+    // Pas de `consumedIds` ici : sur UNE seule suggestion, la garantie « au
+    // moins un aliment déjà mangé » remplacerait la meilleure source par une
+    // source familière parfois bien plus pauvre.
+    const best = topSourcesFor(t.key, missing || t.optimal, foods, { supplements: false, limit: 1 })[0];
+    return { target: t, value: totals[t.key], coverage, missing, best: best ?? null };
+  });
 }
 
 function roundNeed(v: number): number {

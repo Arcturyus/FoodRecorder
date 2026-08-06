@@ -26,7 +26,7 @@ import type {
   WeightedDay,
   LowCoverage,
 } from '../nutrition/recommend';
-import { HalfLifeSelector, shiftDays, weighDates } from './PeriodSelector';
+import { HalfLifeSelector, shiftDays } from './PeriodSelector';
 import { fmt } from './format';
 
 const KIND_ICON: Record<DayAdviceItem['kind'], string> = {
@@ -462,61 +462,3 @@ export function DayAdviceCard({ totals, date }: { totals: Nutrients; date?: stri
   );
 }
 
-// ---------------------------------------------------------------------------
-// Carte de l'écran Stats (pondération sur la période choisie)
-// ---------------------------------------------------------------------------
-
-/**
- * Mêmes conseils, appliqués à la PÉRIODE sélectionnée dans Stats plutôt qu'à une
- * fenêtre déduite de la demi-vie : le récent y pèse plus, mais tous les jours de
- * la période comptent. Repliée par défaut — Stats est déjà dense, et c'est une
- * lecture qu'on demande, pas qu'on subit.
- */
-export function PeriodAdviceCard({
-  byDate,
-  dates,
-  daysLabel,
-  halfLife,
-}: {
-  /** Totaux par jour, vitamine D du soleil incluse (`byDateVitD` de la période). */
-  byDate: Map<string, Nutrients>;
-  /** Jours COMPTÉS de la période, triés du plus ancien au plus récent. */
-  dates: string[];
-  /** Libellé de la période, pour la phrase d'explication (« 30 jours »). */
-  daysLabel: string;
-  /** Demi-vie de la pondération — celle de l'écran, réglée une seule fois en haut. */
-  halfLife: number;
-}) {
-  const profile = useStore((s) => s.profile);
-  const targets = useMemo(() => computeTargets(profile), [profile]);
-  const [open, setOpen] = useState(false);
-
-  const weighted = useMemo(() => weighDates(dates, byDate, halfLife), [dates, byDate, halfLife]);
-  const totals = useMemo(() => decayWeightedTotals(weighted), [weighted]);
-  const exceeded = useMemo(() => countExceededDays(weighted, targets), [weighted, targets]);
-
-  return (
-    <div className="panel">
-      <div className="row" style={{ justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: 8 }}>
-        <h2 style={{ margin: 0 }}>💡 Conseils sur la période</h2>
-        <button className={open ? 'ghost' : 'primary'} onClick={() => setOpen((v) => !v)}>
-          {open ? 'Masquer' : '💡 Analyser la période'}
-        </button>
-      </div>
-      {open &&
-        (weighted.length === 0 ? (
-          <div className="empty">Aucun jour enregistré sur cette période.</div>
-        ) : (
-          <>
-            <p className="small" style={{ marginTop: 2 }}>
-              Mêmes conseils que sur l'écran Aujourd'hui, mais calculés sur une <strong>moyenne pondérée</strong> des{' '}
-              {weighted.length} jour(s) enregistré(s) de la période ({daysLabel}) : le jour le plus récent compte 1, et
-              chaque demi-vie de {halfLife} j divise le poids par deux. Un manque récent ressort donc plus fort qu'un
-              manque ancien déjà corrigé. La demi-vie se règle en haut de l'écran.
-            </p>
-            <AdviceBody totals={totals} scope="recents" exceeded={exceeded} windowSize={weighted.length} />
-          </>
-        ))}
-    </div>
-  );
-}
