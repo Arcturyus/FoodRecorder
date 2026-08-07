@@ -40,6 +40,23 @@ export interface RdaEntry {
   /** goal `limit` : cible basse idéale (« le plus bas raisonnable »), sous le plafond. */
   optimalLow?: number;
   /**
+   * Seuil de PRUDENCE haut, dans l'unité du nutriment : au-delà, l'excès n'est
+   * plus anodin. C'est la limite supérieure de sécurité officielle quand elle
+   * existe et qu'elle porte sur l'apport TOTAL (EFSA, à défaut IOM) ; sinon un
+   * repère assumé, toujours justifié dans le texte du guide (`NUTRIENT_GUIDE`).
+   * Absent = aucun excès connu par l'alimentation (vitamines B1, B2, B5, B12,
+   * K1, K2…) : ces nutriments n'ont alors PAS de barre d'excès, plutôt qu'une
+   * limite inventée pour faire joli.
+   */
+  upper?: number;
+  /**
+   * Dose à laquelle des effets délétères ont réellement été OBSERVÉS chez
+   * l'humain — presque toujours bien au-dessus de `upper`, qui garde une marge.
+   * Sert de fin d'échelle à la barre d'excès : entre les deux, on est dans la
+   * zone « à ne pas y rester », pas dans la zone « danger ».
+   */
+  toxic?: number;
+  /**
    * Sous-détail d'un autre nutriment (ex. C16+C14 ⊂ AG saturés). Il garde une
    * cible propre — donc il compte dans le score et les recommandations — mais
    * n'a PAS sa tuile dans le bilan du jour : il s'affiche sous celle du parent,
@@ -74,7 +91,7 @@ export const RDA: RdaEntry[] = [
     optimalNote: '≈ 30-35 % de l\'énergie. La qualité (voir oméga et rapports) prime sur la quantité.',
   },
   {
-    key: 'fibres', label: 'Fibres', unit: 'g', rda: 30, goal: 'atLeast', optimalFactor: 1.2,
+    key: 'fibres', label: 'Fibres', unit: 'g', rda: 30, goal: 'atLeast', optimalFactor: 1.2, upper: 60,
     role: 'Transit, satiété, contrôle glycémique et nourriture du microbiote intestinal.',
     optimalNote: 'AS ≈ 30 g ; viser ~36 g apporte un bénéfice cardiométabolique supplémentaire.',
   },
@@ -96,7 +113,7 @@ export const RDA: RdaEntry[] = [
     optimalNote: 'Repère HAUT et volontairement souple (18 g/j, idéal ≤ 12 g), poids d\'importance faible : les études en milieu contrôlé en ont fait manger jusqu\'à ~11 % de l\'énergie (≈ 24 g/j) sans voir bouger le LDL, et un apport courant est de 5-8 g. Il n\'est pas laissé totalement libre car il fait un peu baisser le HDL, il est soupçonné de favoriser l\'agrégation plaquettaire, et il n\'arrive presque jamais seul (le palmitique l\'accompagne).',
   },
   {
-    key: 'agTrans', label: 'AG trans', unit: 'g', rda: 2, goal: 'limit', optimalLow: 0,
+    key: 'agTrans', label: 'AG trans', unit: 'g', rda: 2, goal: 'limit', optimalLow: 0, toxic: 4,
     role: 'Graisses industrielles (huiles partiellement hydrogénées, fritures, viennoiseries) ; trace naturelle chez les ruminants (bœuf, agneau, produits laitiers).',
     optimalNote: 'OMS : ne pas dépasser 1 % de l\'énergie (≈ 2 g/2000 kcal). Contrairement aux AG saturés, aucun seuil n\'est considéré sûr : viser 0.',
   },
@@ -105,11 +122,11 @@ export const RDA: RdaEntry[] = [
     role: 'Graisses « cœur-protectrices » (huile d\'olive, avocat) qui améliorent le profil lipidique.',
   },
   {
-    key: 'agPolyInsatures', label: 'AG poly-insaturés', unit: 'g', rda: 15, goal: 'atLeast', optimalFactor: 1,
+    key: 'agPolyInsatures', label: 'AG poly-insaturés', unit: 'g', rda: 15, goal: 'atLeast', optimalFactor: 1, upper: 24,
     role: 'Contiennent les acides gras essentiels oméga 3 et 6 ; membranes cellulaires, signalisation.',
   },
   {
-    key: 'omega3', label: 'Oméga 3', unit: 'g', rda: 1, goal: 'atLeast', optimalFactor: 2, importance: 1.5,
+    key: 'omega3', label: 'Oméga 3', unit: 'g', rda: 1, goal: 'atLeast', optimalFactor: 2, importance: 1.5, upper: 5,
     role: 'Anti-inflammatoire ; EPA/DHA soutiennent cœur, cerveau et récupération musculaire.',
     optimalNote: 'Équivalent pondéré = ALA ÷ 10 + EPA + DHA (l\'ALA végétal est mal converti par le corps, ~10 % de rendement) ; c\'est cette valeur qui compte pour la cible, les rapports et le score. Plancher 1 g, optimal 2 g d\'équivalent : l\'essentiel doit venir de l\'EPA/DHA direct (l\'ALA, même à ~2 g, ne pèse que ~0,2 g éq.). ~2 portions de poisson gras/semaine ≈ 250-500 mg/j d\'EPA+DHA ; pour viser l\'optimal sans poisson quotidien, appoint d\'huile de poisson/algue.',
   },
@@ -123,61 +140,68 @@ export const RDA: RdaEntry[] = [
     role: 'Acide oléique (non essentiel) ; contribue au bon profil lipidique.',
   },
   {
-    key: 'fer', label: 'Fer', unit: 'mg', rda: 9, goal: 'atLeast', optimalFactor: 1,
+    key: 'fer', label: 'Fer', unit: 'mg', rda: 9, goal: 'atLeast', optimalFactor: 1, upper: 45, toxic: 60,
     role: 'Transport de l\'oxygène (hémoglobine) et production d\'énergie ; clé pour l\'endurance.',
     optimalNote: 'Homme : 9 mg, les pertes sont faibles. Femme : 15-18 mg si les règles sont là, sinon comme l\'homme ; 27 mg enceinte. En excès le fer est pro-oxydant (détail dans le Guide).',
   },
   {
-    key: 'magnesium', label: 'Magnésium', unit: 'mg', rda: 375, goal: 'atLeast', optimalFactor: 1.15,
+    // upper 700 : l'EFSA ne limite que le magnésium AJOUTÉ (250 mg de sels en
+    // supplément) — l'alimentaire n'a pas de plafond. 700 ≈ apport courant élevé
+    // + une dose de complément : au-delà, c'est forcément de la supplémentation.
+    key: 'magnesium', label: 'Magnésium', unit: 'mg', rda: 375, goal: 'atLeast', optimalFactor: 1.15, upper: 700,
     role: '300+ réactions enzymatiques : contraction musculaire, production d\'énergie (ATP), sommeil.',
     optimalNote: 'Pertes accrues par la sueur : viser le haut de la fourchette (~430 mg) chez le sportif.',
   },
   {
-    key: 'potassium', label: 'Potassium', unit: 'mg', rda: 3500, goal: 'atLeast', optimalFactor: 1.15,
+    key: 'potassium', label: 'Potassium', unit: 'mg', rda: 3500, goal: 'atLeast', optimalFactor: 1.15, upper: 6000,
     role: 'Équilibre hydrique, tension artérielle et transmission nerveuse/musculaire.',
     optimalNote: 'AS ≈ 3500 mg ; viser ~4000 mg soutient une tension basse. Le rapport avec le sodium compte (voir Nutriments).',
   },
   {
-    key: 'calcium', label: 'Calcium', unit: 'mg', rda: 950, goal: 'atLeast', optimalFactor: 1,
+    key: 'calcium', label: 'Calcium', unit: 'mg', rda: 950, goal: 'atLeast', optimalFactor: 1, upper: 2500, toxic: 4000,
     role: 'Minéralisation osseuse, contraction musculaire et coagulation.',
     optimalNote: 'Inutile de dépasser ~1000 mg ; l\'excès sans vitamine K2/D peut favoriser les calcifications.',
   },
   {
-    key: 'zinc', label: 'Zinc', unit: 'mg', rda: 11, goal: 'atLeast', optimalFactor: 1.1,
+    key: 'zinc', label: 'Zinc', unit: 'mg', rda: 11, goal: 'atLeast', optimalFactor: 1.1, upper: 25, toxic: 50,
     role: 'Immunité, synthèse protéique, testostérone et cicatrisation.',
     optimalNote: 'Pertes par la sueur chez le sportif ; ne pas dépasser durablement 25 mg (antagonise le cuivre).',
   },
   {
-    key: 'sodium', label: 'Sodium', unit: 'mg', rda: 2000, goal: 'limit', optimalLow: 1500,
+    // Plafond relevé de 2000 à 3000 mg : l'objectif OMS est le plus contesté de
+    // toutes les recommandations (courbe en J de PURE, cf. le guide). 3000 mg est
+    // le bas de la zone où les cohortes ne voient plus de sur-risque ; l'ancien
+    // plafond OMS devient la cible basse idéale.
+    key: 'sodium', label: 'Sodium', unit: 'mg', rda: 3000, goal: 'limit', optimalLow: 2000, toxic: 5000,
     role: 'Équilibre hydrique et influx nerveux, mais l\'excès élève la tension artérielle.',
-    optimalNote: 'Plafond OMS ≈ 2000 mg (≈ 5 g de sel) ; idéal vers 1500 mg. Un peu plus toléré si transpiration abondante.',
+    optimalNote: 'Plafond retenu 3000 mg (≈ 7,5 g de sel), idéal vers 2000 mg — au-dessus de l\'objectif OMS (2000 mg), qui est le seuil le plus discuté de la nutrition. Un peu plus toléré si transpiration abondante.',
   },
   {
-    key: 'selenium', label: 'Sélénium', unit: 'µg', rda: 70, goal: 'atLeast', optimalFactor: 1,
+    key: 'selenium', label: 'Sélénium', unit: 'µg', rda: 70, goal: 'atLeast', optimalFactor: 1, upper: 300, toxic: 900,
     role: 'Antioxydant (glutathion peroxydase) et fonction thyroïdienne.',
     optimalNote: 'Fenêtre de sécurité étroite : rester proche de l\'AJR, éviter de dépasser ~300 µg.',
   },
   {
-    key: 'iode', label: 'Iode', unit: 'µg', rda: 150, goal: 'atLeast', optimalFactor: 1,
+    key: 'iode', label: 'Iode', unit: 'µg', rda: 150, goal: 'atLeast', optimalFactor: 1, upper: 600, toxic: 1100,
     role: 'Synthèse des hormones thyroïdiennes, qui règlent le métabolisme.',
   },
   {
-    key: 'vitA', label: 'Vitamine A', unit: 'µg', rda: 750, goal: 'atLeast', optimalFactor: 1,
+    key: 'vitA', label: 'Vitamine A', unit: 'µg', rda: 750, goal: 'atLeast', optimalFactor: 1, upper: 3000, toxic: 7500,
     role: 'Vision, immunité et renouvellement de la peau et des muqueuses.',
     optimalNote: 'Vitamine liposoluble toxique en excès (rétinol) : ne pas pousser au-dessus de l\'AJR.',
   },
   {
-    key: 'vitC', label: 'Vitamine C', unit: 'mg', rda: 110, goal: 'atLeast', optimalFactor: 2.7,
+    key: 'vitC', label: 'Vitamine C', unit: 'mg', rda: 110, goal: 'atLeast', optimalFactor: 2.7, upper: 2000, toxic: 3000,
     role: 'Antioxydant, synthèse du collagène, absorption du fer et soutien immunitaire.',
     optimalNote: 'Hydrosoluble et sûre : cible sportive ~300 mg pour couvrir le stress oxydatif de l\'entraînement.',
   },
   {
-    key: 'vitD', label: 'Vitamine D', unit: 'µg', rda: 15, goal: 'atLeast', optimalFactor: 3.3, importance: 1.3,
+    key: 'vitD', label: 'Vitamine D', unit: 'µg', rda: 15, goal: 'atLeast', optimalFactor: 3.3, importance: 1.3, upper: 100, toxic: 250,
     role: 'Absorption du calcium, santé osseuse, immunité et fonction musculaire.',
     optimalNote: 'Déficit très fréquent : cible ~50 µg (2000 UI/j), sous le plafond de 100 µg.',
   },
   {
-    key: 'vitE', label: 'Vitamine E', unit: 'mg', rda: 12, goal: 'atLeast', optimalFactor: 1.2,
+    key: 'vitE', label: 'Vitamine E', unit: 'mg', rda: 12, goal: 'atLeast', optimalFactor: 1.2, upper: 300, toxic: 1000,
     role: 'Antioxydant liposoluble protégeant les membranes cellulaires.',
   },
   {
@@ -198,7 +222,9 @@ export const RDA: RdaEntry[] = [
     role: 'Riboflavine : production d\'énergie cellulaire et régénération des antioxydants.',
   },
   {
-    key: 'vitB3', label: 'Vitamine B3 (PP)', unit: 'mg', rda: 16, goal: 'atLeast', optimalFactor: 1.1,
+    // upper 900 = limite du nicotinamide (forme alimentaire dominante) ; l'acide
+    // nicotinique en supplément, lui, fait rougir dès 30-50 mg (cf. le guide).
+    key: 'vitB3', label: 'Vitamine B3 (PP)', unit: 'mg', rda: 16, goal: 'atLeast', optimalFactor: 1.1, upper: 900, toxic: 2000,
     role: 'Niacine : métabolisme énergétique et réparation de l\'ADN.',
   },
   {
@@ -206,11 +232,11 @@ export const RDA: RdaEntry[] = [
     role: 'Acide pantothénique : synthèse du coenzyme A, central dans le métabolisme.',
   },
   {
-    key: 'vitB6', label: 'Vitamine B6', unit: 'mg', rda: 1.4, goal: 'atLeast', optimalFactor: 1.2,
+    key: 'vitB6', label: 'Vitamine B6', unit: 'mg', rda: 1.4, goal: 'atLeast', optimalFactor: 1.2, upper: 12, toxic: 50,
     role: 'Métabolisme des protéines et des acides aminés, synthèse des neurotransmetteurs.',
   },
   {
-    key: 'vitB9', label: 'Vitamine B9', unit: 'µg', rda: 330, goal: 'atLeast', optimalFactor: 1.1,
+    key: 'vitB9', label: 'Vitamine B9', unit: 'µg', rda: 330, goal: 'atLeast', optimalFactor: 1.1, upper: 1000,
     role: 'Folates : synthèse de l\'ADN et division cellulaire ; crucial en cas de grossesse.',
   },
   {

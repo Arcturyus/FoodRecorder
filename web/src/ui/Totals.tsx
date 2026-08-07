@@ -210,6 +210,62 @@ export function SaturatedBreakdown({ totals, targets }: { totals: Nutrients; tar
 }
 
 /**
+ * Zone d'excès d'une tuile. Elle N'APPARAÎT QUE lorsque la cible est dépassée :
+ * la barre principale s'arrête à la cible et devient inutile au-delà (elle est
+ * pleine), alors même que c'est le moment où l'on aimerait savoir si l'on est à
+ * peine au-dessus ou en zone à risque. Trente barres d'excès affichées en
+ * permanence rendraient la grille illisible pour une question qui ne se pose
+ * presque jamais.
+ *
+ * L'échelle va de la cible (`from`) jusqu'à la dose où des effets ont été
+ * OBSERVÉS (`toxic`), avec un repère sur le seuil de prudence (`upper`) — les
+ * deux ne se valent pas, et les confondre transformerait « au-delà, ce n'est
+ * plus anodin » en « danger », ce qui est faux pour la plupart des nutriments.
+ * À défaut de `toxic` connu, l'échelle s'arrête au seuil de prudence.
+ */
+function ExcessBar({
+  value,
+  from,
+  upper,
+  toxic,
+  unit,
+}: {
+  value: number;
+  /** Début de la zone : l'optimal (nutriment à couvrir) ou le plafond (limite). */
+  from: number;
+  upper?: number;
+  toxic?: number;
+  unit: string;
+}) {
+  const end = toxic ?? upper;
+  if (end == null || end <= from || value <= from) return null;
+  const span = end - from;
+  const pct = ((value - from) / span) * 100;
+  // Repère de prudence, seulement s'il tombe DANS l'échelle (donc si `toxic` existe).
+  const mark = upper != null && upper > from && upper < end ? ((upper - from) / span) * 100 : null;
+  const over = upper != null && value >= upper;
+  return (
+    <div className="excess">
+      <div className={`bar excess-bar${over ? ' over' : ''}`}>
+        <span style={{ width: `${Math.min(100, pct)}%` }} />
+        {mark != null && (
+          <i className="mark upper" style={{ left: `${mark}%` }} data-tip={`Prudence au-delà de ${fmt(upper!)} ${unit}`} />
+        )}
+      </div>
+      <div className="small mono excess-note">
+        {over
+          ? `au-delà du seuil de prudence (${fmt(upper!, upper! < 10 ? 1 : 0)} ${unit})`
+          : upper != null
+            ? `au-dessus de la cible · prudence à ${fmt(upper, upper < 10 ? 1 : 0)} ${unit}`
+            : // Pas de seuil de prudence chiffré (sodium, AG trans) : c'est la dose
+              // des effets observés qui donne l'échelle, autant la nommer.
+              `au-dessus de la cible · effets observés à ${fmt(toxic!, toxic! < 10 ? 1 : 0)} ${unit}`}
+      </div>
+    </div>
+  );
+}
+
+/**
  * Bilan du jour : kcal + macros en tête, puis grille de tous les nutriments avec
  * une barre de progression vers la cible « optimale » et un repère sur l'AJR.
  * Chaque tuile est survolable (ou tapable) pour voir les aliments qui apportent
@@ -282,6 +338,8 @@ export function Totals({
                 <div className="small mono">
                   {fmt(pct)}% du plafond · idéal ≤ {fmt(t.optimal)} / max {fmt(t.ajr)}
                 </div>
+                {/* Au-delà du plafond, l'échelle repart vers la dose des effets observés. */}
+                <ExcessBar value={value} from={t.ajr} upper={t.upper} toxic={t.toxic} unit={t.unit} />
                 {t.key === 'agSatures' && <SaturatedBreakdown totals={totals} targets={targets} />}
                 <Breakdown items={items} nutrientKey={t.key} unit={t.unit} total={value} />
               </div>
@@ -310,6 +368,7 @@ export function Totals({
                 {fmt(pctOpt)}%{' '}
                 {distinct ? `· AJR ${fmt(t.ajr)} / opti ${fmt(t.optimal)}` : `· AJR ${fmt(t.ajr)}`}
               </div>
+              <ExcessBar value={value} from={t.optimal} upper={t.upper} toxic={t.toxic} unit={t.unit} />
               {t.key === 'omega3' && <Omega3Breakdown totals={totals} />}
               <Breakdown items={items} nutrientKey={t.key} unit={t.unit} total={value} />
             </div>

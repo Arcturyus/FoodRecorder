@@ -469,6 +469,15 @@ header.app-head .sub { color: var(--muted); font-size: 13px; }
 .ref-legend.opti { background: var(--accent-2); }
 
 /* Onglet Guide : listes de rôles et de rapports. */
+/* Zone d'excès d'une tuile : n'existe dans le DOM qu'au-delà de la cible. */
+.excess { margin-top: 6px; }
+.bar.excess-bar { height: 4px; margin-top: 0; background: rgba(245, 166, 35, 0.18); }
+.bar.excess-bar > span { background: var(--warn); }
+.bar.excess-bar.over > span { background: var(--danger); }
+.bar > .mark.upper { background: var(--danger); opacity: 0.9; }
+.excess-note { color: var(--warn); opacity: 0.9; margin-top: 2px; }
+.excess-bar.over ~ .excess-note { color: var(--danger); }
+
 .guide-list { margin: 8px 0 0; padding-left: 18px; }
 .guide-list li { margin-bottom: 6px; }
 .guide-item { padding: 10px 0; border-top: 1px solid var(--border); }
@@ -1122,6 +1131,36 @@ button.nutrient-toggle:hover { background: none; color: var(--accent); }
 @media (max-width: 520px) {
   .nutrient-detail { margin-left: 16px; }
 }
+
+/* Un peu d'air quand l'ouverture d'un nutriment le fait remonter en haut de l'écran. */
+.nutrient-item { scroll-margin-top: 10px; }
+
+/* Contenu déplié d'un nutriment : niveau de preuve, puis les quatre questions. */
+.ng-evidence {
+  border-left: 3px solid var(--muted);
+  padding: 6px 0 6px 8px;
+  margin-bottom: 8px;
+  color: var(--muted);
+  line-height: 1.5;
+}
+.ng-evidence-tag {
+  display: block;
+  font-size: 11px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  margin-bottom: 2px;
+}
+.ng-block { margin-top: 8px; }
+.ng-title {
+  font-size: 11px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  margin-bottom: 2px;
+}
+.ng-text { line-height: 1.55; }
+.ng-note { margin-top: 8px; color: var(--muted); font-style: italic; line-height: 1.5; }
 
 /* Mobile : les badges passent sous le nom pour ne pas l'écraser. */
 @media (max-width: 520px) {

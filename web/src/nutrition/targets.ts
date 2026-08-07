@@ -131,6 +131,10 @@ export interface Target {
   optimal: number;
   role: string;
   optimalNote?: string;
+  /** Seuil de prudence haut (cf. `RdaEntry.upper`) — absent si aucun excès connu. */
+  upper?: number;
+  /** Dose où des effets délétères ont été observés (cf. `RdaEntry.toxic`). */
+  toxic?: number;
   /** Compat. : vrai si c'est une limite (goal === 'limit'). */
   upperLimit?: boolean;
   /** Sous-détail d'un autre nutriment : pas de tuile propre dans le bilan (cf. RdaEntry.parent). */
@@ -162,13 +166,25 @@ export function computeTargets(profile: Profile): Target[] {
       optimalNote: r.optimalNote,
       upperLimit: r.goal === 'limit',
       ...(r.parent ? { parent: r.parent } : {}),
+      ...(r.upper !== undefined ? { upper: r.upper } : {}),
+      ...(r.toxic !== undefined ? { toxic: r.toxic } : {}),
     };
 
     if (r.key === 'kcal') {
       return { ...base, ajr: Math.round((poids * 31 * sexFactor) / 10) * 10, optimal: kcalOptimal };
     }
+    // Protéines : les seuls seuils hauts proportionnels au poids. 3,5 g/kg =
+    // début de la zone où le foie peine à évacuer l'azote, 4,5 g/kg = la dose du
+    // « mal du lapin » (~35 % de l'énergie). Rien à voir avec le rein sain, qui
+    // encaisse 2,5-3,3 g/kg sans dommage mesuré.
     if (r.key === 'proteines') {
-      return { ...base, ajr: Math.round(poids * 0.83), optimal: protOptimal };
+      return {
+        ...base,
+        ajr: Math.round(poids * 0.83),
+        optimal: protOptimal,
+        upper: Math.round(poids * 3.5),
+        toxic: Math.round(poids * 4.5),
+      };
     }
     // Objectif « limite » : plafond = ajr, cible basse idéale = optimalLow.
     if (r.goal === 'limit') {

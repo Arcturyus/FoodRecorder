@@ -1,10 +1,12 @@
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { useStore, dayTotals, todayStr } from '../store/store';
-import type { Sex, Target } from '../nutrition/targets';
+import type { Target } from '../nutrition/targets';
 import { computeRatios } from '../nutrition/ratios';
 import type { RatioResult } from '../nutrition/ratios';
 import type { NutrientKey } from '../nutrition/types';
 import { NUTRIENT_GROUPS } from '../nutrition/groups';
+import { NUTRIENT_GUIDE, EVIDENCE_LABEL } from '../nutrition/guide';
+import type { EvidenceLevel } from '../nutrition/guide';
 import { effectiveImportance, IMPORTANCE_BOUNDS } from '../nutrition/recommend';
 import { PeriodSelector } from './PeriodSelector';
 import { usePeriodNutrition } from './usePeriodNutrition';
@@ -30,7 +32,6 @@ const STATUS_COLOR: Record<string, string> = {
  */
 export function Nutrients() {
   const entries = useStore((s) => s.entries);
-  const sexe = useStore((s) => s.profile.sexe);
   const today = todayStr();
   const {
     period,
@@ -86,6 +87,14 @@ export function Nutrients() {
         </div>
       </div>
 
+      {/* Ce qu'il y a à FAIRE d'abord (quoi manger, carence en vue), la lecture
+          ensuite : les rapports sont une explication, ils ferment la page. */}
+      <Recommendations averages={averages} targets={targets} hasData={recorded.length > 0} />
+
+      <NutrientImportancePanel targets={targets} />
+
+      <VitaminDPanel status={vitDStatus} />
+
       <div className="panel">
         <h2>Rapports optimaux</h2>
         <p className="small" style={{ marginTop: -6 }}>
@@ -96,143 +105,7 @@ export function Nutrients() {
           <RatioCard key={r.def.key} r={r} />
         ))}
       </div>
-
-      <SaturatedFatGuide />
-
-      <IronGuide sexe={sexe} />
-
-      <NutrientImportancePanel targets={targets} />
-
-      <Recommendations averages={averages} targets={targets} hasData={recorded.length > 0} />
-
-      <VitaminDPanel status={vitDStatus} />
     </>
-  );
-}
-
-/**
- * Zoom sur les AG saturés : sous un seul chiffre du bilan se cachent trois
- * familles au comportement très différent. Tant que la base ne détaille pas la
- * répartition par acide gras (C16/C14/C18), c'est ici que se lit la nuance —
- * d'où un texte d'explication plutôt qu'un simple `optimalNote` sur la ligne.
- */
-function SaturatedFatGuide() {
-  return (
-    <div className="panel">
-      <h2>AG saturés : tous ne se valent pas</h2>
-      <p className="small" style={{ marginTop: -6 }}>
-        « AG saturés » est un fourre-tout. Sous ce seul chiffre cohabitent trois familles qui se comportent
-        différemment selon la longueur de leur chaîne carbonée — c'est pourquoi un carré de chocolat noir et une
-        noix de beurre, à AG saturés égaux, n'ont pas le même effet sur les artères.
-      </p>
-
-      <div className="guide-item">
-        <strong>Palmitique (C16:0) &amp; myristique (C14:0) — ceux qui comptent vraiment</strong>
-        <div className="small" style={{ marginTop: 4 }}>
-          Beurre, crème, fromage, viande grasse, huile de palme — donc aussi les viennoiseries, pâtisseries et
-          plats industriels. Ils freinent les récepteurs qui font le ménage du LDL dans le foie : en excès, le
-          LDL monte et les plaques artérielles se construisent sur des années. À quantité égale le myristique
-          est le plus puissant des deux, mais le palmitique est de très loin le plus abondant.
-        </div>
-        <div className="small" style={{ marginTop: 4, color: 'var(--warn)' }}>
-          C'est sur eux que porte le plafond qui compte : <strong>15 g/j</strong> pour 2000 kcal, idéal ≤ 10 g —
-          soit les 7 % de l'énergie visés par l'American Heart Association, appliqués aux seuls saturés qui
-          élèvent le LDL. Plus exigeant que l'ancien plafond de 22 g sur le total, puisque le stéarique n'y est
-          plus compté.
-        </div>
-      </div>
-
-      <div className="guide-item">
-        <strong>Stéarique (C18:0) — le neutre</strong>
-        <div className="small" style={{ marginTop: 4 }}>
-          Chocolat noir (le beurre de cacao en est ~1/3), bœuf et agneau, un peu le porc. Le foie le désature
-          très vite en acide <em>oléique</em> — exactement l'acide gras de l'huile d'olive. Résultat : il ne fait
-          pas monter le LDL, et les études en milieu contrôlé qui en ont fait manger jusqu'à ~11 % de l'énergie
-          (≈ 24 g/j) n'ont pas vu le LDL bouger. Il n'a donc rien à faire dans un plafond.
-        </div>
-        <div className="small" style={{ marginTop: 4, color: 'var(--muted)' }}>
-          Repère souple malgré tout : <strong>18 g/j</strong>, avec un poids d'importance faible — plus du double
-          d'un apport courant (5-8 g), donc il ne se déclenche que sur un vrai excès. Pourquoi pas totalement
-          libre : il fait un peu baisser le HDL, il est soupçonné de favoriser l'agrégation plaquettaire, et
-          surtout il n'arrive presque jamais seul — l'aliment qui l'apporte apporte du palmitique avec.
-        </div>
-      </div>
-
-      <div className="guide-item">
-        <strong>Laurique (C12:0) &amp; chaînes courtes à moyennes (C4 à C10) — le cas à part</strong>
-        <div className="small" style={{ marginTop: 4 }}>
-          Coco et huile de palmiste pour le laurique ; beurre et fromages pour les chaînes courtes. Le laurique
-          fait monter le LDL, mais aussi beaucoup le HDL ; les chaînes courtes sont brûlées directement par le
-          foie plutôt que stockées. Peu abondants dans une alimentation française : ils restent comptés dans le
-          total, sans qu'on les traque à part.
-        </div>
-      </div>
-
-      <div className="hint" style={{ marginTop: 10 }}>
-        <strong>À retenir</strong> — ce n'est pas tant la quantité d'AG saturés qui compte que leur origine.
-        Une même dose de chocolat noir à 85 % et de beurre donne le même chiffre dans le bilan, pas le même
-        effet. À l'inverse, un plat industriel « pas si gras » à l'huile de palme apporte du palmitique presque
-        pur. C'est pour ça que la tuile « AG saturés » du bilan porte une ligne « dont … » : son total n'est
-        plus qu'un <em>filet de sécurité</em> (plafond 30 g, poids réduit), le vrai plafond étant sur les 15 g
-        de C16+C14. Survolez la tuile pour voir, aliment par aliment, ce que chacun apporte de l'un et de l'autre.
-      </div>
-    </div>
-  );
-}
-
-/**
- * Zoom sur le fer : c'est le seul nutriment dont le besoin varie du simple au
- * triple selon la personne et le moment (règles, grossesse). La tuile du bilan
- * ne peut afficher qu'un chiffre — celui du profil — et son survol reste court :
- * les cas particuliers se lisent ici.
- */
-function IronGuide({ sexe }: { sexe: Sex }) {
-  return (
-    <div className="panel">
-      <h2>Fer : un besoin qui n'est pas le même pour tout le monde</h2>
-      <p className="small" style={{ marginTop: -6 }}>
-        Le corps ne sait pas éliminer le fer : il ne se perd que par les saignements et le renouvellement des
-        cellules. Le besoin ne dépend donc pas de la taille ni du sport, mais de ce qu'on perd. D'où un AJR à
-        <strong> 9 mg</strong> chez l'homme, alors qu'il grimpe au double, voire au triple, dans certains cas.
-        Votre profil est réglé sur « {sexe} » — c'est lui qui fixe la cible affichée dans le bilan.
-      </p>
-
-      <div className="guide-item">
-        <strong>Homme (et femme sans règles) — 9 mg</strong>
-        <div className="small" style={{ marginTop: 4 }}>
-          Les pertes se limitent à ~1 mg/j (peau, intestin). Comme l'absorption tourne autour de 10-15 %,
-          9 mg d'apport suffisent largement à les compenser. Après la ménopause, ou sous contraception qui
-          supprime les règles, le besoin d'une femme rejoint celui-ci.
-        </div>
-      </div>
-
-      <div className="guide-item">
-        <strong>Femme réglée — 15 à 18 mg en moyenne</strong>
-        <div className="small" style={{ marginTop: 4 }}>
-          Chaque cycle coûte l'équivalent de ~0,5 à 1 mg/j de plus, et bien davantage sur les jours de règles
-          abondantes. La cible retenue est une <em>moyenne sur le cycle</em> : c'est surtout pendant et juste
-          après les règles qu'il faut y faire attention ; le reste du temps, le besoin redescend vers celui de
-          l'homme. C'est aussi le premier public des carences (fatigue, souffle court à l'effort).
-        </div>
-      </div>
-
-      <div className="guide-item">
-        <strong>Grossesse — 27 mg</strong>
-        <div className="small" style={{ marginTop: 4 }}>
-          Le volume sanguin augmente d'environ moitié, et il faut constituer les réserves du fœtus et du
-          placenta : le besoin est presque triplé. C'est le seul cas où une supplémentation est couramment
-          prescrite — l'alimentation seule y arrive difficilement.
-        </div>
-      </div>
-
-      <div className="hint" style={{ marginTop: 10 }}>
-        <strong>À retenir</strong> — deux fers coexistent : l'<strong>héminique</strong> (viande, poisson,
-        abats), absorbé à ~25 %, et le <strong>non héminique</strong> (légumineuses, épinards, céréales),
-        absorbé à ~5 % seulement. La vitamine C du même repas peut multiplier l'absorption du second par 2 à 3 ;
-        le thé, le café et le calcium la freinent. À l'inverse, inutile de pousser au-dessus du besoin sans
-        carence avérée : le fer en excès est pro-oxydant et s'accumule (le corps n'a pas de porte de sortie).
-      </div>
-    </div>
   );
 }
 
@@ -257,11 +130,116 @@ function RatioCard({ r }: { r: RatioResult }) {
   );
 }
 
+/**
+ * Une décimale sous 10, aucune au-dessus : « AJR 1 mg » pour la vitamine B6 (1,4)
+ * serait faux de 40 % sur une page qui promet des seuils précis.
+ */
+const q = (v: number) => fmt(v, v < 10 ? 1 : 0);
+
 /** Cible lisible d'un nutriment (AJR / optimal, ou plafond pour une limite). */
 function targetLine(t: Target): string {
-  if (t.goal === 'limit') return `Idéal ≤ ${fmt(t.optimal)} ${t.unit} · plafond ${fmt(t.ajr)} ${t.unit}`;
-  if (t.optimal !== t.ajr) return `AJR ${fmt(t.ajr)} ${t.unit} → optimal ${fmt(t.optimal)} ${t.unit}`;
-  return `AJR ${fmt(t.ajr)} ${t.unit}`;
+  if (t.goal === 'limit') return `Idéal ≤ ${q(t.optimal)} ${t.unit} · plafond ${q(t.ajr)} ${t.unit}`;
+  if (t.optimal !== t.ajr) return `AJR ${q(t.ajr)} ${t.unit} → optimal ${q(t.optimal)} ${t.unit}`;
+  return `AJR ${q(t.ajr)} ${t.unit}`;
+}
+
+/**
+ * Seconde ligne de repères, côté HAUT : le seuil de prudence puis, quand elle
+ * est connue, la dose à laquelle des effets ont réellement été observés. Les
+ * deux sont volontairement distingués — confondre « au-delà, ce n'est plus
+ * anodin » et « à cette dose, des gens ont été malades » est ce qui rend la
+ * plupart des mises en garde nutritionnelles inutilisables.
+ */
+function dangerLine(t: Target): string | null {
+  if (t.upper == null && t.toxic == null) return null;
+  const parts: string[] = [];
+  if (t.upper != null) parts.push(`prudence au-delà de ${q(t.upper)} ${t.unit}`);
+  if (t.toxic != null) parts.push(`effets observés à partir de ${q(t.toxic)} ${t.unit}`);
+  return parts.join(' · ');
+}
+
+const EVIDENCE_COLOR: Record<EvidenceLevel, string> = {
+  etabli: 'var(--accent-2)',
+  discute: 'var(--warn)',
+  incertain: 'var(--muted)',
+};
+
+/**
+ * Contenu déplié d'un nutriment : les quatre mêmes questions pour tous, dans le
+ * même ordre, précédées du niveau de preuve. C'est ici qu'ont été rapatriés les
+ * anciens panneaux « AG saturés » et « Fer » — un pavé par nutriment tout en
+ * haut de la page ne passait pas à l'échelle de 37 lignes, et personne n'allait
+ * chercher le fer en bas de page alors que sa tuile est dans le bilan.
+ */
+function NutrientDetail({ t }: { t: Target }) {
+  const g = NUTRIENT_GUIDE[t.key];
+  const danger = dangerLine(t);
+  const ref = useRef<HTMLDivElement>(null);
+
+  // Ces textes sont longs : dépliés depuis le bas de l'écran, ils s'ouvrent
+  // hors champ et on tombe au milieu d'un paragraphe. On remonte donc la ligne
+  // du nutriment en haut de la fenêtre — mais SEULEMENT si le bloc dépasse
+  // effectivement, pour ne pas faire sauter la page quand il tient déjà.
+  useEffect(() => {
+    const el = ref.current;
+    if (!el) return;
+    const rect = el.getBoundingClientRect();
+    const visible = window.innerHeight - rect.top;
+    if (rect.height <= visible) return;
+    // Le parent porte la ligne cliquée ET ce bloc : c'est lui qu'on aligne,
+    // sinon le nom du nutriment sortirait de l'écran par le haut.
+    (el.parentElement ?? el).scrollIntoView({ behavior: 'smooth', block: 'start' });
+  }, []);
+
+  return (
+    <div className="nutrient-detail small" ref={ref}>
+      {g && (
+        <div className="ng-evidence" style={{ borderColor: EVIDENCE_COLOR[g.evidence.level] }}>
+          <span className="ng-evidence-tag" style={{ color: EVIDENCE_COLOR[g.evidence.level] }}>
+            {EVIDENCE_LABEL[g.evidence.level]}
+          </span>
+          {g.evidence.text}
+        </div>
+      )}
+
+      <div className="mono" style={{ color: t.goal === 'limit' ? 'var(--warn)' : 'var(--text)' }}>
+        {targetLine(t)}
+      </div>
+      {danger && (
+        <div className="mono" style={{ color: 'var(--danger)', opacity: 0.85 }}>
+          {danger}
+        </div>
+      )}
+
+      {g ? (
+        <>
+          <GuideBlock title="Trop bas" color="var(--accent)" text={g.low} />
+          <GuideBlock title="À quoi ça sert" color="var(--text)" text={g.role} />
+          <GuideBlock title="Monter plus haut ?" color="var(--accent-2)" text={g.higher} />
+          {g.high && <GuideBlock title="Trop haut" color="var(--danger)" text={g.high} />}
+          {g.extra?.map((e) => <GuideBlock key={e.title} title={e.title} color="var(--muted)" text={e.text} />)}
+          {g.tip && (
+            <div className="hint" style={{ marginTop: 8 }}>
+              <strong>À retenir</strong> — {g.tip}
+            </div>
+          )}
+        </>
+      ) : (
+        <div style={{ marginTop: 4 }}>{t.role}</div>
+      )}
+
+      {t.optimalNote && <div className="ng-note">{t.optimalNote}</div>}
+    </div>
+  );
+}
+
+function GuideBlock({ title, color, text }: { title: string; color: string; text: string }) {
+  return (
+    <div className="ng-block">
+      <div className="ng-title" style={{ color }}>{title}</div>
+      <div className="ng-text">{text}</div>
+    </div>
+  );
 }
 
 /**
@@ -284,7 +262,7 @@ function NutrientImportancePanel({ targets }: { targets: Target[] }) {
   return (
     <div className="panel">
       <div className="row" style={{ justifyContent: 'space-between', alignItems: 'baseline', flexWrap: 'wrap', gap: 8 }}>
-        <h2 style={{ margin: 0 }}>Importance &amp; rôle des nutriments</h2>
+        <h2 style={{ margin: 0 }}>Comprendre &amp; régler chaque nutriment</h2>
         {hasOverrides && (
           <button className="ghost small" onClick={resetAllNutrientImportance}>
             Tout réinitialiser
@@ -314,10 +292,15 @@ function NutrientImportancePanel({ targets }: { targets: Target[] }) {
           </ul>
         </div>
       </details>
+      <p className="small" style={{ marginTop: 10, marginBottom: 6 }}>
+        <strong>Cliquez le nom d'un nutriment pour le déplier</strong> : ce qui arrive quand on en manque et à
+        partir de quelle dose, à quoi il sert, ce qu'on gagne réellement à monter plus haut, et à partir de
+        quelle quantité l'excès devient un problème — avec, à chaque fois, ce qui est solidement établi et ce
+        qui ne l'est pas.
+      </p>
       <div className="hint" style={{ marginTop: 8 }}>
-        Pondère chaque nutriment. <strong>×0</strong> = ignoré (aucun conseil), <strong>×1</strong> = normal,
-        <strong> ×3</strong> = prioritaire. Réglez tout un groupe d'un coup avec le curseur du groupe, ou cliquez un
-        nom pour lire son rôle et sa cible.
+        Le curseur, lui, pondère le nutriment. <strong>×0</strong> = ignoré (aucun conseil), <strong>×1</strong> =
+        normal, <strong>×3</strong> = prioritaire. Réglez tout un groupe d'un coup avec le curseur du groupe.
       </div>
 
       {NUTRIENT_GROUPS.map((g) => {
@@ -349,7 +332,7 @@ function NutrientImportancePanel({ targets }: { targets: Target[] }) {
               const overridden = overrides[k] !== undefined;
               const isOpen = expanded === k;
               return (
-                <div key={k}>
+                <div key={k} className="nutrient-item">
                   {/* Sous-détail (C16+C14, stéarique) : décalé sous son parent pour
                       qu'on lise « ce sont des morceaux d'AG saturés », pas trois
                       nutriments indépendants. */}
@@ -384,17 +367,7 @@ function NutrientImportancePanel({ targets }: { targets: Target[] }) {
                       ↺
                     </button>
                   </div>
-                  {isOpen && (
-                    <div className="nutrient-detail small">
-                      <div className="mono" style={{ color: t.goal === 'limit' ? 'var(--warn)' : 'var(--text)' }}>
-                        {targetLine(t)}
-                      </div>
-                      <div style={{ marginTop: 4 }}>{t.role}</div>
-                      {t.optimalNote && (
-                        <div style={{ marginTop: 4, color: 'var(--muted)' }}>{t.optimalNote}</div>
-                      )}
-                    </div>
-                  )}
+                  {isOpen && <NutrientDetail t={t} />}
                 </div>
               );
             })}
