@@ -135,6 +135,10 @@ export interface Target {
   upper?: number;
   /** Dose où des effets délétères ont été observés (cf. `RdaEntry.toxic`). */
   toxic?: number;
+  /** Seuil de carence réelle (cf. `RdaEntry.lowThreshold`) — absent si le guide n'en fixe aucun. */
+  lowThreshold?: number;
+  /** Effet documenté sous `lowThreshold` (cf. `RdaEntry.lowNote`). */
+  lowNote?: string;
   /** Compat. : vrai si c'est une limite (goal === 'limit'). */
   upperLimit?: boolean;
   /** Sous-détail d'un autre nutriment : pas de tuile propre dans le bilan (cf. RdaEntry.parent). */
@@ -168,6 +172,8 @@ export function computeTargets(profile: Profile): Target[] {
       ...(r.parent ? { parent: r.parent } : {}),
       ...(r.upper !== undefined ? { upper: r.upper } : {}),
       ...(r.toxic !== undefined ? { toxic: r.toxic } : {}),
+      ...(r.lowThreshold !== undefined ? { lowThreshold: r.lowThreshold } : {}),
+      ...(r.lowNote !== undefined ? { lowNote: r.lowNote } : {}),
     };
 
     if (r.key === 'kcal') {
@@ -176,7 +182,8 @@ export function computeTargets(profile: Profile): Target[] {
     // Protéines : les seuls seuils hauts proportionnels au poids. 3,5 g/kg =
     // début de la zone où le foie peine à évacuer l'azote, 4,5 g/kg = la dose du
     // « mal du lapin » (~35 % de l'énergie). Rien à voir avec le rein sain, qui
-    // encaisse 2,5-3,3 g/kg sans dommage mesuré.
+    // encaisse 2,5-3,3 g/kg sans dommage mesuré. Seuil de carence (bilan azoté
+    // négatif) : 0,66 g/kg, cf. le Guide.
     if (r.key === 'proteines') {
       return {
         ...base,
@@ -184,18 +191,26 @@ export function computeTargets(profile: Profile): Target[] {
         optimal: protOptimal,
         upper: Math.round(poids * 3.5),
         toxic: Math.round(poids * 4.5),
+        lowThreshold: Math.round(poids * 0.66),
       };
     }
     // Objectif « limite » : plafond = ajr, cible basse idéale = optimalLow.
     if (r.goal === 'limit') {
       return { ...base, ajr: r.rda, optimal: r.optimalLow ?? r.rda };
     }
+    // Lipides : seuil de carence à ~20 % de l'énergie (cf. le Guide), calculé sur
+    // le maintien plutôt que sur la cible optimale — sinon un déficit calorique
+    // assumé (objectif « perte ») ferait mécaniquement baisser ce seuil.
+    if (r.key === 'lipides') {
+      const kcalMaintien = Math.round((poids * 31 * sexFactor) / 10) * 10;
+      return { ...base, ajr: r.rda, optimal: r.rda, lowThreshold: Math.round((0.2 * kcalMaintien) / 9) };
+    }
     // Fer : 9 mg suffisent chez l'homme (pertes faibles). Chez la femme, ce sont
     // les règles qui creusent le besoin — 15 à 18 mg en moyenne sur le cycle,
     // et jusqu'à 27 mg enceinte (cf. le Guide). Hors règles, le besoin rejoint
     // celui de l'homme : la cible retenue est donc une moyenne, pas un maximum.
     if (r.key === 'fer' && sexe === 'femme') {
-      return { ...base, ajr: 15, optimal: 18 };
+      return { ...base, ajr: 15, optimal: 18, lowThreshold: 10 };
     }
     const factor = r.optimalFactor ?? 1;
     return { ...base, ajr: r.rda, optimal: Math.round(r.rda * factor) };

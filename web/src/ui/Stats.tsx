@@ -142,6 +142,14 @@ export function Stats() {
    * sodium à 300 %). Le log rend leurs variations relatives comparables.
    */
   const [logY, setLogY] = useState(false);
+  /**
+   * Référence utilisée comme « 100 % » dans toute la page (courbes ET barres de
+   * couverture), pour les nutriments à COUVRIR (goal `atLeast`) : `optimal`
+   * (défaut, cible santé/sport) ou `ajr` (juste couvrir le besoin de référence).
+   * Les nutriments « à limiter » gardent toujours l'AJR (plafond) comme 100 % —
+   * ce réglage n'a de sens que dans un sens (viser haut), pas dans l'autre.
+   */
+  const [refMode, setRefMode] = useState<'optimal' | 'ajr'>('optimal');
 
   const toggle = (id: string) =>
     setSelected((prev) => (prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id]));
@@ -222,9 +230,10 @@ export function Stats() {
           };
         }
 
-        // Nutriment : % = apport / objectif (plafond pour les « limites »).
+        // Nutriment : % = apport / objectif (plafond pour les « limites », sinon
+        // optimal ou AJR selon `refMode`).
         const t = targetByKey.get(id as NutrientKey)!;
-        const objective = t.goal === 'limit' ? t.ajr : t.optimal;
+        const objective = t.goal === 'limit' ? t.ajr : refMode === 'ajr' ? t.ajr : t.optimal;
         const values = bucketAverages.map((a) => a[id as NutrientKey]);
         const raws = values.map((v) => (objective > 0 ? (v / objective) * 100 : 0));
         const ma = smooth(raws);
@@ -239,7 +248,7 @@ export function Stats() {
           points: values.map((v, k) => point(k, v, raws[k], ma[k])),
         };
       }),
-    [selected, targetByKey, buckets, bucketAverages, smooth],
+    [selected, targetByKey, buckets, bucketAverages, smooth, refMode],
   );
 
   const colorById = useMemo(() => new Map(series.map((s) => [s.id, s.color])), [series]);
@@ -285,6 +294,19 @@ export function Stats() {
             onChange={setHalfLife}
             tip={`Vitesse à laquelle un jour perd son influence : à ${halfLife} j d'écart il compte moitié moins, et au-delà de ${decayWindowDays(halfLife)} jours il ne pèse plus rien. Sert à la pondération dégressive de cet écran.`}
           />
+          <span
+            className="row small"
+            style={{ gap: 4, alignItems: 'center' }}
+            data-tip="Quelle cible vaut 100 % dans les courbes et les barres de couverture ci-dessous, pour les nutriments à couvrir : « Optimal » (cible santé/sport, par défaut) ou « AJR » (juste le besoin de référence). Les nutriments à limiter gardent toujours leur plafond (AJR) comme 100 %."
+          >
+            <span style={{ color: 'var(--muted)' }}>Référence 100 %</span>
+            <button className={`small ${refMode === 'optimal' ? 'chip-active' : 'ghost'}`} onClick={() => setRefMode('optimal')}>
+              Optimal
+            </button>
+            <button className={`small ${refMode === 'ajr' ? 'chip-active' : 'ghost'}`} onClick={() => setRefMode('ajr')}>
+              AJR
+            </button>
+          </span>
         </div>
         <div className="hint">
           {recorded.length} jour(s) enregistré(s) sur cette période ({days} j
@@ -366,6 +388,7 @@ export function Stats() {
           {gran !== 'jour' &&
             ` Un point = ${gran === 'semaine' ? 'une semaine' : 'un mois'} (${buckets.length} au total), en moyenne PAR JOUR des jours enregistrés — comparable à la cible journalière.`}
           {selected.includes('vitD') && ' La vitamine D inclut l\'apport du soleil ☀️.'}
+          {refMode === 'ajr' && " Nutriments à couvrir : la ligne 100 % est l'AJR (réglage « Référence 100 % » ci-dessus). Les rapports gardent leur propre cible."}
           {decayOn
             ? ` Chaque point de la courbe épaisse est la moyenne pondérée des ${decayWindowDays(halfLife)} ${granularityUnit(gran)} qui le précèdent (demi-vie ${halfLife} ${granularityUnit(gran)}) : une carence comblée depuis s'efface, une carence installée reste. La courbe brute reste en trait fin.`
             : maOn && ' La moyenne mobile lisse le bruit ; la courbe brute reste en trait fin.'}
@@ -388,10 +411,12 @@ export function Stats() {
         <p className="small" style={{ marginTop: -6 }}>
           Barres triées du moins couvert au mieux couvert (moyenne/jour sur la période
           {decayOn && `, pondérée : demi-vie ${halfLife} j`}).{' '}
-          <span className="ref-legend ajr" /> AJR · <span className="ref-legend opti" /> objectif optimal (100 %).
+          <span className="ref-legend ajr" /> AJR{refMode === 'ajr' ? ' (100 %)' : ''} ·{' '}
+          <span className="ref-legend opti" /> objectif optimal{refMode === 'optimal' ? ' (100 %)' : ''}.
+          {refMode === 'ajr' && " Pour les nutriments « à limiter » ci-dessous, le plafond (AJR) reste la référence 100 % quel que soit ce réglage."}{' '}
           Cliquez un nutriment pour l'ajouter à la tendance. La vitamine D inclut l'apport du soleil ☀️.
         </p>
-        <CoverageList averages={averages} targets={targets} selected={selected} onToggle={toggle} />
+        <CoverageList averages={averages} targets={targets} selected={selected} onToggle={toggle} refMode={refMode} />
       </div>
 
       <div className="panel">
@@ -765,21 +790,27 @@ function CoverageList({
   targets,
   selected,
   onToggle,
+  refMode,
 }: {
   averages: Nutrients;
   targets: Target[];
   selected: string[];
   onToggle: (k: NutrientKey) => void;
+  /** Référence 100 % des nutriments « à couvrir » (page Stats) — sans effet sur les « à limiter ». */
+  refMode: 'optimal' | 'ajr';
 }) {
   // Info-bulle unique qui suit la souris (déclenchée par la ligne entière).
   const [tip, setTip] = useState<{ row: CovRow; x: number; y: number } | null>(null);
+
+  // Référence utilisée comme 100 % pour un nutriment « à couvrir », selon refMode.
+  const atLeastRef = (t: Target) => (refMode === 'ajr' ? t.ajr : t.optimal);
 
   const atLeast: CovRow[] = targets
     .filter((t) => t.goal !== 'limit')
     .map((t) => ({
       t,
       avg: averages[t.key],
-      pct: t.optimal > 0 ? (averages[t.key] / t.optimal) * 100 : 0,
+      pct: atLeastRef(t) > 0 ? (averages[t.key] / atLeastRef(t)) * 100 : 0,
       isLimit: false,
       ...(t.key === 'omega3'
         ? { omega3Detail: { omega3Ala: averages.omega3Ala, omega3Epa: averages.omega3Epa, omega3Dha: averages.omega3Dha } }
@@ -795,7 +826,13 @@ function CoverageList({
     const { t, avg, pct, isLimit } = r;
     const width = (Math.min(pct, CAP) / CAP) * 100;
     const barClass = isLimit ? (pct > 100 ? 'over' : avg <= t.optimal ? 'good' : '') : pct >= 100 ? 'good' : '';
-    const refPct = isLimit ? (t.optimal / t.ajr) * 100 : (t.ajr / t.optimal) * 100;
+    // Repère à 100 % = la référence qui sert au calcul de `pct` (plafond pour les
+    // « à limiter », sinon optimal ou AJR selon `refMode`) ; l'autre repère se
+    // place proportionnellement, borné à CAP pour rester dans la barre.
+    const primaryIsAjr = isLimit || refMode === 'ajr';
+    const primaryRef = isLimit ? t.ajr : refMode === 'ajr' ? t.ajr : t.optimal;
+    const secondaryRef = isLimit ? t.optimal : refMode === 'ajr' ? t.optimal : t.ajr;
+    const secondaryPct = primaryRef > 0 ? (secondaryRef / primaryRef) * 100 : 0;
     const isSel = selected.includes(t.key);
     return (
       <div
@@ -811,8 +848,8 @@ function CoverageList({
         </span>
         <div className={`bar ${barClass}`}>
           <span style={{ width: `${width}%` }} />
-          <span className={`mark ${isLimit ? 'opti' : 'ajr'}`} style={{ left: `${(refPct / CAP) * 100}%` }} />
-          <span className={`mark ${isLimit ? 'ajr' : 'opti'}`} style={{ left: `${(100 / CAP) * 100}%` }} />
+          <span className={`mark ${primaryIsAjr ? 'opti' : 'ajr'}`} style={{ left: `${(Math.min(secondaryPct, CAP) / CAP) * 100}%` }} />
+          <span className={`mark ${primaryIsAjr ? 'ajr' : 'opti'}`} style={{ left: `${(100 / CAP) * 100}%` }} />
         </div>
         <span className="mono small" style={{ textAlign: 'right' }}>
           {fmtVal(avg)} {t.unit}/j · {fmt(pct)} %

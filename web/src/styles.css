@@ -455,17 +455,24 @@ header.app-head .sub { color: var(--muted); font-size: 13px; }
 .stat .label { font-size: 11px; color: var(--muted); text-transform: uppercase; letter-spacing: 0.04em; }
 .stat .value { font-size: 18px; font-weight: 600; margin-top: 2px; }
 .stat .value small { font-size: 11px; color: var(--muted); font-weight: 400; }
-.bar { position: relative; height: 6px; border-radius: 3px; background: var(--border); margin-top: 8px; overflow: hidden; }
-.bar > span { display: block; height: 100%; background: var(--grad); transition: width 0.4s ease; }
+/* Pas d'overflow:hidden ici : ça clippait les repères (.mark) selon les coins
+   arrondis dès qu'ils tombaient près d'un bord, leur mangeant 1-2 px en haut/bas.
+   Le remplissage s'arrondit lui-même (border-radius sur le span ci-dessous) —
+   plus besoin du conteneur pour ça. */
+.bar { position: relative; height: 6px; border-radius: 3px; background: var(--border); margin-top: 8px; }
+.bar > span { display: block; height: 100%; border-radius: 3px; background: var(--grad); transition: width 0.4s ease; }
 .bar.over > span { background: var(--danger); }
 .bar.good > span { background: var(--accent-2); }
-/* Repère AJR : trait vertical sur l'échelle 0 → optimal. */
-.bar > .mark { position: absolute; top: -1px; bottom: -1px; width: 2px; background: var(--text); opacity: 0.55; transform: translateX(-1px); }
-.bar > .mark.ajr { background: var(--text); opacity: 0.6; }
+/* Repère AJR : trait vertical sur l'échelle 0 → optimal, calé pile sur l'épaisseur
+   de la barre (top/bottom à 0, sans dépassement — un dépassement même de 1 px se
+   voit comme un trait « flottant » au-dessus de la barre). */
+.bar > .mark { position: absolute; top: 0; bottom: 0; width: 2px; background: var(--text); opacity: 0.55; transform: translateX(-1px); }
+.bar > .mark.ajr { background: var(--text); opacity: 1; }
 .bar > .mark.opti { background: var(--accent-2); opacity: 0.95; }
+.bar > .mark.low { background: var(--danger); opacity: 0.9; }
 /* Pastilles de légende (petits traits verticaux). */
 .ref-legend { display: inline-block; width: 2px; height: 12px; vertical-align: middle; margin-right: 5px; }
-.ref-legend.ajr { background: var(--text); opacity: 0.6; }
+.ref-legend.ajr { background: var(--text); opacity: 1; }
 .ref-legend.opti { background: var(--accent-2); }
 
 /* Onglet Guide : listes de rôles et de rapports. */

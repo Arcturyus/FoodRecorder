@@ -1,13 +1,16 @@
 import { useMemo } from 'react';
 import type { NutrientKey, Nutrients } from '../nutrition/types';
+import { EMPTY_NUTRIENTS } from '../nutrition/types';
 import type { JournalItem } from '../store/store';
 import { computeTargets } from '../nutrition/targets';
 import type { Target } from '../nutrition/targets';
 import { computeRatios } from '../nutrition/ratios';
 import type { RatioResult } from '../nutrition/ratios';
-import { useStore } from '../store/store';
+import { useStore, dayTotals, isDayCounted, todayStr } from '../store/store';
 import type { KcalUncertainty } from '../nutrition/uncertainty';
 import { UncertaintyBadge } from './UncertaintyBadge';
+import { shiftDays } from './PeriodSelector';
+import { sunVitDForDate } from '../sun/vitaminD';
 import { fmt } from './format';
 
 /**
@@ -265,6 +268,72 @@ function ExcessBar({
   );
 }
 
+/** Fenêtre de la moyenne « seuil de carence » : 7 jours calendaires, non pondérés. */
+const LOW_THRESHOLD_WINDOW = 7;
+
+/**
+ * Moyenne PLATE (non pondérée) des `days` jours calendaires précédant `anchor` —
+ * le jour affiché lui-même est exclu (encore en cours s'il s'agit d'aujourd'hui,
+ * et pour rester cohérent avec la lecture d'un jour passé). Jours mutés ou non
+ * remplis ignorés, jamais comptés comme des zéros. `null` si aucun jour dispo,
+ * pour distinguer « pas encore assez de données » de « moyenne à 0 ».
+ */
+function useTrailingAverage(anchor: string, days: number): Nutrients | null {
+  const entries = useStore((s) => s.entries);
+  const mutedDays = useStore((s) => s.mutedDays);
+  const sunExposures = useStore((s) => s.sunExposures);
+  return useMemo(() => {
+    const filled = new Set(entries.map((e) => e.date));
+    const sum: Nutrients = { ...EMPTY_NUTRIENTS };
+    const keys = Object.keys(sum) as NutrientKey[];
+    let n = 0;
+    for (let age = 1; age <= days; age++) {
+      const date = shiftDays(anchor, age);
+      if (!isDayCounted(mutedDays, filled.has(date), date)) continue;
+      const t = dayTotals(entries, date);
+      const sun = sunVitDForDate(sunExposures, date);
+      const withSun = sun > 0 ? { ...t, vitD: t.vitD + sun } : t;
+      for (const k of keys) sum[k] += withSun[k];
+      n++;
+    }
+    if (n === 0) return null;
+    const avg: Nutrients = { ...EMPTY_NUTRIENTS };
+    for (const k of keys) avg[k] = sum[k] / n;
+    return avg;
+  }, [entries, mutedDays, sunExposures, anchor, days]);
+}
+
+/**
+ * Repère « seuil de carence » sous une tuile : toujours affiché quand le guide
+ * documente un seuil réel (`t.lowThreshold`, cf. `rda.ts`), pas seulement en
+ * alerte — au même titre que le repère AJR sur la barre. Rouge sous le seuil,
+ * discret sinon. `data-tip` porte l'effet documenté (`t.lowNote`).
+ */
+function LowThresholdNote({
+  value,
+  threshold,
+  unit,
+  note,
+}: {
+  value: number | null;
+  threshold: number;
+  unit: string;
+  note?: string;
+}) {
+  if (value == null) return null;
+  const below = value < threshold;
+  return (
+    <div
+      className="small mono"
+      style={{ marginTop: 4, color: below ? 'var(--danger)' : 'var(--muted)' }}
+      data-tip={note}
+    >
+      {below && '⚠️ '}
+      seuil de carence {fmt(threshold, threshold < 10 ? 1 : 0)} {unit} · moy. 7 j {fmt(value, value < 10 ? 1 : 0)} {unit}
+    </div>
+  );
+}
+
 /**
  * Bilan du jour : kcal + macros en tête, puis grille de tous les nutriments avec
  * une barre de progression vers la cible « optimale » et un repère sur l'AJR.
@@ -275,14 +344,18 @@ export function Totals({
   totals,
   items,
   incertitude,
+  date,
 }: {
   totals: Nutrients;
   items: JournalItem[];
   /** Incertitude ± kcal du jour (badge « ~ » discret sur la barre de calories). */
   incertitude?: KcalUncertainty;
+  /** Jour affiché (défaut : aujourd'hui) — ancre la moyenne 7 j du seuil de carence. */
+  date?: string;
 }) {
   const profile = useStore((s) => s.profile);
   const targets = useMemo(() => computeTargets(profile), [profile]);
+  const recentAvg = useTrailingAverage(date ?? todayStr(), LOW_THRESHOLD_WINDOW);
 
   const kcalT = targets.find((t) => t.key === 'kcal')!;
   const headline = targets.filter((t) =>
@@ -363,12 +436,27 @@ export function Totals({
                 {distinct && (
                   <i className="mark ajr" style={{ left: `${ajrMark}%` }} data-tip={`AJR ${fmt(t.ajr)} ${t.unit}`} />
                 )}
+                {t.lowThreshold != null && t.optimal > 0 && (
+                  <i
+                    className="mark low"
+                    style={{ left: `${Math.min(100, (t.lowThreshold / t.optimal) * 100)}%` }}
+                    data-tip={`Seuil de carence documenté : ${fmt(t.lowThreshold)} ${t.unit}`}
+                  />
+                )}
               </div>
               <div className="small mono">
                 {fmt(pctOpt)}%{' '}
                 {distinct ? `· AJR ${fmt(t.ajr)} / opti ${fmt(t.optimal)}` : `· AJR ${fmt(t.ajr)}`}
               </div>
               <ExcessBar value={value} from={t.optimal} upper={t.upper} toxic={t.toxic} unit={t.unit} />
+              {t.lowThreshold != null && (
+                <LowThresholdNote
+                  value={recentAvg ? recentAvg[t.key] : null}
+                  threshold={t.lowThreshold}
+                  unit={t.unit}
+                  note={t.lowNote}
+                />
+              )}
               {t.key === 'omega3' && <Omega3Breakdown totals={totals} />}
               <Breakdown items={items} nutrientKey={t.key} unit={t.unit} total={value} />
             </div>

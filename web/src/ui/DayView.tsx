@@ -67,7 +67,7 @@ export function DayView({ date }: { date: string }) {
       />
       <FavoriteMeals date={isToday ? undefined : date} />
       <ManualAdd date={isToday ? undefined : date} title={isToday ? undefined : `Ajouter un aliment${quand}`} />
-      <Totals totals={totals} items={items} incertitude={kcalUnc} />
+      <Totals totals={totals} items={items} incertitude={kcalUnc} date={date} />
       {dayEntries.length === 0 ? (
         <div className="panel">
           <div className="empty">

@@ -67,6 +67,18 @@ export interface RdaEntry {
   role: string;
   /** Justification de la cible optimale ou de la limite. */
   optimalNote?: string;
+  /**
+   * Seuil de CARENCE réelle, dans l'unité du nutriment (goal `atLeast`
+   * uniquement) : en dessous, un effet délétère est documenté dans le guide
+   * (`NUTRIENT_GUIDE[key].low`), pas juste « sous l'AJR ». Absent quand le
+   * guide ne fixe aucun chiffre net ou dit explicitement qu'il n'y a pas de
+   * carence connue — mieux vaut ne rien afficher qu'inventer un seuil.
+   * Protéines, lipides et fer le calculent à la volée dans `computeTargets`
+   * (poids/kcal/sexe) plutôt que de le fixer ici.
+   */
+  lowThreshold?: number;
+  /** Effet en une phrase courte si l'apport reste sous `lowThreshold`. */
+  lowNote?: string;
 }
 
 export const RDA: RdaEntry[] = [
@@ -79,6 +91,7 @@ export const RDA: RdaEntry[] = [
     key: 'proteines', label: 'Protéines', unit: 'g', rda: 60, goal: 'atLeast',
     role: 'Briques des muscles, enzymes et hormones ; réparation des tissus après l\'effort.',
     optimalNote: 'AJR = 0,83 g/kg. Optimal sportif 1,4 → 2,2 g/kg selon l\'activité pour soutenir la synthèse musculaire.',
+    lowNote: 'Bilan azoté négatif sous 0,66 g/kg : le corps démonte ses propres muscles.',
   },
   {
     key: 'glucides', label: 'Glucides', unit: 'g', rda: 260, goal: 'atLeast', optimalFactor: 1,
@@ -89,11 +102,14 @@ export const RDA: RdaEntry[] = [
     key: 'lipides', label: 'Lipides', unit: 'g', rda: 80, goal: 'atLeast', optimalFactor: 1,
     role: 'Réserve d\'énergie, hormones stéroïdiennes, absorption des vitamines A/D/E/K.',
     optimalNote: '≈ 30-35 % de l\'énergie. La qualité (voir oméga et rapports) prime sur la quantité.',
+    lowNote: 'Sous ~20 % de l\'énergie : vitamines A/D/E/K mal absorbées, testostérone en baisse.',
   },
   {
     key: 'fibres', label: 'Fibres', unit: 'g', rda: 30, goal: 'atLeast', optimalFactor: 1.2, upper: 60,
     role: 'Transit, satiété, contrôle glycémique et nourriture du microbiote intestinal.',
     optimalNote: 'AS ≈ 30 g ; viser ~36 g apporte un bénéfice cardiométabolique supplémentaire.',
+    lowThreshold: 20,
+    lowNote: 'Transit ralenti, microbiote appauvri ; mortalité toutes causes plus élevée dans les cohortes.',
   },
   {
     key: 'agSatures', label: 'AG saturés', unit: 'g', rda: 30, goal: 'limit', optimalLow: 20, importance: 0.5,
@@ -143,6 +159,8 @@ export const RDA: RdaEntry[] = [
     key: 'fer', label: 'Fer', unit: 'mg', rda: 9, goal: 'atLeast', optimalFactor: 1, upper: 45, toxic: 60,
     role: 'Transport de l\'oxygène (hémoglobine) et production d\'énergie ; clé pour l\'endurance.',
     optimalNote: 'Homme : 9 mg, les pertes sont faibles. Femme : 15-18 mg si les règles sont là, sinon comme l\'homme ; 27 mg enceinte. En excès le fer est pro-oxydant (détail dans le Guide).',
+    lowThreshold: 6, // homme ; la femme réglée est surchargée à 10 dans `computeTargets`.
+    lowNote: 'Fatigue, essoufflement à l\'effort ; anémie ferriprive si prolongé.',
   },
   {
     // upper 700 : l'EFSA ne limite que le magnésium AJOUTÉ (250 mg de sels en
@@ -151,21 +169,29 @@ export const RDA: RdaEntry[] = [
     key: 'magnesium', label: 'Magnésium', unit: 'mg', rda: 375, goal: 'atLeast', optimalFactor: 1.15, upper: 700,
     role: '300+ réactions enzymatiques : contraction musculaire, production d\'énergie (ATP), sommeil.',
     optimalNote: 'Pertes accrues par la sueur : viser le haut de la fourchette (~430 mg) chez le sportif.',
+    lowThreshold: 250,
+    lowNote: 'Crampes, fatigue, irritabilité ; à un stade avancé, troubles du rythme cardiaque.',
   },
   {
     key: 'potassium', label: 'Potassium', unit: 'mg', rda: 3500, goal: 'atLeast', optimalFactor: 1.15, upper: 6000,
     role: 'Équilibre hydrique, tension artérielle et transmission nerveuse/musculaire.',
     optimalNote: 'AS ≈ 3500 mg ; viser ~4000 mg soutient une tension basse. Le rapport avec le sodium compte (voir Nutriments).',
+    lowThreshold: 2000,
+    lowNote: 'Faiblesse musculaire, crampes, constipation, fatigue.',
   },
   {
     key: 'calcium', label: 'Calcium', unit: 'mg', rda: 950, goal: 'atLeast', optimalFactor: 1, upper: 2500, toxic: 4000,
     role: 'Minéralisation osseuse, contraction musculaire et coagulation.',
     optimalNote: 'Inutile de dépasser ~1000 mg ; l\'excès sans vitamine K2/D peut favoriser les calcifications.',
+    lowThreshold: 500,
+    lowNote: 'Le corps puise dans l\'os pour maintenir la calcémie : perte osseuse silencieuse.',
   },
   {
     key: 'zinc', label: 'Zinc', unit: 'mg', rda: 11, goal: 'atLeast', optimalFactor: 1.1, upper: 25, toxic: 50,
     role: 'Immunité, synthèse protéique, testostérone et cicatrisation.',
     optimalNote: 'Pertes par la sueur chez le sportif ; ne pas dépasser durablement 25 mg (antagonise le cuivre).',
+    lowThreshold: 7,
+    lowNote: 'Perte du goût/odorat, cicatrisation lente, infections à répétition.',
   },
   {
     // Plafond relevé de 2000 à 3000 mg : l'objectif OMS est le plus contesté de
@@ -180,25 +206,35 @@ export const RDA: RdaEntry[] = [
     key: 'selenium', label: 'Sélénium', unit: 'µg', rda: 70, goal: 'atLeast', optimalFactor: 1, upper: 300, toxic: 900,
     role: 'Antioxydant (glutathion peroxydase) et fonction thyroïdienne.',
     optimalNote: 'Fenêtre de sécurité étroite : rester proche de l\'AJR, éviter de dépasser ~300 µg.',
+    lowThreshold: 30,
+    lowNote: 'Fonction thyroïdienne et immunité affaiblies ; carence franche rare en Europe.',
   },
   {
     key: 'iode', label: 'Iode', unit: 'µg', rda: 150, goal: 'atLeast', optimalFactor: 1, upper: 600, toxic: 1100,
     role: 'Synthèse des hormones thyroïdiennes, qui règlent le métabolisme.',
+    lowThreshold: 50,
+    lowNote: 'Goitre, hypothyroïdie ; critique en début de grossesse (développement cérébral fœtal).',
   },
   {
     key: 'vitA', label: 'Vitamine A', unit: 'µg', rda: 750, goal: 'atLeast', optimalFactor: 1, upper: 3000, toxic: 7500,
     role: 'Vision, immunité et renouvellement de la peau et des muqueuses.',
     optimalNote: 'Vitamine liposoluble toxique en excès (rétinol) : ne pas pousser au-dessus de l\'AJR.',
+    lowThreshold: 300,
+    lowNote: 'Héméralopie (vision nocturne) en premier signe, puis xérophtalmie.',
   },
   {
     key: 'vitC', label: 'Vitamine C', unit: 'mg', rda: 110, goal: 'atLeast', optimalFactor: 2.7, upper: 2000, toxic: 3000,
     role: 'Antioxydant, synthèse du collagène, absorption du fer et soutien immunitaire.',
     optimalNote: 'Hydrosoluble et sûre : cible sportive ~300 mg pour couvrir le stress oxydatif de l\'entraînement.',
+    lowThreshold: 10,
+    lowNote: 'Scorbut en 1 à 3 mois : gencives, hématomes, fatigue.',
   },
   {
     key: 'vitD', label: 'Vitamine D', unit: 'µg', rda: 15, goal: 'atLeast', optimalFactor: 3.3, importance: 1.3, upper: 100, toxic: 250,
     role: 'Absorption du calcium, santé osseuse, immunité et fonction musculaire.',
     optimalNote: 'Déficit très fréquent : cible ~50 µg (2000 UI/j), sous le plafond de 100 µg.',
+    lowThreshold: 10,
+    lowNote: 'Absorption du calcium réduite de moitié ; ostéomalacie, risque de chute.',
   },
   {
     key: 'vitE', label: 'Vitamine E', unit: 'mg', rda: 12, goal: 'atLeast', optimalFactor: 1.2, upper: 300, toxic: 1000,
@@ -207,25 +243,36 @@ export const RDA: RdaEntry[] = [
   {
     key: 'vitK1', label: 'Vitamine K1', unit: 'µg', rda: 79, goal: 'atLeast', optimalFactor: 1,
     role: 'Coagulation sanguine (phylloquinone des légumes verts).',
+    lowThreshold: 30,
+    lowNote: 'Temps de coagulation allongé, ecchymoses ; rare chez l\'adulte (légumes verts + flore intestinale).',
   },
   {
-    key: 'vitK2', label: 'Vitamine K2', unit: 'µg', rda: 100, goal: 'atLeast', optimalFactor: 1,
+    // AJR 30 µg ≈ le niveau des cohortes associé à un bénéfice (Rotterdam, ~45 µg
+    // chez les plus gros consommateurs) ; optimal 100 µg = le repère « santé
+    // osseuse/artérielle » du guide (cf. `higher` dans `NUTRIENT_GUIDE`).
+    key: 'vitK2', label: 'Vitamine K2', unit: 'µg', rda: 30, goal: 'atLeast', optimalFactor: 100 / 30,
     role: 'Dirige le calcium vers les os plutôt que les artères (ménaquinones MK-4/MK-7).',
     optimalNote: 'Agit en synergie avec la vitamine D et le calcium pour la santé osseuse et artérielle.',
   },
   {
     key: 'vitB1', label: 'Vitamine B1', unit: 'mg', rda: 1.1, goal: 'atLeast', optimalFactor: 1.2,
     role: 'Thiamine : métabolisme des glucides et fonction nerveuse.',
+    lowThreshold: 0.7,
+    lowNote: 'Béribéri : neuropathie, fonte musculaire, troubles cardiaques.',
   },
   {
     key: 'vitB2', label: 'Vitamine B2', unit: 'mg', rda: 1.4, goal: 'atLeast', optimalFactor: 1.2,
     role: 'Riboflavine : production d\'énergie cellulaire et régénération des antioxydants.',
+    lowThreshold: 0.6,
+    lowNote: 'Ariboflavinose : perlèche, langue lisse, dermatite.',
   },
   {
     // upper 900 = limite du nicotinamide (forme alimentaire dominante) ; l'acide
     // nicotinique en supplément, lui, fait rougir dès 30-50 mg (cf. le guide).
     key: 'vitB3', label: 'Vitamine B3 (PP)', unit: 'mg', rda: 16, goal: 'atLeast', optimalFactor: 1.1, upper: 900, toxic: 2000,
     role: 'Niacine : métabolisme énergétique et réparation de l\'ADN.',
+    lowThreshold: 10,
+    lowNote: 'Pellagre : dermatite, diarrhée, troubles cognitifs (les « 3 D »).',
   },
   {
     key: 'vitB5', label: 'Vitamine B5', unit: 'mg', rda: 6, goal: 'atLeast', optimalFactor: 1.1,
@@ -234,10 +281,14 @@ export const RDA: RdaEntry[] = [
   {
     key: 'vitB6', label: 'Vitamine B6', unit: 'mg', rda: 1.4, goal: 'atLeast', optimalFactor: 1.2, upper: 12, toxic: 50,
     role: 'Métabolisme des protéines et des acides aminés, synthèse des neurotransmetteurs.',
+    lowThreshold: 0.5,
+    lowNote: 'Dermatite, anémie microcytaire, confusion ; convulsions possibles.',
   },
   {
     key: 'vitB9', label: 'Vitamine B9', unit: 'µg', rda: 330, goal: 'atLeast', optimalFactor: 1.1, upper: 1000,
     role: 'Folates : synthèse de l\'ADN et division cellulaire ; crucial en cas de grossesse.',
+    lowThreshold: 200,
+    lowNote: 'Anémie mégaloblastique ; grossesse : risque d\'anomalie du tube neural.',
   },
   {
     key: 'vitB12', label: 'Vitamine B12', unit: 'µg', rda: 4, goal: 'atLeast', optimalFactor: 1.1,
