@@ -10,6 +10,8 @@ import {
   joinProfile,
   renameCurrentProfile,
   leaveProfile,
+  reauthenticate,
+  cancelJoin,
   runProfileSyncTick,
   type JoinPreview,
   type JoinStrategy,
@@ -385,19 +387,22 @@ const JOIN_STRATEGIES: { id: JoinStrategy; label: string; desc: string }[] = [
 ];
 
 /**
- * Sauvegarde/synchronisation par PROFIL : on se connecte par un nom simple
+ * Sauvegarde/synchronisation par PROFIL : on se connecte par un nom + mot de passe
  * (renommable, id stable côté Supabase) et on retrouve ses données sur n'importe
- * quel navigateur. Sans mot de passe — même niveau de confiance que la file de
- * synchro existante. Masqué si Supabase n'est pas configuré.
+ * quel navigateur. Le mot de passe est vérifié côté serveur (Edge Function) et donne
+ * un jeton de session — sans lui, les données du profil restent inaccessibles.
+ * Masqué si Supabase n'est pas configuré.
  */
 function ProfileSyncPanel() {
   const profileId = useSyncStore((s) => s.profileId);
   const profileName = useSyncStore((s) => s.profileName);
+  const sessionExpired = useSyncStore((s) => s.sessionExpired);
   const pendingCount = useSyncStore((s) => Object.keys(s.pending).length);
   const lastSyncAt = useSyncStore((s) => s.lastSyncAt);
   const lastError = useSyncStore((s) => s.lastError);
 
   const [name, setName] = useState('');
+  const [password, setPassword] = useState('');
   const [busy, setBusy] = useState(false);
   const [status, setStatus] = useState('');
   const [preview, setPreview] = useState<JoinPreview | null>(null);
@@ -419,18 +424,19 @@ function ProfileSyncPanel() {
 
   async function handleCreate() {
     const n = name.trim();
-    if (!n) return;
-    await run(() => createAndPushProfile(n), `Profil « ${n} » créé et données envoyées.`);
+    if (!n || !password) return;
+    await run(() => createAndPushProfile(n, password), `Profil « ${n} » créé et données envoyées.`);
     setName('');
+    setPassword('');
   }
 
   async function handleLookup() {
     const n = name.trim();
-    if (!n) return;
+    if (!n || !password) return;
     setBusy(true);
     setStatus('');
     try {
-      setPreview(await getJoinPreview(n));
+      setPreview(await getJoinPreview(n, password));
     } catch (e) {
       setStatus(`⚠️ ${(e as Error).message}`);
     } finally {
@@ -443,10 +449,21 @@ function ProfileSyncPanel() {
     const target = preview;
     setPreview(null);
     await run(
-      () => joinProfile(target.profile.name, strategy),
+      () => joinProfile(target, strategy),
       `Connecté au profil « ${target.profile.name} ». Une sauvegarde JSON de sécurité a été téléchargée.`,
     );
     setName('');
+    setPassword('');
+  }
+
+  /**
+   * Renonce à la jonction en cours. `getJoinPreview` s'est déjà connecté pour pouvoir compter les
+   * repas du profil : sans cette fermeture, le client Supabase resterait connecté à un profil que
+   * le store, lui, n'a pas rejoint.
+   */
+  function handleCancelJoin() {
+    setPreview(null);
+    cancelJoin();
   }
 
   async function handleRename() {
@@ -455,10 +472,43 @@ function ProfileSyncPanel() {
     await run(() => renameCurrentProfile(next), `Profil renommé en « ${next.trim() }».`);
   }
 
-  function handleLeave() {
+  async function handleLeave() {
     if (!window.confirm('Se déconnecter du profil ? Les données de ce navigateur restent en place, mais ne seront plus synchronisées.')) return;
-    leaveProfile();
-    setStatus('Déconnecté du profil.');
+    await run(() => leaveProfile(), 'Déconnecté du profil.');
+  }
+
+  async function handleReauthenticate() {
+    if (!password) return;
+    await run(() => reauthenticate(password), `Reconnecté au profil « ${profileName} ».`);
+    setPassword('');
+  }
+
+  if (sessionExpired) {
+    return (
+      <div className="panel">
+        <h2>Profil &amp; synchronisation cloud</h2>
+        <p className="small" style={{ marginTop: -6, color: 'var(--warn)' }}>
+          Session expirée pour le profil <strong>{profileName}</strong>. Ressaisissez le mot de passe pour reprendre
+          la synchronisation (les données déjà sur ce navigateur restent intactes).
+        </p>
+        <div className="row" style={{ gap: 8, flexWrap: 'wrap' }}>
+          <input
+            type="password"
+            value={password}
+            onChange={(e) => setPassword(e.target.value)}
+            placeholder="Mot de passe"
+            style={{ flex: '1 1 200px' }}
+            disabled={busy}
+            autoFocus
+          />
+          <button className="primary" disabled={busy || !password} onClick={handleReauthenticate}>
+            Se reconnecter
+          </button>
+          <button className="ghost" disabled={busy} onClick={handleLeave}>Oublier ce profil</button>
+        </div>
+        {status && <div className="status">{status}</div>}
+      </div>
+    );
   }
 
   return (
@@ -487,21 +537,32 @@ function ProfileSyncPanel() {
       ) : (
         <>
           <p className="small" style={{ marginTop: -6 }}>
-            Entrez un nom (ex. « romain ») pour créer un profil ou vous connecter à un profil existant depuis n'importe
-            quel navigateur. <strong>Sans mot de passe</strong> : n'utilisez que sur des appareils de confiance.
+            Entrez un nom et un mot de passe (6 caractères minimum) pour retrouver vos données depuis
+            n'importe quel navigateur. <strong>Rejoindre</strong> si le profil a déjà un mot de passe,
+            <strong> Créer</strong> sinon — y compris pour un profil existant qui n'en a pas encore, que
+            « Créer » adopte avec le mot de passe saisi. Il protège seul l'accès à vos données :
+            <strong> retenez-le, il n'y a aucune récupération possible</strong>.
           </p>
           <div className="row" style={{ gap: 8, flexWrap: 'wrap' }}>
             <input
               value={name}
               onChange={(e) => setName(e.target.value)}
               placeholder="Nom du profil"
-              style={{ flex: '1 1 200px' }}
+              style={{ flex: '1 1 160px' }}
               disabled={busy}
             />
-            <button className="primary" disabled={busy || !name.trim()} onClick={handleCreate}>
+            <input
+              type="password"
+              value={password}
+              onChange={(e) => setPassword(e.target.value)}
+              placeholder="Mot de passe"
+              style={{ flex: '1 1 160px' }}
+              disabled={busy}
+            />
+            <button className="primary" disabled={busy || !name.trim() || !password} onClick={handleCreate}>
               Créer ce profil
             </button>
-            <button disabled={busy || !name.trim()} onClick={handleLookup}>
+            <button disabled={busy || !name.trim() || !password} onClick={handleLookup}>
               Rejoindre…
             </button>
           </div>
@@ -528,7 +589,7 @@ function ProfileSyncPanel() {
                     <span className="small"> — {st.desc}</span>
                   </button>
                 ))}
-                <button className="ghost small" disabled={busy} onClick={() => setPreview(null)}>
+                <button className="ghost small" disabled={busy} onClick={handleCancelJoin}>
                   Annuler
                 </button>
               </div>

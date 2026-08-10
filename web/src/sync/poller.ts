@@ -10,33 +10,28 @@ import {
   fetchPendingSun,
   fetchPendingWeight,
   markProcessed,
-  pushEntry,
-  pushSunEntry,
-  pushWeightEntry,
-  fetchNewEntries,
   isSyncConfigured,
 } from './supabase';
-import type { SunPayloadExposure } from './supabase';
 import { useSyncStore } from './syncStore';
 
 let running = false;
 
 /**
- * Un « tick » de synchro, à appeler périodiquement (voir App.tsx) :
- * 1. Si ce poste a le pont Claude Code disponible (ordinateur, npm run dev),
- *    traite les transcriptions, photos et dictées « soleil » en attente
- *    déposées par d'autres appareils.
- * 2. Récupère les résultats déjà traités par d'autres appareils (repas et
- *    sorties au soleil) et les ajoute au journal local.
- * No-op silencieux si Supabase n'est pas configuré.
+ * Un « tick » de la file d'attente, à appeler périodiquement (voir App.tsx) : si ce poste a le
+ * pont Claude Code disponible (ordinateur, npm run dev), il traite les dictées, photos, sorties
+ * soleil et pesées déposées par les AUTRES appareils du même profil, et les enregistre dans son
+ * journal local. La diffusion vers les autres appareils est ensuite assurée par la synchro d'état
+ * (`profileSync`), pas par cette file.
+ *
+ * No-op silencieux si Supabase n'est pas configuré, sans profil connecté, ou session expirée :
+ * depuis la migration 0001, `sync_queue` est cloisonnée par profil et exige un jeton valide.
  */
 export async function runSyncTick(): Promise<void> {
-  if (!isSyncConfigured() || running) return;
+  const { profileId, sessionExpired } = useSyncStore.getState();
+  if (!isSyncConfigured() || !profileId || sessionExpired || running) return;
   running = true;
   try {
     const {
-      deviceId,
-      syncCursor,
       extractionMode,
       cloudApiKey,
       cloudModel,
@@ -46,7 +41,6 @@ export async function runSyncTick(): Promise<void> {
       addEntry,
       addSunExposure,
       addWeightEntry,
-      setSyncCursor,
     } = useStore.getState();
 
     /** Laisse l'IA forte juger les correspondances incertaines (cf. extraction/verify.ts). */
@@ -71,17 +65,9 @@ export async function runSyncTick(): Promise<void> {
             if (res.items.length > 0) {
               const items = res.source === 'claudecode' ? await verify(res.items) : res.items;
               // Heure/jour = ceux estampillés par l'émetteur à l'envoi (cf. supabase.ts),
-              // pas l'heure de CE traitement différé.
+              // pas l'heure de CE traitement différé. L'entrée remonte ensuite aux autres
+              // appareils par la synchro d'état (profileSync), avec un id unique.
               addEntry(row.payload.transcript, items, res.source, row.payload.date, row.payload.clientTime);
-              if (res.source === 'claudecode') {
-                await pushEntry(deviceId, {
-                  transcript: row.payload.transcript,
-                  items,
-                  source: 'claudecode',
-                  ...(row.payload.date ? { date: row.payload.date } : {}),
-                  ...(row.payload.clientTime ? { clientTime: row.payload.clientTime } : {}),
-                });
-              }
             }
           } catch {
             // Échec ponctuel : on marque quand même la ligne traitée pour ne pas boucler dessus.
@@ -97,13 +83,6 @@ export async function runSyncTick(): Promise<void> {
             if (res.items.length > 0) {
               const items = await verify(res.items);
               addEntry('📷 Photo', items, res.source, row.payload.date, row.payload.clientTime);
-              await pushEntry(deviceId, {
-                transcript: '📷 Photo',
-                items,
-                source: 'claudecode',
-                ...(row.payload.date ? { date: row.payload.date } : {}),
-                ...(row.payload.clientTime ? { clientTime: row.payload.clientTime } : {}),
-              });
             }
           } catch {
             // Échec ponctuel : on marque quand même la ligne traitée pour ne pas boucler dessus.
@@ -112,7 +91,7 @@ export async function runSyncTick(): Promise<void> {
         }
 
         // Dictées « soleil » en attente : même chemin qu'un repas — le poste qui a
-        // le pont analyse, enregistre, et republie pour les autres appareils.
+        // le pont analyse et enregistre, la synchro d'état diffuse ensuite.
         const pendingSun = await fetchPendingSun();
         for (const row of pendingSun) {
           try {
@@ -125,12 +104,6 @@ export async function runSyncTick(): Promise<void> {
               const defaults = { ...SUN_FALLBACK, date: row.payload.date ?? todayStr() };
               const complete = sorties.map((p) => completeSunExposure(p, defaults));
               for (const e of complete) addSunExposure(e, row.payload.clientTime);
-              await pushSunEntry(deviceId, {
-                transcript: row.payload.transcript,
-                sorties: complete,
-                ...(row.payload.date ? { date: row.payload.date } : {}),
-                ...(row.payload.clientTime ? { clientTime: row.payload.clientTime } : {}),
-              });
             }
           } catch {
             // Échec ponctuel : on marque quand même la ligne traitée pour ne pas boucler dessus.
@@ -155,15 +128,7 @@ export async function runSyncTick(): Promise<void> {
                     source: 'claudecode',
                   })
                 : null;
-            if (pesee) {
-              addWeightEntry(pesee, row.payload.clientTime);
-              await pushWeightEntry(deviceId, {
-                transcript: row.payload.transcript,
-                pesee,
-                ...(row.payload.date ? { date: row.payload.date } : {}),
-                ...(row.payload.clientTime ? { clientTime: row.payload.clientTime } : {}),
-              });
-            }
+            if (pesee) addWeightEntry(pesee, row.payload.clientTime);
           } catch {
             // Échec ponctuel : on marque quand même la ligne traitée pour ne pas boucler dessus.
           }
@@ -172,28 +137,11 @@ export async function runSyncTick(): Promise<void> {
       }
     }
 
-    // Quand un profil de synchro est actif, le rejeu des résultats est pris en
-    // charge par la sync d'état (profileSync) : chaque appareil recevrait sinon
-    // ces résultats avec un id local DIFFÉRENT, créant des doublons dans le
-    // profil. Le pont (ci-dessus) continue de traiter et son `addEntry` local
-    // remonte aux autres appareils par la sync d'état, avec un id unique.
-    if (useSyncStore.getState().profileId == null) {
-      const newRows = await fetchNewEntries(deviceId, syncCursor);
-      for (const row of newRows) {
-        // Rejeu d'un résultat traité par un AUTRE appareil : on réutilise l'heure/le
-        // jour d'origine (estampillés par l'émetteur), pas l'heure de réception ici.
-        if (row.kind === 'sun-entry') {
-          for (const e of row.payload.sorties as SunPayloadExposure[]) addSunExposure(e, row.payload.clientTime);
-        } else if (row.kind === 'weight-entry') {
-          addWeightEntry(row.payload.pesee, row.payload.clientTime);
-        } else {
-          addEntry(row.payload.transcript, row.payload.items, row.payload.source, row.payload.date, row.payload.clientTime);
-        }
-      }
-      if (newRows.length > 0) {
-        setSyncCursor(newRows[newRows.length - 1].created_at);
-      }
-    }
+    // Le rejeu des résultats traités par d'AUTRES appareils est pris en charge par
+    // la sync d'état (profileSync, toujours active ici — cf. garde en tête de
+    // fonction) : chaque appareil recevrait sinon ces résultats avec un id local
+    // DIFFÉRENT, créant des doublons. Le pont (ci-dessus) continue de traiter et
+    // son `addEntry` local remonte aux autres appareils par la sync d'état.
   } catch {
     // Réseau coupé, Supabase injoignable, projet en pause… : la synchro est un
     // confort, jamais un bloquant. Sans ce filet, une simple perte de connexion

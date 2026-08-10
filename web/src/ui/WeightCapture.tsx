@@ -6,6 +6,7 @@ import { NativeRecognizer } from '../stt/webspeech';
 import { extractWeight } from '../extraction/weight';
 import type { WeightPatch } from '../extraction/weight';
 import { isSyncConfigured, pushWeightTranscript } from '../sync/supabase';
+import { useSyncStore } from '../sync/syncStore';
 import { WEIGHT_METRICS } from '../weight/types';
 
 /** Résumé court des champs compris (pour vérification rapide). */
@@ -48,6 +49,7 @@ export function WeightCapture({ onExtract }: { onExtract: (patch: WeightPatch) =
   const sttEngine = useStore((s) => s.sttEngine);
   const sttModel = useStore((s) => s.sttModel);
   const deviceId = useStore((s) => s.deviceId);
+  const profileId = useSyncStore((s) => s.profileId);
 
   const reviewHint = 'Vérifiez / corrigez le texte, puis cliquez « Analyser ».';
 
@@ -140,11 +142,11 @@ export function WeightCapture({ onExtract }: { onExtract: (patch: WeightPatch) =
       // Pont Claude Code indisponible ici (typiquement sur téléphone) : la dictée
       // part en file d'attente Supabase pour que l'ordinateur l'analyse et
       // enregistre la pesée, plutôt que d'être perdue. Même repli que Capture.
-      if (extractionMode === 'claudecode' && isSyncConfigured()) {
+      if (extractionMode === 'claudecode' && isSyncConfigured() && profileId) {
         try {
           // Jour local résolu ICI + heure d'envoi : la pesée sera datée du moment
           // de la dictée, pas de l'heure du traitement différé (cf. poller).
-          await pushWeightTranscript(deviceId, clean, todayStr(), Date.now());
+          await pushWeightTranscript(deviceId, profileId, clean, todayStr(), Date.now());
           setText('');
           setStatus(
             '✓ Envoyée sur Supabase (en attente) : le pont Claude Code n’est pas joignable ici, la pesée sera enregistrée dès que l’ordinateur sera disponible.',

@@ -7,6 +7,7 @@ import { NativeRecognizer } from '../stt/webspeech';
 import { extractSun } from '../extraction/sun';
 import type { SunPatch } from '../extraction/sun';
 import { isSyncConfigured, pushSunTranscript } from '../sync/supabase';
+import { useSyncStore } from '../sync/syncStore';
 import {
   SKY_OPTIONS,
   SKIN_OPTIONS,
@@ -455,6 +456,7 @@ function SunDictation({ onSorties, date }: { onSorties: (sorties: SunPatch[]) =>
   const sttEngine = useStore((s) => s.sttEngine);
   const sttModel = useStore((s) => s.sttModel);
   const deviceId = useStore((s) => s.deviceId);
+  const profileId = useSyncStore((s) => s.profileId);
 
   async function handleRecord() {
     return sttEngine === 'native' ? handleNative() : handleWhisper();
@@ -550,12 +552,12 @@ function SunDictation({ onSorties, date }: { onSorties: (sorties: SunPatch[]) =>
       // Pont Claude Code indisponible ici (typiquement sur téléphone) : on met la
       // dictée en file d'attente pour l'ordinateur, comme pour un repas, plutôt
       // que de la perdre. Même repli que Capture.
-      if (extractionMode === 'claudecode' && isSyncConfigured()) {
+      if (extractionMode === 'claudecode' && isSyncConfigured() && profileId) {
         try {
           // Jour local résolu (comme l'ajout direct) + heure d'envoi : l'ordinateur
           // qui traitera plus tard datera la sortie de MAINTENANT, pas de son heure
           // de traitement (cf. addSunExposure / poller).
-          await pushSunTranscript(deviceId, clean, date ?? todayStr(), Date.now());
+          await pushSunTranscript(deviceId, profileId, clean, date ?? todayStr(), Date.now());
           setText('');
           setStatus('Pont Claude Code indisponible ici : dictée mise en file d’attente, sera traitée dès que l’ordinateur sera disponible.');
           return;

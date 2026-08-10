@@ -8,12 +8,13 @@ import { DEFAULT_WEIGHT_CONFIG } from '../src/weight/types';
 
 /**
  * Le moteur de sync parle à Supabase (mocké) : on vérifie le pull/push, l'arbitrage
- * last-write-wins, les tombstones, l'anti-boucle, le recalcul des nutriments et les
- * jonctions — pas les appels réseau eux-mêmes.
+ * last-write-wins, les tombstones, l'anti-boucle, le recalcul des nutriments, les
+ * jonctions (mot de passe → jeton) et la détection d'expiration de session — pas
+ * les appels réseau eux-mêmes.
  */
 
 // Supabase « configuré » (sinon le tick est un no-op) ; la vraie clé est absente en test.
-vi.mock('../src/sync/supabase', () => ({ isSyncConfigured: () => true, supabase: null }));
+vi.mock('../src/sync/supabase', () => ({ isSyncConfigured: () => true, supabase: null, setSessionToken: () => {} }));
 // exportJsonFile touche au DOM (indispo en env node) : neutralisé.
 vi.mock('../src/store/backup', () => ({ exportJsonFile: () => {} }));
 
@@ -21,16 +22,36 @@ const db = vi.hoisted(() => ({
   profiles: [] as { id: string; name: string }[],
   rows: {} as Record<string, any[]>,
   counter: 0,
-  failUpsert: false,
+  /** `network` = panne passagère, `auth` = jeton refusé (code PostgREST PGRST301). */
+  failUpsert: null as null | 'network' | 'auth',
 }));
 
+/** Session Supabase simulée : c'est supabase-js qui la porte en vrai, on n'observe que l'état. */
+const session = vi.hoisted(() => ({ open: false }));
+
 vi.mock('../src/sync/profileApi', () => ({
-  findProfileByName: async (name: string) => db.profiles.find((p) => p.name.toLowerCase() === name.trim().toLowerCase()) ?? null,
-  createProfile: async (name: string) => {
-    const p = { id: `pid-${name.trim()}`, name: name.trim() };
-    db.profiles.push(p);
-    return p;
+  // Reproduit le vrai `isAuthError` : c'est le CODE qui décide, pas le message.
+  isAuthError: (e: unknown) => (e as { code?: string } | null)?.code === 'PGRST301',
+  loginProfile: async (name: string) => {
+    const p = db.profiles.find((p) => p.name.toLowerCase() === name.trim().toLowerCase());
+    if (!p) throw new Error('Nom ou mot de passe incorrect.');
+    session.open = true;
+    return { id: p.id, name: p.name };
   },
+  signupProfile: async (name: string) => {
+    const trimmed = name.trim();
+    if (db.profiles.some((p) => p.name.toLowerCase() === trimmed.toLowerCase())) {
+      throw new Error('Ce nom de profil est déjà utilisé. Utilisez « Rejoindre » pour vous y connecter.');
+    }
+    const p = { id: `pid-${trimmed}`, name: trimmed };
+    db.profiles.push(p);
+    session.open = true;
+    return { id: p.id, name: p.name };
+  },
+  signOut: async () => {
+    session.open = false;
+  },
+  hasValidSession: async () => session.open,
   renameProfile: async () => {},
   fetchRowsSince: async (table: string, profileId: string, cursor: string | null, device: string) =>
     (db.rows[table] ?? []).filter((r) => r.profile_id === profileId && r.device !== device && (!cursor || (r.synced_at ?? '') > cursor)),
@@ -39,7 +60,12 @@ vi.mock('../src/sync/profileApi', () => ({
   countRows: async (table: string, profileId: string) =>
     (db.rows[table] ?? []).filter((r) => r.profile_id === profileId && !r.deleted).length,
   upsertRows: async (table: string, rows: any[]) => {
-    if (db.failUpsert) throw new Error('boom réseau');
+    if (db.failUpsert === 'auth') {
+      const e = new Error('JWT expired') as Error & { code?: string };
+      e.code = 'PGRST301';
+      throw e;
+    }
+    if (db.failUpsert === 'network') throw new Error('boom réseau');
     const list = (db.rows[table] ??= []);
     const kf = table === 'profile_kv' ? 'key' : 'id';
     for (const row of rows) {
@@ -52,7 +78,8 @@ vi.mock('../src/sync/profileApi', () => ({
   },
 }));
 
-const { runProfileSyncTick, joinProfile, createAndPushProfile } = await import('../src/sync/profileSync');
+const { runProfileSyncTick, joinProfile, createAndPushProfile, getJoinPreview, reauthenticate, leaveProfile } =
+  await import('../src/sync/profileSync');
 
 initChangeTracker();
 
@@ -79,8 +106,17 @@ beforeEach(() => {
   db.profiles = [];
   db.rows = {};
   db.counter = 0;
-  db.failUpsert = false;
-  useSyncStore.setState({ profileId: null, profileName: null, pending: {}, pullCursor: null, lastSyncAt: null, lastError: null });
+  db.failUpsert = null;
+  session.open = false;
+  useSyncStore.setState({
+    profileId: null,
+    profileName: null,
+    sessionExpired: false,
+    pending: {},
+    pullCursor: null,
+    lastSyncAt: null,
+    lastError: null,
+  });
   useStore.setState({
     entries: [],
     customFoods: [],
@@ -96,7 +132,8 @@ beforeEach(() => {
 
 /** Joint le profil p1 (après avoir configuré le local), sans passer par le réseau. */
 function join(cursor: string | null = null) {
-  useSyncStore.setState({ profileId: 'p1', profileName: 'p1', pending: {}, pullCursor: cursor });
+  session.open = true;
+  useSyncStore.setState({ profileId: 'p1', profileName: 'p1', sessionExpired: false, pending: {}, pullCursor: cursor });
 }
 
 describe('runProfileSyncTick — pull', () => {
@@ -168,25 +205,95 @@ describe('runProfileSyncTick — push', () => {
     expect(Object.keys(useSyncStore.getState().pending)).toHaveLength(0);
   });
 
-  it('conserve le pending et signale l’erreur si le push échoue', async () => {
+  it('conserve le pending et signale l’erreur si le push échoue (réseau)', async () => {
     localEntries([{ id: 'e1', date: '2026-07-19', createdAt: 1, transcript: 'hello', source: 'manuel', items: [] }]);
     join();
     useSyncStore.setState({ pending: { 'journal_entries:e1': { updatedAt: 100 } } });
-    db.failUpsert = true;
+    db.failUpsert = 'network';
     await runProfileSyncTick();
     expect(useSyncStore.getState().pending['journal_entries:e1']).toBeTruthy();
     expect(useSyncStore.getState().lastError).toBeTruthy();
+    // Une panne réseau ne doit SURTOUT pas déconnecter : les données en attente seraient bloquées
+    // derrière une demande de mot de passe alors que la session est parfaitement valide.
+    expect(useSyncStore.getState().sessionExpired).toBe(false);
+  });
+
+  it('bascule sessionExpired quand PostgREST rejette la session (PGRST301)', async () => {
+    localEntries([{ id: 'e1', date: '2026-07-19', createdAt: 1, transcript: 'hello', source: 'manuel', items: [] }]);
+    join();
+    useSyncStore.setState({ pending: { 'journal_entries:e1': { updatedAt: 100 } } });
+    db.failUpsert = 'auth';
+    await runProfileSyncTick();
+    expect(useSyncStore.getState().sessionExpired).toBe(true);
+    // Le nom du profil reste affiché pour proposer une reconnexion, pas un abandon complet.
+    expect(useSyncStore.getState().profileId).toBe('p1');
+    expect(useSyncStore.getState().profileName).toBe('p1');
+    // Les modifications en attente survivent : elles repartiront après reconnexion.
+    expect(useSyncStore.getState().pending['journal_entries:e1']).toBeTruthy();
+  });
+
+  it('un tick est un no-op tant que la session est expirée', async () => {
+    localEntries([{ id: 'e1', date: '2026-07-19', createdAt: 1, transcript: 'hello', source: 'manuel', items: [] }]);
+    join();
+    useSyncStore.setState({ sessionExpired: true, pending: { 'journal_entries:e1': { updatedAt: 100 } } });
+    await runProfileSyncTick();
+    expect(db.rows.journal_entries ?? []).toHaveLength(0);
+  });
+});
+
+describe('reconnexion après expiration', () => {
+  it('rétablit la session SANS perdre les modifications faites pendant l’expiration', async () => {
+    db.profiles = [{ id: 'p1', name: 'p1' }];
+    localEntries([{ id: 'e1', date: '2026-07-19', createdAt: 1, transcript: 'hello', source: 'manuel', items: [] }]);
+    join('000050');
+    // Session expirée, puis une modification locale faite hors ligne.
+    session.open = false;
+    useSyncStore.setState({
+      sessionExpired: true,
+      pending: { 'journal_entries:e1': { updatedAt: 100 } },
+    });
+
+    await reauthenticate('secret');
+
+    expect(useSyncStore.getState().sessionExpired).toBe(false);
+    // La modification a bien été poussée, pas jetée avec la session.
+    expect((db.rows.journal_entries ?? []).map((r) => r.id)).toEqual(['e1']);
+  });
+
+  it('refuse de reconnecter si le nom pointe désormais vers un autre profil', async () => {
+    db.profiles = [{ id: 'autre', name: 'p1' }];
+    join();
+    session.open = false;
+    useSyncStore.setState({ sessionExpired: true });
+    await expect(reauthenticate('secret')).rejects.toThrow('un autre profil');
+    // La session ouverte par la tentative est refermée : pas de session sur un profil étranger.
+    expect(session.open).toBe(false);
+  });
+
+  it('leaveProfile efface l’état local ET ferme la session Supabase', async () => {
+    join();
+    await leaveProfile();
+    const s = useSyncStore.getState();
+    expect(s.profileId).toBeNull();
+    expect(s.profileName).toBeNull();
+    expect(s.sessionExpired).toBe(false);
+    expect(session.open).toBe(false);
   });
 });
 
 describe('jonction et création', () => {
+  it('getJoinPreview rejette si le nom/mot de passe ne correspond à aucun profil', async () => {
+    await expect(getJoinPreview('inconnu', 'secret')).rejects.toThrow('Nom ou mot de passe incorrect.');
+  });
+
   it('joinProfile "pull" remplace le local, vide le pending et pose le curseur', async () => {
     db.profiles = [{ id: 'p1', name: 'romain' }];
     db.rows.journal_entries = [entryRow('c1')];
     localEntries([{ id: 'junk', date: '2026-07-19', createdAt: 1, transcript: 'poubelle', source: 'manuel', items: [] }]);
     useSyncStore.setState({ pending: { 'journal_entries:junk': { updatedAt: 1 } } });
 
-    await joinProfile('romain', 'pull');
+    const preview = await getJoinPreview('romain', 'secret');
+    await joinProfile(preview, 'pull');
 
     expect(useStore.getState().entries.map((e) => e.id)).toEqual(['c1']);
     expect(useSyncStore.getState().profileId).toBe('p1');
@@ -200,7 +307,7 @@ describe('jonction et création', () => {
       { id: 'e2', date: '2026-07-19', createdAt: 2, transcript: 'b', source: 'manuel', items: [] },
     ]);
 
-    await createAndPushProfile('nouveau');
+    await createAndPushProfile('nouveau', 'secret');
 
     expect(db.profiles.map((p) => p.name)).toContain('nouveau');
     const ids = (db.rows.journal_entries ?? []).map((r) => r.id).sort();

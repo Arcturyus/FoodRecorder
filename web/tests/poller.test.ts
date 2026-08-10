@@ -1,5 +1,6 @@
 import { describe, expect, it, vi, beforeEach } from 'vitest';
 import { useStore } from '../src/store/store';
+import { useSyncStore } from '../src/sync/syncStore';
 
 /**
  * Le poller parle à Supabase et au pont Claude Code : les deux sont simulés.
@@ -12,12 +13,8 @@ const rows = {
   images: [] as { id: string; payload: { imageBase64: string; mediaType: string; date?: string } }[],
   sun: [] as { id: string; payload: { transcript: string; date?: string } }[],
   weight: [] as { id: string; payload: { transcript: string; date?: string; clientTime?: number } }[],
-  results: [] as { id: string; kind: string; payload: unknown; created_at: string }[],
 };
 const pushed = {
-  entries: [] as unknown[],
-  sunEntries: [] as unknown[],
-  weightEntries: [] as unknown[],
   processed: [] as string[],
 };
 
@@ -27,12 +24,7 @@ vi.mock('../src/sync/supabase', () => ({
   fetchPendingImages: async () => rows.images,
   fetchPendingSun: async () => rows.sun,
   fetchPendingWeight: async () => rows.weight,
-  fetchNewEntries: async () => rows.results,
   markProcessed: async (id: string) => void pushed.processed.push(id),
-  pushEntry: async (_d: string, e: unknown) => void pushed.entries.push(e),
-  pushSunEntry: async (_d: string, e: unknown) => void pushed.sunEntries.push(e),
-  pushWeightEntry: async (_d: string, e: unknown) => void pushed.weightEntries.push(e),
-  RESULT_KINDS: ['entry', 'sun-entry', 'weight-entry'],
 }));
 
 vi.mock('../src/extraction/claudeCode', () => ({
@@ -72,10 +64,6 @@ beforeEach(() => {
   rows.images = [];
   rows.sun = [];
   rows.weight = [];
-  rows.results = [];
-  pushed.entries = [];
-  pushed.sunEntries = [];
-  pushed.weightEntries = [];
   pushed.processed = [];
   useStore.setState({
     entries: [],
@@ -84,10 +72,12 @@ beforeEach(() => {
     extractionMode: 'claudecode',
     syncCursor: null,
   });
+  // runSyncTick exige désormais une session de profil active (cf. sync_queue cloisonnée par profil).
+  useSyncStore.setState({ profileId: 'p1', profileName: 'p1', sessionExpired: false });
 });
 
 describe('runSyncTick — dictées soleil en attente', () => {
-  it('analyse une dictée soleil, enregistre chaque sortie et redépose le résultat', async () => {
+  it('analyse une dictée soleil et enregistre chaque sortie dans le journal local', async () => {
     rows.sun = [{ id: 'r1', payload: { transcript: 'vingt minutes ce matin puis une demi-heure à 17h' } }];
 
     await runSyncTick();
@@ -100,9 +90,8 @@ describe('runSyncTick — dictées soleil en attente', () => {
     expect(exposures.every((e) => e.ciel === 'ensoleille' && e.phenotype === 'blanc')).toBe(true);
     expect(exposures.every((e) => e.date && e.id && e.createdAt)).toBe(true);
 
-    // Redéposé pour les autres appareils, et la ligne est marquée traitée.
-    expect(pushed.sunEntries).toHaveLength(1);
-    expect((pushed.sunEntries[0] as { sorties: unknown[] }).sorties).toHaveLength(2);
+    // La ligne est marquée traitée ; la diffusion vers les autres appareils passe désormais par
+    // la synchro d'état (profileSync), plus par un « résultat » redéposé dans la file.
     expect(pushed.processed).toContain('r1');
   });
 
@@ -122,7 +111,7 @@ describe('runSyncTick — dictées soleil en attente', () => {
 });
 
 describe('runSyncTick — dictées de pesée en attente', () => {
-  it('analyse une dictée de pesée, l’enregistre et redépose le résultat', async () => {
+  it('analyse une dictée de pesée et l’enregistre dans le journal local', async () => {
     rows.weight = [{ id: 'w1', payload: { transcript: 'soixante-huit cinq, masse grasse 18,2', date: '2026-07-02', clientTime: 1_770_000_000_000 } }];
 
     await runSyncTick();
@@ -139,7 +128,6 @@ describe('runSyncTick — dictées de pesée en attente', () => {
     // Heure de saisie de l'émetteur, pas l'heure de ce traitement.
     expect(pesees[0].createdAt).toBe(1_770_000_000_000);
 
-    expect(pushed.weightEntries).toHaveLength(1);
     expect(pushed.processed).toContain('w1');
   });
 
@@ -152,49 +140,25 @@ describe('runSyncTick — dictées de pesée en attente', () => {
   });
 });
 
-describe('runSyncTick — résultats reçus des autres appareils', () => {
-  it('rejoue repas et sorties au soleil, et avance le curseur partagé', async () => {
-    rows.results = [
-      {
-        id: 'a',
-        kind: 'entry',
-        created_at: '2026-07-17T10:00:00Z',
-        payload: { transcript: 'une banane', items: [{ aliment: 'banane', quantite: 1, unite: 'piece', estimation: false }], source: 'claudecode' },
-      },
-      {
-        id: 'b',
-        kind: 'sun-entry',
-        created_at: '2026-07-17T11:00:00Z',
-        payload: {
-          transcript: 'une demi-heure au soleil',
-          sorties: [{ date: '2026-07-17', heure: '13:00', dureeMin: 30, ciel: 'ensoleille', peau: 'visage-bras', phenotype: 'blanc', creme: 'aucune' }],
-        },
-      },
-      {
-        id: 'c',
-        kind: 'weight-entry',
-        created_at: '2026-07-17T12:00:00Z',
-        payload: {
-          transcript: '68,5 kg à jeun',
-          pesee: { date: '2026-07-17', heure: '08:00', aJeun: true, nu: true, poids: 68.5, source: 'claudecode' },
-        },
-      },
-    ];
-
+describe('runSyncTick — garde-fous', () => {
+  it('ne fait rien sans session de profil active (sync_queue exige désormais une authentification)', async () => {
+    useSyncStore.setState({ profileId: null });
+    rows.sun = [{ id: 'r1', payload: { transcript: 'vingt minutes au soleil' } }];
     await runSyncTick();
+    expect(useStore.getState().sunExposures).toHaveLength(0);
+    expect(pushed.processed).toHaveLength(0);
+  });
 
-    expect(useStore.getState().entries).toHaveLength(1);
-    expect(useStore.getState().sunExposures).toHaveLength(1);
-    expect(useStore.getState().sunExposures[0].dureeMin).toBe(30);
-    expect(useStore.getState().weightEntries).toHaveLength(1);
-    expect(useStore.getState().weightEntries[0].poids).toBe(68.5);
-    // Curseur = la ligne la plus récente, tous kinds confondus.
-    expect(useStore.getState().syncCursor).toBe('2026-07-17T12:00:00Z');
+  it('ne fait rien si la session a expiré', async () => {
+    useSyncStore.setState({ sessionExpired: true });
+    rows.sun = [{ id: 'r1', payload: { transcript: 'vingt minutes au soleil' } }];
+    await runSyncTick();
+    expect(useStore.getState().sunExposures).toHaveLength(0);
   });
 
   it('n’explose pas si Supabase est injoignable (réseau coupé)', async () => {
     const mod = await import('../src/sync/supabase');
-    vi.spyOn(mod, 'fetchNewEntries').mockRejectedValueOnce(new TypeError('Failed to fetch'));
+    vi.spyOn(mod, 'fetchPendingTranscripts').mockRejectedValueOnce(new TypeError('Failed to fetch'));
     await expect(runSyncTick()).resolves.toBeUndefined();
   });
 });

@@ -9,6 +9,7 @@ import { extractWithClaudeCode, extractImageWithClaudeCode } from '../extraction
 import { verifyMatches } from '../extraction/verify';
 import { parseTranscript } from '../extraction/ruleParser';
 import { isSyncConfigured, pushTranscript, pushImage } from '../sync/supabase';
+import { useSyncStore } from '../sync/syncStore';
 import { normalizeForMatch, trigramSimilarity } from '../nutrition/normalize';
 import type { ExtractedItem } from '../nutrition/types';
 import type { FavoriteMeal, JournalEntry } from '../store/store';
@@ -142,6 +143,7 @@ export function Capture({ date, title }: { date?: string; title?: string } = {})
   const sttEngine = useStore((s) => s.sttEngine);
   const sttModel = useStore((s) => s.sttModel);
   const deviceId = useStore((s) => s.deviceId);
+  const profileId = useSyncStore((s) => s.profileId);
   const foods = useEffectiveFoods();
 
   const reviewHint = 'Vérifiez / corrigez le texte, puis cliquez « Ajouter ».';
@@ -284,12 +286,12 @@ export function Capture({ date, title }: { date?: string; title?: string } = {})
         // Pont indisponible ici (typiquement sur tel) : mise en file d'attente
         // pour traitement différé par l'ordinateur, plutôt que de dégrader
         // silencieusement vers le parseur à règles.
-        if (isSyncConfigured()) {
+        if (isSyncConfigured() && profileId) {
           try {
             // On estampille ICI le jour local (résolu, pas différé) et l'heure
             // d'envoi : l'ordinateur qui traitera plus tard doit dater le repas
             // de MAINTENANT, pas de son heure de traitement (cf. addEntry).
-            await pushTranscript(deviceId, clean, date ?? todayStr(), Date.now());
+            await pushTranscript(deviceId, profileId, clean, date ?? todayStr(), Date.now());
             setText('');
             setStatus('Pont Claude Code indisponible ici : mis en file d’attente, sera traité dès que l’ordinateur sera disponible.');
             return;
@@ -364,7 +366,7 @@ export function Capture({ date, title }: { date?: string; title?: string } = {})
         } catch (bridgeErr) {
           // Pont indisponible ici (tel, ou site déployé) : mise en file d'attente
           // de la photo réduite, pour analyse différée par l'ordinateur.
-          if (isSyncConfigured()) {
+          if (isSyncConfigured() && profileId) {
             // Résumé affiché à l'écran (diagnostic sans débogueur sur tel) :
             // poids envoyé · dimensions réduites · poids d'origine. Renseigné dès
             // la réduction faite, pour l'inclure aussi dans un éventuel échec.
@@ -373,7 +375,7 @@ export function Capture({ date, title }: { date?: string; title?: string } = {})
               const img = await downscaleImage(file);
               info = `${formatBytes(base64Bytes(img.data))} · ${img.width}×${img.height} · orig ${formatBytes(file.size)}`;
               console.info(`[photo] mise en file d’attente : ${info}`);
-              await pushImage(deviceId, img.data, img.mediaType, date ?? todayStr(), Date.now());
+              await pushImage(deviceId, profileId, img.data, img.mediaType, date ?? todayStr(), Date.now());
               setStatus(`✓ Photo en file d’attente (${info}). Analyse dès que l’ordinateur est disponible.`);
             } catch (queueErr) {
               // Échec de l'ENVOI à Supabase (≠ échec d'analyse) : message distinct,

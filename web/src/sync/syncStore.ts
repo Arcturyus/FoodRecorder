@@ -19,6 +19,13 @@ export interface PendingChange {
 interface SyncState {
   profileId: string | null;
   profileName: string | null;
+  /**
+   * Session Supabase perdue (jeton de rafraîchissement expiré, ou déconnexion côté serveur) : le
+   * profil est toujours connu — son nom reste affichable — mais la synchro est suspendue jusqu'à
+   * ressaisie du mot de passe. Le jeton lui-même n'est pas stocké ici : supabase-js le persiste et
+   * le rafraîchit dans son coin.
+   */
+  sessionExpired: boolean;
   /** Modifications en attente de push, par clé `table:id`. */
   pending: Record<string, PendingChange>;
   /** Dernier `synced_at` serveur appliqué (curseur de pull incrémental). */
@@ -26,10 +33,20 @@ interface SyncState {
   lastSyncAt: number | null;
   lastError: string | null;
 
-  /** Joint (ou quitte si null) un profil : réinitialise pending + curseur. */
-  setProfile: (id: string | null, name: string | null) => void;
+  /** Connexion réussie (création ou jonction) : réinitialise pending + curseur. */
+  setSession: (id: string, name: string) => void;
+  /**
+   * Session rétablie après expiration. Distinct de `setSession`, qui repart de zéro : ici il FAUT
+   * préserver `pending` et le curseur, sinon les modifications faites pendant l'expiration seraient
+   * perdues sans jamais être poussées.
+   */
+  renewSession: () => void;
   /** Met à jour le seul nom affiché (après un renommage) sans toucher pending/curseur. */
   setProfileName: (name: string) => void;
+  /** Session perdue : garde le profil affiché, suspend la synchro. */
+  setSessionExpired: () => void;
+  /** Quitte complètement le profil (déconnexion explicite). */
+  clearSession: () => void;
   /** Fusionne des modifications dans `pending` (dernier gagne par clé). */
   mergePending: (changes: Record<string, PendingChange>) => void;
   /** Retire de `pending` les clés poussées dont l'horodatage n'a pas bougé. */
@@ -44,15 +61,37 @@ export const useSyncStore = create<SyncState>()(
     (set) => ({
       profileId: null,
       profileName: null,
+      sessionExpired: false,
       pending: {},
       pullCursor: null,
       lastSyncAt: null,
       lastError: null,
 
-      setProfile: (id, name) =>
-        set({ profileId: id, profileName: name, pending: {}, pullCursor: null, lastError: null }),
+      setSession: (id, name) =>
+        set({
+          profileId: id,
+          profileName: name,
+          sessionExpired: false,
+          pending: {},
+          pullCursor: null,
+          lastError: null,
+        }),
+
+      renewSession: () => set({ sessionExpired: false, lastError: null }),
 
       setProfileName: (name) => set({ profileName: name }),
+
+      setSessionExpired: () => set({ sessionExpired: true }),
+
+      clearSession: () =>
+        set({
+          profileId: null,
+          profileName: null,
+          sessionExpired: false,
+          pending: {},
+          pullCursor: null,
+          lastError: null,
+        }),
 
       mergePending: (changes) =>
         set((s) => ({ pending: { ...s.pending, ...changes } })),

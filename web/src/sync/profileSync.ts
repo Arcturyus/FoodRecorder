@@ -42,15 +42,17 @@ import {
   type StoreState,
 } from './collections';
 import {
-  findProfileByName,
-  createProfile,
+  loginProfile,
+  signupProfile,
+  signOut,
+  hasValidSession,
   renameProfile,
   fetchRowsSince,
   fetchAllRows,
   countRows,
   upsertRows,
+  isAuthError,
   type DbRow,
-  type ProfileRow,
   type SyncTable,
 } from './profileApi';
 
@@ -264,16 +266,39 @@ async function push(profileId: string): Promise<void> {
 
 let running = false;
 
-/** Un tick complet : pull puis push. No-op si non configuré, sans profil, ou déjà en cours. */
+/**
+ * Suspend la synchro et GARDE le nom du profil, pour que l'UI propose de ressaisir le mot de passe
+ * plutôt que de faire disparaître le profil. Appelé quand la base refuse la session.
+ */
+export function expireSession(): void {
+  useSyncStore.getState().setSessionExpired();
+}
+
+/**
+ * Au démarrage : une session Supabase persistée peut avoir expiré pendant que l'app était fermée.
+ * On le constate ici plutôt que d'attendre le premier appel réseau raté, pour afficher tout de
+ * suite la demande de mot de passe.
+ */
+export async function restoreSession(): Promise<void> {
+  const { profileId, sessionExpired } = useSyncStore.getState();
+  if (!isSyncConfigured() || !profileId || sessionExpired) return;
+  if (!(await hasValidSession())) expireSession();
+}
+
+/** Un tick complet : pull puis push. No-op si non configuré, sans profil, session expirée, ou déjà en cours. */
 export async function runProfileSyncTick(): Promise<void> {
   const sync = useSyncStore.getState();
-  if (!isSyncConfigured() || sync.profileId == null || running) return;
+  if (!isSyncConfigured() || sync.profileId == null || sync.sessionExpired || running) return;
   running = true;
   try {
     await pull(sync.profileId);
     await push(sync.profileId);
     useSyncStore.getState().setSynced(Date.now());
   } catch (e) {
+    // Jeton refusé par PostgREST → reconnexion nécessaire. On se fie au CODE de l'erreur et non à
+    // son texte : « permission denied » se produit aussi pour des refus légitimes, et déconnecter
+    // l'utilisateur sur ce motif serait une régression déclenchée par une simple erreur de droits.
+    if (isAuthError(e)) expireSession();
     // Réseau coupé / Supabase injoignable : la sync est un confort, jamais bloquante.
     useSyncStore.getState().setError((e as Error).message);
   } finally {
@@ -307,12 +332,13 @@ function tombstoneRemoteAbsent(remote: RemoteData): void {
   useSyncStore.getState().mergePending(pending);
 }
 
-/** Crée un profil et pousse tout l'état local comme référence. */
-export async function createAndPushProfile(name: string): Promise<void> {
-  const existing = await findProfileByName(name);
-  if (existing) throw new Error('Ce nom de profil existe déjà. Utilisez « Rejoindre » pour vous y connecter.');
-  const prof = await createProfile(name);
-  useSyncStore.getState().setProfile(prof.id, prof.name);
+/**
+ * Crée le compte d'un profil et pousse tout l'état local comme référence. Sert AUSSI à adopter un
+ * profil d'avant l'authentification, qui existe en base sans compte rattaché (cf. `signupProfile`).
+ */
+export async function createAndPushProfile(name: string, password: string): Promise<void> {
+  const auth = await signupProfile(name, password);
+  useSyncStore.getState().setSession(auth.id, auth.name);
   seedAllPending();
   await runProfileSyncTick();
 }
@@ -320,43 +346,56 @@ export async function createAndPushProfile(name: string): Promise<void> {
 export type JoinStrategy = 'pull' | 'push' | 'merge';
 
 export interface JoinPreview {
-  profile: ProfileRow;
+  profile: { id: string; name: string };
   cloudEntries: number;
   localEntries: number;
 }
 
-/** Aperçu avant jonction : profil trouvé + nb de repas cloud vs local. */
-export async function getJoinPreview(name: string): Promise<JoinPreview> {
-  const prof = await findProfileByName(name);
-  if (!prof) throw new Error('Aucun profil à ce nom. Vérifiez l’orthographe, ou créez-le.');
-  const cloudEntries = await countRows('journal_entries', prof.id);
-  return { profile: prof, cloudEntries, localEntries: useStore.getState().entries.length };
+/**
+ * Aperçu avant jonction : se connecte (échoue si le mot de passe est faux), puis compare le nombre
+ * de repas cloud et local. La connexion doit précéder le comptage — sous RLS, une requête non
+ * authentifiée ne verrait rien et annoncerait un profil vide. `joinProfile` réutilise la session
+ * ainsi ouverte, sans redemander le mot de passe.
+ */
+export async function getJoinPreview(name: string, password: string): Promise<JoinPreview> {
+  const auth = await loginProfile(name, password);
+  try {
+    const cloudEntries = await countRows('journal_entries', auth.id);
+    return {
+      profile: { id: auth.id, name: auth.name },
+      cloudEntries,
+      localEntries: useStore.getState().entries.length,
+    };
+  } catch (e) {
+    // Échec après connexion : ne pas laisser une session ouverte sur un profil non rejoint.
+    await signOut();
+    throw e;
+  }
 }
 
 /**
- * Rejoint un profil existant selon la stratégie choisie. Dans TOUS les cas, une
- * sauvegarde JSON du navigateur est téléchargée d'abord (filet de sécurité).
+ * Rejoint un profil existant selon la stratégie choisie (le mot de passe a déjà été vérifié par
+ * `getJoinPreview`, dont la session est réutilisée ici). Dans TOUS les cas, une sauvegarde JSON du
+ * navigateur est téléchargée d'abord (filet de sécurité).
  *  - 'pull'  : le cloud remplace le local (recommandé).
  *  - 'push'  : le local écrase le cloud.
  *  - 'merge' : fusion par id (le cloud gagne les conflits), puis l'union remonte.
  */
-export async function joinProfile(name: string, strategy: JoinStrategy): Promise<void> {
-  const prof = await findProfileByName(name);
-  if (!prof) throw new Error('Aucun profil à ce nom. Vérifiez l’orthographe, ou créez-le.');
-
+export async function joinProfile(preview: JoinPreview, strategy: JoinStrategy): Promise<void> {
+  const { id, name } = preview.profile;
   exportJsonFile();
-  const remote = await fetchAll(prof.id);
+  const remote = await fetchAll(id);
 
   if (strategy === 'pull') {
     replaceFromRemote(remote);
-    useSyncStore.getState().setProfile(prof.id, prof.name);
+    useSyncStore.getState().setSession(id, name);
     useSyncStore.getState().setCursor(maxCursor(remote));
     useSyncStore.getState().setSynced(Date.now());
     return;
   }
 
   if (strategy === 'push') {
-    useSyncStore.getState().setProfile(prof.id, prof.name);
+    useSyncStore.getState().setSession(id, name);
     useSyncStore.getState().setCursor(maxCursor(remote)); // ne pas re-télécharger l'existant
     tombstoneRemoteAbsent(remote);
     seedAllPending();
@@ -365,7 +404,7 @@ export async function joinProfile(name: string, strategy: JoinStrategy): Promise
   }
 
   // merge
-  useSyncStore.getState().setProfile(prof.id, prof.name);
+  useSyncStore.getState().setSession(id, name);
   applyDelta(remote);
   useSyncStore.getState().setCursor(maxCursor(remote));
   seedAllPending();
@@ -381,6 +420,38 @@ export async function renameCurrentProfile(name: string): Promise<void> {
 }
 
 /** Se déconnecte du profil (les données locales restent intactes). */
-export function leaveProfile(): void {
-  useSyncStore.getState().setProfile(null, null);
+export async function leaveProfile(): Promise<void> {
+  await signOut();
+  useSyncStore.getState().clearSession();
+}
+
+/**
+ * Annule proprement une jonction en cours : `getJoinPreview` ouvre une session pour pouvoir compter
+ * les repas du profil, avant même que l'utilisateur ait choisi une stratégie. S'il renonce, il faut
+ * refermer cette session — sinon le client reste authentifié sur un profil que le store n'a pas
+ * rejoint.
+ */
+export async function cancelJoin(): Promise<void> {
+  await signOut();
+}
+
+/**
+ * Reconnexion après expiration : on lève UNIQUEMENT le drapeau (`renewSession`), sans repasser par
+ * `setSession` qui repart d'un profil vierge. La distinction est cruciale — les modifications
+ * faites pendant l'expiration sont encore dans `pending`, et les remettre à zéro ici les
+ * supprimerait définitivement sans qu'elles aient jamais atteint le cloud.
+ *
+ * Sécurité : le nom vient du store, mais l'`id` vient du serveur — si ce nom désigne désormais un
+ * autre profil, on refuse plutôt que de synchroniser sur les données de quelqu'un d'autre.
+ */
+export async function reauthenticate(password: string): Promise<void> {
+  const { profileName, profileId } = useSyncStore.getState();
+  if (!profileName || !profileId) throw new Error('Aucun profil à reconnecter.');
+  const auth = await loginProfile(profileName, password);
+  if (auth.id !== profileId) {
+    await signOut();
+    throw new Error('Ce nom correspond désormais à un autre profil. Déconnectez-vous puis rejoignez-le.');
+  }
+  useSyncStore.getState().renewSession();
+  await runProfileSyncTick();
 }

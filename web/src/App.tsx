@@ -2,7 +2,8 @@ import { useEffect, useState } from 'react';
 import { todayStr } from './store/store';
 import { isSyncConfigured } from './sync/supabase';
 import { runSyncTick } from './sync/poller';
-import { runProfileSyncTick } from './sync/profileSync';
+import { runProfileSyncTick, restoreSession } from './sync/profileSync';
+import { useSyncStore } from './sync/syncStore';
 import { initChangeTracker } from './sync/changeTracker';
 import { runAutoSaveTick } from './store/autosave';
 
@@ -80,9 +81,18 @@ export function App() {
     initChangeTracker();
   }, []);
 
+  // La session Supabase persistée peut avoir expiré pendant que l'app était fermée : on le
+  // constate au démarrage pour afficher tout de suite la demande de mot de passe, plutôt que
+  // d'attendre qu'un premier appel réseau échoue.
+  useEffect(() => {
+    restoreSession();
+  }, []);
+
   useEffect(() => {
     if (!isSyncConfigured()) return;
     const tick = () => {
+      const { profileId, sessionExpired } = useSyncStore.getState();
+      if (!profileId || sessionExpired) return; // pont vocal/photo et sync d'état exigent une session active
       runSyncTick();
       runProfileSyncTick();
     };
