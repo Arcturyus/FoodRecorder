@@ -30,4 +30,5 @@ stats balance.csv
 Thumbs.db
 .idea/
 .vscode/
+.claude/
 *.swp
