@@ -49,6 +49,8 @@ export interface ImagePayload extends StampedPayload {
   /** Image réduite, en base64 nu (sans préfixe data:…). */
   imageBase64: string;
   mediaType: string;
+  /** Message d'erreur si l'extraction a échoué (cf. markImageProcessed) — sinon absent. */
+  error?: string;
 }
 
 /**
@@ -182,4 +184,15 @@ export async function pushWeightTranscript(device: string, profileId: string, tr
 export async function markProcessed(id: string): Promise<void> {
   if (!supabase) return;
   await supabase.from('sync_queue').update({ processed: true }).eq('id', id);
+}
+
+/**
+ * Marque une photo comme traitée en purgeant son base64 (`sync_queue.payload` peut sinon
+ * accumuler des centaines de Ko par photo indéfiniment). En cas de succès, `payload` ne porte
+ * plus que les métadonnées (mediaType/date/clientTime) ; en cas d'échec, on garde le base64 et on
+ * ajoute `error` pour permettre un diagnostic — la ligne reste `processed` pour ne pas reboucler.
+ */
+export async function markImageProcessed(id: string, payload: Omit<ImagePayload, 'imageBase64'> | ImagePayload): Promise<void> {
+  if (!supabase) return;
+  await supabase.from('sync_queue').update({ processed: true, payload }).eq('id', id);
 }

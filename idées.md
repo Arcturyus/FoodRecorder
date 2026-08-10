@@ -1,7 +1,7 @@
 # À FAIRE
 
 
-- [ ] Purge les photos de supabase une fois qu'elles ont bien été traités (gagne des données ?)
+- [x] Purge les photos de supabase une fois qu'elles ont bien été traités (gagne des données ?)
 
 - [ ] On supprime la banque d'aliments en brut. À la place : un aliment entre dans la banque quand il **revient** (1 ou 2 fois, à décider), ou en tout cas tout est décrit par le LLM. La banque ne sert plus qu'aux stats — et du coup ça peut être cool d'y ajouter de nouveaux éléments.
 

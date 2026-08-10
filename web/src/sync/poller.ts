@@ -10,6 +10,7 @@ import {
   fetchPendingSun,
   fetchPendingWeight,
   markProcessed,
+  markImageProcessed,
   isSyncConfigured,
 } from './supabase';
 import { useSyncStore } from './syncStore';
@@ -75,7 +76,9 @@ export async function runSyncTick(): Promise<void> {
           await markProcessed(row.id);
         }
 
-        // Photos en attente (analysées par le CLI multimodal).
+        // Photos en attente (analysées par le CLI multimodal). Succès → le base64 est purgé de
+        // la ligne (voir markImageProcessed) ; échec → il est gardé avec l'erreur pour diagnostic,
+        // au lieu d'être avalé silencieusement comme avant.
         const pendingImages = await fetchPendingImages();
         for (const row of pendingImages) {
           try {
@@ -84,10 +87,16 @@ export async function runSyncTick(): Promise<void> {
               const items = await verify(res.items);
               addEntry('📷 Photo', items, res.source, row.payload.date, row.payload.clientTime);
             }
-          } catch {
-            // Échec ponctuel : on marque quand même la ligne traitée pour ne pas boucler dessus.
+            const kept: Omit<typeof row.payload, 'imageBase64'> = {
+              mediaType: row.payload.mediaType,
+              date: row.payload.date,
+              clientTime: row.payload.clientTime,
+            };
+            await markImageProcessed(row.id, kept);
+          } catch (e) {
+            console.error('[sync] échec extraction photo', row.id, e);
+            await markImageProcessed(row.id, { ...row.payload, error: (e as Error).message });
           }
-          await markProcessed(row.id);
         }
 
         // Dictées « soleil » en attente : même chemin qu'un repas — le poste qui a
