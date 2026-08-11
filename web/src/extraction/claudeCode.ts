@@ -56,6 +56,7 @@ Aucun texte hors du JSON, pas de bloc de code.
 - Estime la quantité d'après ce que tu vois (taille des portions, du contenant) et mets TOUJOURS "estimation": true.
 - N'invente jamais d'aliment non visible sur la photo. En cas de doute sur un aliment, ne l'inclus pas.
 - Si aucun aliment n'est identifiable, réponds {"items":[]}.
+- Si la photo montre un EMBALLAGE, un sachet ou une étiquette avec le nom du produit et un tableau de valeurs nutritionnelles (plutôt que le repas servi dans une assiette), NE réponds PAS {"items":[]} : déchiffre ce texte. Traite le produit comme un aliment de marque hors base (cf. section « Aliment hors base » plus bas) et reprends TELLES QUELLES les valeurs du tableau (vérifie la base indiquée — 100 g le plus souvent) au lieu de les estimer toi-même. Pour la quantité, utilise le poids de portion/part indiqué sur l'emballage s'il est visible ("estimation": false) ; sinon estime une quantité plausible comme pour tout autre aliment ("estimation": true).
 
 ${UNITES_PROMPT}
 

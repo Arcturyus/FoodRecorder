@@ -91,6 +91,10 @@ export async function runSyncTick(): Promise<void> {
               mediaType: row.payload.mediaType,
               date: row.payload.date,
               clientTime: row.payload.clientTime,
+              // Traité sans erreur technique, mais rien à ajouter : distingue ce cas d'un
+              // vrai succès dans le diagnostic (colonne payload.error), au lieu de rester
+              // muet comme avant (cf. photo du 11/08 : traitée, 0 item, aucune trace).
+              ...(res.items.length === 0 ? { error: 'Aucun aliment détecté sur la photo.' } : {}),
             };
             await markImageProcessed(row.id, kept);
           } catch (e) {
