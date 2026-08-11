@@ -19,13 +19,26 @@ import { resolve } from 'node:path';
  * Endpoints :
  *   GET  /api/claude-code  → { available, version?, error? }  (santé)
  *   POST /api/claude-code  → { text } | { error }             (extraction)
- *     body : { prompt, model?, label?, image?: { data: base64, mediaType } }
+ *     body : { prompt, model?, label?, timeoutMs?, image?: { data: base64, mediaType } }
+ *     `timeoutMs` relève le délai d'attente du CLI (borné, cf. CLI_TIMEOUT_MAX_MS)
+ *     pour les appels lourds où l'utilisateur attend sciemment.
  *     `label` nomme le fichier d'archive (photo/repas/verify/soleil…). L'image
  *     éventuelle est écrite dans `response/` (conservée comme input du modèle),
  *     et son chemin est donné au CLI (qui sait lire les images).
  */
 
+/**
+ * Délai par défaut : la saisie d'un repas doit rester rapide, mieux vaut échouer
+ * et retomber sur le parseur à règles que faire attendre devant un formulaire.
+ */
 const CLI_TIMEOUT_MS = 60_000;
+
+/**
+ * Plafond pour les appels qui l'assument (relecture d'un aliment : prompt long,
+ * fiche de 39 valeurs à produire, et l'utilisateur attend volontiers puisqu'il
+ * vient de cliquer « demander à l'IA »).
+ */
+const CLI_TIMEOUT_MAX_MS = 180_000;
 
 /** Un bloc de contenu d'un message assistant du flux stream-json. */
 interface StreamBlock {
@@ -63,19 +76,20 @@ interface ClaudeRun {
  * permet d'archiver le raisonnement du modèle. On reconstitue ensuite le texte
  * final et le raisonnement à partir du flux.
  */
-function runClaude(prompt: string, model?: string): Promise<ClaudeRun> {
+function runClaude(prompt: string, model?: string, timeoutMs?: number): Promise<ClaudeRun> {
   return new Promise((resolve, reject) => {
     const args = ['-p', '--output-format', 'stream-json', '--verbose'];
     if (model) args.push('--model', model);
     // shell:true pour résoudre « claude(.cmd) » via le PATH (npm global) sous Windows.
     const child = spawn('claude', args, { shell: true });
 
+    const limite = Math.min(Math.max(timeoutMs ?? CLI_TIMEOUT_MS, CLI_TIMEOUT_MS), CLI_TIMEOUT_MAX_MS);
     let stdout = '';
     let stderr = '';
     const timer = setTimeout(() => {
       child.kill();
-      reject(new Error('Délai dépassé : le CLI Claude n’a pas répondu.'));
-    }, CLI_TIMEOUT_MS);
+      reject(new Error(`Délai dépassé (${Math.round(limite / 1000)} s) : le CLI Claude n’a pas répondu.`));
+    }, limite);
 
     child.stdout.on('data', (d) => (stdout += d));
     child.stderr.on('data', (d) => (stderr += d));
@@ -212,6 +226,7 @@ export function claudeCodeBridge(): Plugin {
               prompt?: unknown;
               model?: unknown;
               label?: unknown;
+              timeoutMs?: unknown;
               image?: { data?: unknown; mediaType?: unknown };
             };
             const prompt = typeof body.prompt === 'string' ? body.prompt : '';
@@ -248,7 +263,7 @@ export function claudeCodeBridge(): Plugin {
             let run: ClaudeRun | null = null;
             let error: string | null = null;
             try {
-              run = await runClaude(fullPrompt, model);
+              run = await runClaude(fullPrompt, model, typeof body.timeoutMs === 'number' ? body.timeoutMs : undefined);
             } catch (e) {
               error = (e as Error).message;
             }

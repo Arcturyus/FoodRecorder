@@ -8,6 +8,8 @@ import { EMPTY_NUTRIENTS } from '../nutrition/types';
 import type { Food, FoodCategory, NutrientKey, Nutrients } from '../nutrition/types';
 import { FOODS } from '../nutrition/foods';
 import { findDuplicates } from '../nutrition/bank';
+import { categorizeNames } from '../extraction/categorize';
+import { FoodReviewChat } from './FoodReviewChat';
 import { useBankUsage, derniereFoisLabel } from './useBankUsage';
 import type { BankUsage } from './useBankUsage';
 import { fmt, UNIT_LABELS, CATEGORY_LABELS } from './format';
@@ -384,6 +386,7 @@ function FoodList({
         </div>
       </div>
 
+      <EntretienPanel foods={foods} />
       {showDoublons && <DoublonsPanel foods={foods} usage={usage} />}
       {selected.length > 0 && (
         <MergeBar selected={selected} foods={foods} usage={usage} onDone={() => setSelected([])} />
@@ -418,6 +421,85 @@ function FoodList({
         ))
       )}
     </>
+  );
+}
+
+/**
+ * Entretien de la banque : le rattrapage groupé qui n'a de sens que sur
+ * l'ensemble. Le reste (relire les valeurs d'un aliment, en discuter avec l'IA)
+ * se fait aliment par aliment, dans son formulaire d'édition.
+ *
+ * Le classement est le seul rattrapage de masse proposé : une catégorie tient en
+ * un mot, donc des dizaines d'aliments passent en UN appel — là où relire les
+ * valeurs demanderait une fiche de 39 nombres par aliment.
+ */
+function EntretienPanel({ foods }: { foods: Food[] }) {
+  const extractionMode = useStore((s) => s.extractionMode);
+  const cloudApiKey = useStore((s) => s.cloudApiKey);
+  const cloudModel = useStore((s) => s.cloudModel);
+  const setFoodCategories = useStore((s) => s.setFoodCategories);
+  const [busy, setBusy] = useState(false);
+  const [status, setStatus] = useState('');
+
+  // Les aliments nés d'une estimation atterrissent souvent en « autre » : c'est
+  // eux, et ceux du même sac, qu'il vaut la peine de faire reclasser.
+  const nonClasses = useMemo(() => foods.filter((f) => f.categorie === 'autre'), [foods]);
+  const strongAi = extractionMode === 'cloud' || extractionMode === 'claudecode';
+
+  async function classer(cibles: Food[], label: string) {
+    setBusy(true);
+    setStatus('');
+    try {
+      const byName = await categorizeNames(cibles.map((f) => f.nom), extractionMode, cloudApiKey, cloudModel);
+      const byId: Record<string, FoodCategory> = {};
+      for (const f of cibles) {
+        const c = byName[f.nom];
+        if (c) byId[f.id] = c;
+      }
+      const n = setFoodCategories(byId);
+      setStatus(n > 0 ? `${n} aliment(s) reclassé(s) sur ${label}.` : `Rien à changer sur ${label}.`);
+    } catch (e) {
+      setStatus(e instanceof Error ? e.message : 'Échec du classement.');
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  if (foods.length === 0) return null;
+
+  return (
+    <div className="panel">
+      <h2>Entretien de la banque</h2>
+      <p className="small" style={{ marginTop: -6 }}>
+        Un aliment décrit par l'IA arrive parfois mal rangé. Le classement ne touche aucune valeur nutritionnelle —
+        pour relire les valeurs d'un aliment, ouvrez-le avec « ✏️ Modifier » et demandez son avis à l'IA.
+      </p>
+      {!strongAi ? (
+        <div className="hint">Le classement par IA demande le mode « API Claude » ou « Claude Code » — voir Réglages.</div>
+      ) : (
+        <div className="row" style={{ gap: 8, flexWrap: 'wrap' }}>
+          <button
+            className="ghost small"
+            disabled={busy || nonClasses.length === 0}
+            onClick={() => classer(nonClasses, `${nonClasses.length} non classé(s)`)}
+          >
+            {busy ? '…' : `⟳ Classer les non classés (${nonClasses.length})`}
+          </button>
+          <button
+            className="ghost small"
+            disabled={busy}
+            onClick={() =>
+              window.confirm(
+                `Faire revoir le classement des ${foods.length} aliments de la banque ?\n\nSeules les catégories changent, aucune valeur nutritionnelle n'est touchée.`,
+              ) && classer(foods, 'toute la banque')
+            }
+          >
+            {busy ? '…' : '⟳ Revoir tout le classement'}
+          </button>
+        </div>
+      )}
+      {status && <div className="status" style={{ marginTop: 8 }}>{status}</div>}
+    </div>
   );
 }
 
@@ -688,6 +770,7 @@ function FoodForm({ food, submitLabel, onDone }: { food?: Food; submitLabel: str
   const [nom, setNom] = useState(food?.nom ?? '');
   const [aliases, setAliases] = useState(food?.aliases.join(', ') ?? '');
   const [piece, setPiece] = useState(food?.pieceGrams != null ? String(food.pieceGrams) : '');
+  const [categorie, setCategorie] = useState<FoodCategory>(food?.categorie ?? 'autre');
   const [n, setN] = useState<Partial<Nutrients>>(food ? { ...food.n } : {});
   const [showMicros, setShowMicros] = useState(false);
 
@@ -702,12 +785,13 @@ function FoodForm({ food, submitLabel, onDone }: { food?: Food; submitLabel: str
       nom: nom.trim(),
       aliases: aliases.split(',').map((a) => a.trim()).filter(Boolean),
       pieceGrams: piece ? parseFloat(piece) : undefined,
+      categorie,
       n: { ...EMPTY_NUTRIENTS, ...n },
     };
     if (food) {
       editFood(food.id, patch);
     } else {
-      addCustomFood({ ...patch, categorie: 'autre' as FoodCategory });
+      addCustomFood(patch);
     }
     onDone();
   };
@@ -729,6 +813,16 @@ function FoodForm({ food, submitLabel, onDone }: { food?: Food; submitLabel: str
         <label className="field">
           Poids d'une pièce (g)
           <input value={piece} onChange={(e) => setPiece(e.target.value)} placeholder="60" inputMode="decimal" />
+        </label>
+        <label className="field">
+          Catégorie
+          <select value={categorie} onChange={(e) => setCategorie(e.target.value as FoodCategory)}>
+            {CATEGORY_LABELS.map((c) => (
+              <option key={c.key} value={c.key}>
+                {c.label}
+              </option>
+            ))}
+          </select>
         </label>
       </div>
       <div className="row wrap-form" style={{ marginTop: 10 }}>
@@ -767,6 +861,21 @@ function FoodForm({ food, submitLabel, onDone }: { food?: Food; submitLabel: str
             <SubDetailFields key={g.total} group={g} n={n} setField={setField} />
           ))}
         </>
+      )}
+
+      {/* Relecture par l'IA : elle REMPLIT le formulaire, elle n'enregistre pas.
+          C'est le bouton ci-dessous qui écrit, et lui seul — une correction de
+          valeurs se répercute sur tout l'historique. */}
+      {food && (
+        <FoodReviewChat
+          food={food}
+          onApply={(fiche) => {
+            setN({ ...fiche.nutriments });
+            if (fiche.grammesParPiece) setPiece(String(fiche.grammesParPiece));
+            if (fiche.categorie) setCategorie(fiche.categorie);
+            setShowMicros(true);
+          }}
+        />
       )}
 
       <div className="row" style={{ marginTop: 14, justifyContent: 'flex-end', gap: 8 }}>

@@ -306,3 +306,20 @@ export const RDA: RdaEntry[] = [
     optimalNote: 'Pas d\'AJR officiel : repère issu des études (~10 g/j de peptides). Sous-ensemble des protéines, présent uniquement dans les tissus conjonctifs animaux (peau, tendons, os, morceaux gélatineux) — nul dans les végétaux, les laitages et les œufs.',
   },
 ];
+
+/**
+ * Libellé/unité des nutriments ABSENTS de la table AJR : la répartition brute
+ * des oméga 3 n'a pas de cible propre (seul l'équivalent pondéré en a une), mais
+ * ces valeurs s'affichent quand même — classements, contributions, relecture
+ * d'une fiche par l'IA. Sans elles, l'interface montrerait « omega3Ala ».
+ */
+export const EXTRA_NUTRIENT_META: Partial<Record<NutrientKey, { label: string; unit: string }>> = {
+  omega3Ala: { label: 'Oméga 3 · ALA brut (végétal)', unit: 'g' },
+  omega3Epa: { label: 'Oméga 3 · EPA brut', unit: 'g' },
+  omega3Dha: { label: 'Oméga 3 · DHA brut', unit: 'g' },
+};
+
+/** Libellé lisible d'un nutriment, table AJR d'abord puis les extras. */
+export function nutrientLabelOf(key: NutrientKey): string {
+  return RDA.find((r) => r.key === key)?.label ?? EXTRA_NUTRIENT_META[key]?.label ?? key;
+}

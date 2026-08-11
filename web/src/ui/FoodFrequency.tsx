@@ -11,6 +11,7 @@ import {
 } from '../nutrition/frequency';
 import type { FoodFrequency, NutrientContribution } from '../nutrition/frequency';
 import { NUTRIENT_GROUPS } from '../nutrition/groups';
+import { EXTRA_NUTRIENT_META } from '../nutrition/rda';
 import { computeTargets } from '../nutrition/targets';
 import type { Target } from '../nutrition/targets';
 import type { Food, FoodCategory, NutrientKey } from '../nutrition/types';
@@ -382,16 +383,6 @@ const CONTRIB_TOP_N = 12;
 function fmtVal(v: number): string {
   return fmt(v, v < 10 ? 1 : 0);
 }
-
-/**
- * Libellé/unité des nutriments absents de la table AJR (répartition brute des
- * oméga 3, qui n'a pas de cible propre : seul l'équivalent pondéré en a une).
- */
-const EXTRA_NUTRIENT_META: Partial<Record<NutrientKey, { label: string; unit: string }>> = {
-  omega3Ala: { label: 'Oméga 3 · ALA brut (végétal)', unit: 'g' },
-  omega3Epa: { label: 'Oméga 3 · EPA brut', unit: 'g' },
-  omega3Dha: { label: 'Oméga 3 · DHA brut', unit: 'g' },
-};
 
 function nutrientLabel(key: NutrientKey, targetByKey: Map<NutrientKey, Target>): string {
   return targetByKey.get(key)?.label ?? EXTRA_NUTRIENT_META[key]?.label ?? key;

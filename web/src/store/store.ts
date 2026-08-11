@@ -383,6 +383,14 @@ interface AppState {
   /** Lève le drapeau « à vérifier » d'un aliment estimé par l'IA (valeurs relues). */
   verifyFood: (id: string) => void;
   /**
+   * Range des aliments de la banque dans une catégorie (rattrapage groupé par
+   * l'IA). Distinct de `editFood` : une catégorie ne change aucun chiffre, donc
+   * ni resynchronisation de l'historique ni levée du drapeau « à vérifier » —
+   * classer un aliment ne veut pas dire qu'on a relu ses valeurs.
+   * Renvoie le nombre d'aliments effectivement déplacés.
+   */
+  setFoodCategories: (byId: Record<string, FoodCategory>) => number;
+  /**
    * Fusionne deux aliments de la banque : `sourceId` disparaît au profit de
    * `targetId`, qui hérite de son nom en alias. Tous les items du journal et des
    * repas favoris qui le référençaient basculent sur la cible et sont recalculés.
@@ -814,6 +822,19 @@ export const useStore = create<AppState>()(
         set((s) => ({
           customFoods: s.customFoods.map((f) => (f.id === id ? { ...f, aVerifier: undefined } : f)),
         })),
+
+      setFoodCategories: (byId) => {
+        let n = 0;
+        set((s) => ({
+          customFoods: s.customFoods.map((f) => {
+            const c = byId[f.id];
+            if (!c || c === f.categorie) return f;
+            n++;
+            return { ...f, categorie: c };
+          }),
+        }));
+        return n;
+      },
 
       mergeFoods: (sourceId, targetId) => {
         const s = get();

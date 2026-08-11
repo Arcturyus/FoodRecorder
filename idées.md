@@ -15,7 +15,10 @@
 - **Explorer / Comparer / ACP** : état vide explicite tant que la banque l'est ; la migration la remplit d'emblée avec tout l'historique.
 - **Migration** : les aliments du catalogue réellement mangés sont copiés **en gardant leur id** (aucune référence cassée), les overrides sont absorbés, les estimations IA jusque-là enfermées dans les items deviennent de vrais aliments. Les 148 jamais mangés ne sont pas repris.
 
+- [x] Entretien de la banque par IA : reclassement groupé des catégories (un appel pour des dizaines d'aliments), et relecture d'une fiche sous forme de **discussion** — on peut objecter (« les miennes sont à l'huile ») et l'IA révise ou maintient son avis. Le prompt inclut la consommation réelle (fréquence, portion moyenne). Seul appel multi-tours de l'app ; le pont Claude Code reçoit l'historique aplati en texte.
+
 - [ ] Fusion de doublons : la détection est par similarité de nom (`findDuplicates`). Voir à l'usage s'il faut aussi rapprocher par proximité nutritionnelle.
+- [ ] Relecture IA en masse (tous les « à vérifier » d'un coup) : écartée pour l'instant — une fiche complète fait 39 valeurs, donc un appel long par aliment. À reconsidérer si la relecture une par une devient fastidieuse.
 
 ## 4. Inspiration
 
