@@ -2,6 +2,7 @@ import { useMemo, useState } from 'react';
 import type { Nutrients } from '../nutrition/types';
 import type { Target } from '../nutrition/targets';
 import { useStore, useEffectiveFoods } from '../store/store';
+import { FOODS } from '../nutrition/foods';
 import {
   computeGaps,
   rankFoods,
@@ -117,7 +118,7 @@ export function Recommendations({
 
   const [gamma, setGamma] = useState(RECO_DEFAULTS.gamma);
   const [lambda, setLambda] = useState(RECO_DEFAULTS.lambda);
-  const [onlyMine, setOnlyMine] = useState(false);
+  const [includeCatalog, setIncludeCatalog] = useState(false);
   const [count, setCount] = useState(PAGE);
   const [expandedId, setExpandedId] = useState<string | null>(null);
 
@@ -135,19 +136,30 @@ export function Recommendations({
     return set;
   }, [entries]);
 
+  /**
+   * Le vivier des recommandations : ma banque seule par défaut — conseiller ce
+   * qu'on mange déjà est bien plus actionnable qu'un aliment jamais acheté. La
+   * case « découvrir » y ajoute le catalogue de référence, pour sortir des
+   * habitudes quand aucun aliment de la banque ne comble le manque.
+   */
+  const pool = useMemo(() => {
+    if (!includeCatalog) return foods;
+    const mine = new Set(foods.map((f) => f.id));
+    return [...foods, ...FOODS.filter((f) => !mine.has(f.id))];
+  }, [foods, includeCatalog]);
+
   const rankedSupplements = useMemo(
     () =>
-      rankFoods(foods.filter((f) => f.categorie === 'supplement'), analysis, params)
+      rankFoods(pool.filter((f) => f.categorie === 'supplement'), analysis, params)
         .filter((s) => s.score > 0.02)
         .slice(0, 4),
-    [foods, analysis, params],
+    [pool, analysis, params],
   );
 
-  const rankedFoods = useMemo(() => {
-    const all = rankFoods(foods.filter((f) => f.categorie !== 'supplement'), analysis, params)
-      .filter((s) => s.score > 0);
-    return onlyMine ? all.filter((s) => consumedIds.has(s.food.id)) : all;
-  }, [foods, analysis, params, onlyMine, consumedIds]);
+  const rankedFoods = useMemo(
+    () => rankFoods(pool.filter((f) => f.categorie !== 'supplement'), analysis, params).filter((s) => s.score > 0),
+    [pool, analysis, params],
+  );
 
   const shown = rankedFoods.slice(0, count);
   const maxScore = rankedFoods[0]?.score ?? 0;
@@ -209,9 +221,13 @@ export function Recommendations({
 
       <div className="row" style={{ justifyContent: 'space-between', alignItems: 'baseline', flexWrap: 'wrap', gap: 8 }}>
         <h3 className="reco-h3">🥗 Aliments conseillés</h3>
-        <label className="row small" style={{ gap: 6, alignItems: 'center', cursor: 'pointer' }}>
-          <input type="checkbox" checked={onlyMine} onChange={(e) => setOnlyMine(e.target.checked)} />
-          Mes aliments seulement
+        <label
+          className="row small"
+          style={{ gap: 6, alignItems: 'center', cursor: 'pointer' }}
+          data-tip="Élargit les conseils au catalogue de référence, au-delà des aliments que vous mangez déjà"
+        >
+          <input type="checkbox" checked={includeCatalog} onChange={(e) => setIncludeCatalog(e.target.checked)} />
+          Découvrir de nouveaux aliments
         </label>
       </div>
       {shown.length === 0 ? (

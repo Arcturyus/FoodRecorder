@@ -120,7 +120,6 @@ beforeEach(() => {
   useStore.setState({
     entries: [],
     customFoods: [],
-    foodOverrides: {},
     favoriteMeals: [],
     weightEntries: [],
     sunExposures: [],

@@ -25,13 +25,14 @@ const EXCLUS: Record<string, string> = {
   deviceId: 'identité de CET appareil : la restaurer ailleurs créerait deux appareils jumeaux pour la synchro',
   syncCursor: 'curseur de synchro propre à l’appareil',
   lastAutoSave: 'marqueur local de la sauvegarde du jour',
+  bankSchemaVersion:
+    'version de schéma, portée par le champ `version` du fichier et réimposée à l’import (cf. migrateToPersonalBank)',
 };
 
 beforeEach(() => {
   useStore.setState({
     entries: [],
     customFoods: [],
-    foodOverrides: {},
     favoriteMeals: [],
     sunExposures: [],
     mutedDays: {},

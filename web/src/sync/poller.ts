@@ -37,7 +37,6 @@ export async function runSyncTick(): Promise<void> {
       cloudApiKey,
       cloudModel,
       customFoods,
-      foodOverrides,
       entries,
       addEntry,
       addSunExposure,
@@ -48,7 +47,7 @@ export async function runSyncTick(): Promise<void> {
     const verify = (items: Awaited<ReturnType<typeof extractWithClaudeCode>>['items']) =>
       verifyMatches(
         items,
-        effectiveFoods(customFoods, foodOverrides),
+        effectiveFoods(customFoods),
         'claudecode',
         cloudApiKey,
         cloudModel,

@@ -16,8 +16,7 @@ export type EntityTable =
   | 'custom_foods'
   | 'favorite_meals'
   | 'weight_entries'
-  | 'sun_exposures'
-  | 'food_overrides';
+  | 'sun_exposures';
 
 /** Singletons stockés dans `profile_kv` (clé = nom du champ). */
 export type KvKey = 'profile' | 'weightConfig' | 'mutedDays' | 'dayNotes' | 'nutrientImportance';
@@ -35,6 +34,9 @@ export const ENTITY_SPECS: Record<EntityTable, EntitySpec> = {
     source: (s) => s.entries,
     rows: (s) => s.entries.map((e) => [e.id, e] as const),
   },
+  // Ma banque d'aliments. Les anciens `food_overrides` ont été absorbés dedans
+  // par la migration : la table distante existe peut-être encore, elle n'est
+  // simplement plus lue ni écrite.
   custom_foods: {
     source: (s) => s.customFoods,
     rows: (s) => s.customFoods.map((f) => [f.id, f] as const),
@@ -50,10 +52,6 @@ export const ENTITY_SPECS: Record<EntityTable, EntitySpec> = {
   sun_exposures: {
     source: (s) => s.sunExposures,
     rows: (s) => s.sunExposures.map((e) => [e.id, e] as const),
-  },
-  food_overrides: {
-    source: (s) => s.foodOverrides,
-    rows: (s) => Object.entries(s.foodOverrides),
   },
 };
 

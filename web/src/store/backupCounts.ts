@@ -22,9 +22,12 @@ export function backupCounts(b: Record<string, unknown>): Record<string, number>
     entries: len(b.entries),
     pesées: len(b.weightEntries),
     soleil: len(b.sunExposures),
+    // Clé volontairement inchangée (« aliments perso ») bien qu'elle compte
+    // désormais TOUTE ma banque : elle sert à comparer deux sauvegardes entre
+    // elles, la renommer ferait lire 0 sur les fichiers d'avant et déclencherait
+    // une fausse alerte de perte de données.
     'aliments perso': len(b.customFoods),
     favoris: len(b.favoriteMeals),
-    'aliments modifiés': size(b.foodOverrides),
     'jours réglés': size(b.mutedDays),
     notes: size(b.dayNotes),
     importances: size(b.nutrientImportance),

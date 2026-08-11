@@ -119,6 +119,9 @@ export function EntryCard({ entry }: { entry: JournalEntry }) {
 function ItemRow({ entryId, item, canDeleteItem }: { entryId: string; item: JournalItem; canDeleteItem: boolean }) {
   const updateItem = useStore((s) => s.updateItem);
   const removeItem = useStore((s) => s.removeItem);
+  // L'aliment de banque porte le drapeau « à vérifier » depuis que les estimations
+  // de l'IA y entrent au lieu de rester enfermées dans l'item.
+  const aVerifier = useStore((s) => (item.foodId ? s.customFoods.find((f) => f.id === item.foodId)?.aVerifier : undefined));
   const [open, setOpen] = useState(false);
   const [editingItem, setEditingItem] = useState(false);
 
@@ -159,7 +162,8 @@ function ItemRow({ entryId, item, canDeleteItem }: { entryId: string; item: Jour
   }
 
   // Une fois ajusté « pour cette fois », l'estimation IA est considérée vérifiée.
-  const isIa = item.iaEstime && !item.customN;
+  // `item.iaEstime` couvre l'historique d'avant la banque personnelle.
+  const isIa = (aVerifier || item.iaEstime) && !item.customN;
   return (
     <>
       <div className={`item-row${isIa ? ' ia-estime' : ''}`}>

@@ -1,4 +1,3 @@
-import { useMemo } from 'react';
 import { create } from 'zustand';
 import { persist } from 'zustand/middleware';
 import type {
@@ -11,8 +10,15 @@ import type {
   Unit,
 } from '../nutrition/types';
 import { EMPTY_NUTRIENTS } from '../nutrition/types';
-import { computeItems, totalNutrients, toGrams, scaleNutrients } from '../nutrition/compute';
-import { FOODS, FOOD_BY_ID, splitSaturated } from '../nutrition/foods';
+import { computeItems, totalNutrients, toGrams, scaleNutrients, normalizeNutrients } from '../nutrition/compute';
+import { FOOD_BY_ID } from '../nutrition/foods';
+import {
+  adoptFromCatalog,
+  findBankFood,
+  ingestEstimates,
+  mergeBankFoods,
+  migrateToPersonalBank,
+} from '../nutrition/bank';
 import { DEFAULT_LLM_MODEL } from '../extraction/llm';
 import { DEFAULT_CLOUD_MODEL } from '../extraction/anthropic';
 import { DEFAULT_STT_MODEL } from '../stt/whisper';
@@ -76,6 +82,10 @@ export interface JournalEntry {
   items: JournalItem[];
 }
 
+// Ré-export : le reste de l'app importe historiquement `normalizeNutrients`
+// depuis le store, alors qu'elle vit désormais avec les autres calculs.
+export { normalizeNutrients };
+
 /** Choix du moteur d'extraction. */
 export type ExtractionMode = 'rules' | 'local' | 'cloud' | 'claudecode';
 
@@ -84,8 +94,20 @@ export type SttEngine = 'whisper' | 'native';
 
 /** Patch d'aliment : champs optionnels + nutriments partiels (fusionnés à l'application). */
 export type FoodPatch = Partial<Omit<Food, 'n'>> & { n?: Partial<Nutrients> };
-/** Modifications utilisateur sur les aliments de la banque (par id d'aliment). */
+/**
+ * ANCIEN modèle : modifications utilisateur sur les aliments du catalogue en dur.
+ * N'existe plus dans l'état courant — les aliments de ma banque sont des objets
+ * complets, édités directement. Le type survit pour lire les données persistées
+ * et les sauvegardes d'avant la migration (cf. `migrateToPersonalBank`).
+ */
 export type FoodOverrides = Record<string, FoodPatch>;
+
+/**
+ * Version du schéma de la banque. 2 = banque personnelle (les aliments consommés
+ * sont des objets à part entière) ; absent/1 = ancien modèle (catalogue en dur +
+ * overrides + estimations IA enfermées dans les items). Déclenche la migration.
+ */
+export const BANK_SCHEMA_VERSION = 2;
 
 /** Item d'un repas favori : référence légère, re-résolue à chaque application. */
 export interface FavoriteMealItem {
@@ -133,35 +155,29 @@ function latestWeight(entries: WeightEntry[]): number | null {
   return latest.poids;
 }
 
-/** Applique un override utilisateur sur un aliment (fusionne aussi les nutriments). */
-function applyOverride(food: Food, ov?: FoodPatch): Food {
-  if (!ov) return food;
-  return { ...food, ...ov, id: food.id, n: { ...food.n, ...(ov.n ?? {}) } };
+/**
+ * MA BANQUE : les aliments réellement consommés — seule source du matching, des
+ * calculs et des stats. Le catalogue de référence (`FOODS`) n'en fait PAS partie :
+ * un aliment jamais mangé n'a rien à faire dans les totaux ni dans l'explorateur.
+ * Il n'y entre qu'une fois copié (cf. `adoptFromCatalog`), en gardant son id.
+ */
+export function effectiveFoods(customFoods: Food[]): Food[] {
+  return customFoods;
 }
 
 /**
- * Liste des aliments « effectifs » = aliments personnalisés + banque avec les
- * modifications utilisateur (overrides) appliquées. C'est cette liste qui sert
- * au matching, aux calculs et à l'affichage (banque comme perso sont éditables).
+ * Résout un aliment par son id : ma banque d'abord, le catalogue en dernier
+ * recours. Ce repli couvre un item du journal qui référencerait un aliment
+ * retiré de la banque (ou pas encore migré) : mieux vaut les vraies valeurs du
+ * catalogue que le snapshot figé de l'item.
  */
-export function effectiveFoods(customFoods: Food[], overrides: FoodOverrides): Food[] {
-  const bank = FOODS.map((f) => applyOverride(f, overrides[f.id]));
-  return [...customFoods, ...bank];
+export function effectiveFoodById(id: string, customFoods: Food[]): Food | null {
+  return customFoods.find((f) => f.id === id) ?? FOOD_BY_ID.get(id) ?? null;
 }
 
-/** Résout un aliment (perso ou banque avec override) par son id. */
-export function effectiveFoodById(id: string, customFoods: Food[], overrides: FoodOverrides): Food | null {
-  const custom = customFoods.find((f) => f.id === id);
-  if (custom) return custom;
-  const bank = FOOD_BY_ID.get(id);
-  return bank ? applyOverride(bank, overrides[id]) : null;
-}
-
-/** Hook : liste des aliments effectifs, mémoïsée sur (customFoods, foodOverrides). */
+/** Hook : ma banque d'aliments. */
 export function useEffectiveFoods(): Food[] {
-  const customFoods = useStore((s) => s.customFoods);
-  const overrides = useStore((s) => s.foodOverrides);
-  return useMemo(() => effectiveFoods(customFoods, overrides), [customFoods, overrides]);
+  return useStore((s) => s.customFoods);
 }
 
 /**
@@ -222,8 +238,15 @@ export function toJournalItem(ci: ComputedItem): JournalItem {
 
 interface AppState {
   entries: JournalEntry[];
+  /**
+   * MA BANQUE d'aliments : tout ce qui a été mangé au moins une fois, quelle que
+   * soit sa provenance (copie du catalogue, estimation IA, saisie manuelle). Le
+   * nom du champ est resté `customFoods` pour ne pas casser la table Supabase
+   * `custom_foods` déjà syncée sur les appareils.
+   */
   customFoods: Food[];
-  foodOverrides: FoodOverrides;
+  /** Version du schéma de la banque (cf. BANK_SCHEMA_VERSION). */
+  bankSchemaVersion: number;
   sttEngine: SttEngine;
   sttModel: string;
   llmModel: string;
@@ -348,10 +371,24 @@ interface AppState {
 
   addCustomFood: (food: Omit<Food, 'id' | 'custom'>) => void;
   removeCustomFood: (id: string) => void;
-  /** Modifie un aliment (perso → édité directement ; banque → override persistant). */
+  /** Modifie un aliment de ma banque. La correction se répercute sur tout l'historique. */
   editFood: (id: string, patch: FoodPatch) => void;
-  /** Annule les modifications utilisateur sur un aliment de la banque. */
+  /** Rétablit un aliment copié du catalogue à ses valeurs d'origine (nécessite `sourceId`). */
   resetFood: (id: string) => void;
+  /**
+   * Copie un aliment du catalogue de référence dans ma banque (id conservé).
+   * Sans effet s'il y est déjà. Renvoie l'aliment de banque à utiliser.
+   */
+  adoptCatalogFood: (food: Food) => Food;
+  /** Lève le drapeau « à vérifier » d'un aliment estimé par l'IA (valeurs relues). */
+  verifyFood: (id: string) => void;
+  /**
+   * Fusionne deux aliments de la banque : `sourceId` disparaît au profit de
+   * `targetId`, qui hérite de son nom en alias. Tous les items du journal et des
+   * repas favoris qui le référençaient basculent sur la cible et sont recalculés.
+   * Renvoie le nombre d'items de journal repointés.
+   */
+  mergeFoods: (sourceId: string, targetId: string) => number;
 
   /**
    * Enregistre une pesée. `poids` requis ; les autres champs sont optionnels.
@@ -379,7 +416,7 @@ export const useStore = create<AppState>()(
     (set, get) => ({
       entries: [],
       customFoods: [],
-      foodOverrides: {},
+      bankSchemaVersion: BANK_SCHEMA_VERSION,
       sttEngine: isNativeSttSupported() ? 'native' : 'whisper',
       sttModel: DEFAULT_STT_MODEL,
       llmModel: DEFAULT_LLM_MODEL,
@@ -446,33 +483,37 @@ export const useStore = create<AppState>()(
       resetAllNutrientImportance: () => set({ nutrientImportance: {} }),
 
       addEntry: (transcript, items, source, date, createdAt) => {
-        const computed = computeItems(
-          items,
-          effectiveFoods(get().customFoods, get().foodOverrides),
-          recentFoodCounts(get().entries),
-        );
+        const jour = date ?? todayStr();
+        const computed = computeItems(items, get().customFoods, recentFoodCounts(get().entries));
+        // Tout aliment hors catalogue estimé par l'IA entre ici dans la banque :
+        // c'est le seul point de passage des saisies (dictée, photo, et poller de
+        // la file Supabase), donc le seul endroit où le brancher.
+        const ingested = ingestEstimates(get().customFoods, computed, jour);
         const entry: JournalEntry = {
           id: uid(),
-          date: date ?? todayStr(),
+          date: jour,
           createdAt: createdAt ?? Date.now(),
           transcript,
           source,
-          items: computed.map(toJournalItem),
+          items: ingested.computed.map(toJournalItem),
         };
-        set((s) => ({ entries: [entry, ...s.entries] }));
+        set((s) => ({ entries: [entry, ...s.entries], customFoods: ingested.customFoods }));
         return entry.id;
       },
 
       addFoodEntry: (food, quantite, unite, date) => {
-        const grams = toGrams({ aliment: food.nom, quantite, unite, estimation: false }, food);
+        // Choisi dans le catalogue de référence : il entre dans ma banque du même
+        // geste — on ne mange pas un aliment sans qu'il rejoigne la banque.
+        const inBank = get().adoptCatalogFood(food);
+        const grams = toGrams({ aliment: inBank.nom, quantite, unite, estimation: false }, inBank);
         const item: JournalItem = {
           id: uid(),
-          foodId: food.id,
-          nomAffiche: food.nom,
+          foodId: inBank.id,
+          nomAffiche: inBank.nom,
           quantite,
           unite,
           grams,
-          nutrients: scaleNutrients(food.n, grams),
+          nutrients: scaleNutrients(inBank.n, grams),
           estimation: false,
           douteux: false,
         };
@@ -504,7 +545,7 @@ export const useStore = create<AppState>()(
                       patch.quantite !== undefined && patch.quantite !== it.quantite
                         ? { quantiteMin: undefined, quantiteMax: undefined }
                         : {};
-                    return recomputeItem({ ...base, ...patch, ...clearRange }, effectiveFoods(get().customFoods, get().foodOverrides));
+                    return recomputeItem({ ...base, ...patch, ...clearRange }, get().customFoods);
                   }),
                 },
           ),
@@ -530,7 +571,7 @@ export const useStore = create<AppState>()(
                       it.foodId && !it.customN && !it.iaEstime
                         ? { ...it, customN: per100g(it.nutrients, it.grams) }
                         : it;
-                    return recomputeItem({ ...base, nomAffiche: clean }, effectiveFoods(get().customFoods, get().foodOverrides));
+                    return recomputeItem({ ...base, nomAffiche: clean }, get().customFoods);
                   }),
                 },
           ),
@@ -545,7 +586,7 @@ export const useStore = create<AppState>()(
                   ...e,
                   items: e.items.map((it) => {
                     if (it.id !== itemId) return it;
-                    const foods = effectiveFoods(get().customFoods, get().foodOverrides);
+                    const foods = get().customFoods;
                     if (!contribution) {
                       const { customN: _drop, ...rest } = it;
                       return recomputeItem(rest, foods);
@@ -569,7 +610,7 @@ export const useStore = create<AppState>()(
         set((s) => ({
           entries: s.entries.map((e) => {
             if (e.id !== entryId) return e;
-            const [ci] = computeItems([item], effectiveFoods(get().customFoods, get().foodOverrides));
+            const [ci] = computeItems([item], get().customFoods);
             return { ...e, items: [...e.items, toJournalItem(ci)] };
           }),
         })),
@@ -679,7 +720,7 @@ export const useStore = create<AppState>()(
       applyFavoriteMeal: (id, date) => {
         const fav = get().favoriteMeals.find((f) => f.id === id);
         if (!fav || fav.items.length === 0) return null;
-        const foods = effectiveFoods(get().customFoods, get().foodOverrides);
+        const foods = get().customFoods;
         // Re-résolution à l'application : les valeurs nutritionnelles restent à jour
         // même si l'aliment a été modifié depuis l'enregistrement du favori.
         const items: JournalItem[] = fav.items.map((fi) => {
@@ -717,35 +758,75 @@ export const useStore = create<AppState>()(
       },
 
       addCustomFood: (food) =>
-        set((s) => ({ customFoods: [{ ...food, id: `custom-${uid()}`, custom: true }, ...s.customFoods] })),
+        set((s) => ({
+          customFoods: [
+            { ...food, id: `custom-${uid()}`, custom: true, origine: 'manuel', ajouteLe: todayStr() },
+            ...s.customFoods,
+          ],
+        })),
 
-      removeCustomFood: (id) =>
-        set((s) => {
-          const { [id]: _, ...rest } = s.foodOverrides;
-          return { customFoods: s.customFoods.filter((f) => f.id !== id), foodOverrides: rest };
-        }),
+      removeCustomFood: (id) => set((s) => ({ customFoods: s.customFoods.filter((f) => f.id !== id) })),
 
       editFood: (id, patch) =>
         set((s) => {
-          // Aliment perso : on édite l'objet directement (fusion des nutriments).
-          const customFoods = id.startsWith('custom-')
-            ? s.customFoods.map((f) => (f.id === id ? { ...f, ...patch, id, n: { ...f.n, ...(patch.n ?? {}) } } : f))
-            : s.customFoods;
-          // Aliment de la banque : override cumulatif persistant.
-          const prev = s.foodOverrides[id];
-          const foodOverrides = id.startsWith('custom-')
-            ? s.foodOverrides
-            : { ...s.foodOverrides, [id]: { ...prev, ...patch, n: { ...(prev?.n ?? {}), ...(patch.n ?? {}) } } };
+          const customFoods = s.customFoods.map((f) =>
+            f.id === id
+              ? {
+                  ...f,
+                  ...patch,
+                  id,
+                  n: { ...f.n, ...(patch.n ?? {}) },
+                  // Relire et corriger un aliment, c'est le vérifier.
+                  aVerifier: undefined,
+                }
+              : f,
+          );
           // Répercute immédiatement la correction sur tout l'historique déjà saisi
           // (mêmes items, nutriments recalculés depuis l'aliment mis à jour).
-          return { customFoods, foodOverrides, entries: resyncEntries(s.entries, effectiveFoods(customFoods, foodOverrides)) };
+          return { customFoods, entries: resyncEntries(s.entries, customFoods) };
         }),
 
       resetFood: (id) =>
         set((s) => {
-          const { [id]: _, ...rest } = s.foodOverrides;
-          return { foodOverrides: rest, entries: resyncEntries(s.entries, effectiveFoods(s.customFoods, rest)) };
+          const current = s.customFoods.find((f) => f.id === id);
+          const source = current?.sourceId ? FOOD_BY_ID.get(current.sourceId) : undefined;
+          if (!current || !source) return {};
+          const customFoods = s.customFoods.map((f) =>
+            f.id === id ? { ...adoptFromCatalog(source, current.ajouteLe), aliases: source.aliases } : f,
+          );
+          return { customFoods, entries: resyncEntries(s.entries, customFoods) };
         }),
+
+      adoptCatalogFood: (food) => {
+        const existing = get().customFoods.find((f) => f.id === food.id);
+        if (existing) return existing;
+        // Un aliment du catalogue peut porter le même nom qu'un aliment déjà en
+        // banque (perso saisi à la main) : on réutilise celui-ci plutôt que d'en
+        // créer un jumeau que l'utilisateur aurait à fusionner ensuite.
+        const sameName = findBankFood(get().customFoods, food.nom);
+        if (sameName) return sameName;
+        const adopted = adoptFromCatalog(food, todayStr());
+        set((s) => ({ customFoods: [adopted, ...s.customFoods] }));
+        return adopted;
+      },
+
+      verifyFood: (id) =>
+        set((s) => ({
+          customFoods: s.customFoods.map((f) => (f.id === id ? { ...f, aVerifier: undefined } : f)),
+        })),
+
+      mergeFoods: (sourceId, targetId) => {
+        const s = get();
+        const r = mergeBankFoods(s.customFoods, s.entries, s.favoriteMeals, sourceId, targetId);
+        if (r.itemsRepointes === 0 && r.customFoods.length === s.customFoods.length) return 0;
+        set({
+          customFoods: r.customFoods,
+          // Les items repointés doivent adopter les valeurs de la cible.
+          entries: resyncEntries(r.entries, r.customFoods),
+          favoriteMeals: r.favoriteMeals,
+        });
+        return r.itemsRepointes;
+      },
 
       addWeightEntry: (entry, createdAt) => {
         const full: WeightEntry = { ...entry, id: uid(), createdAt: createdAt ?? Date.now() };
@@ -793,26 +874,6 @@ export const useStore = create<AppState>()(
 );
 
 /**
- * Complète un objet nutriments persisté avec les clés manquantes (nouveaux
- * nutriments).
- *
- * Cas de la répartition des AG saturés, ajoutée après coup : les items résolus
- * à un aliment de la banque se recalculent tout seuls (cf. resolveItemNutrients),
- * mais les estimations IA et les ajustements « pour cette fois » gardent un
- * snapshot figé — sans rattrapage, la moitié de l'historique compterait 0 g de
- * C16+C14 et sortirait du plafond qui compte. On répartit alors le total selon
- * le profil générique « autre » : la catégorie de l'aliment n'est pas conservée
- * dans le journal, et une estimation grossière vaut mieux qu'un trou.
- */
-export function normalizeNutrients(n: Partial<Nutrients> | undefined): Nutrients {
-  const out = { ...EMPTY_NUTRIENTS, ...(n ?? {}) };
-  if (out.agSatures > 0 && out.agSaturesLdl === 0 && out.agSaturesStearique === 0) {
-    Object.assign(out, splitSaturated(out.agSatures, 'autre'));
-  }
-  return out;
-}
-
-/**
  * Nutriments À JOUR d'un item : recalculés depuis l'aliment de la base (foodId)
  * quand il est résolu et sans ajustement manuel — ainsi TOUTE correction de la
  * base (nouveau nutriment ajouté, valeur corrigée, aliment édité…) se répercute
@@ -828,13 +889,23 @@ export function resolveItemNutrients(
   return normalizeNutrients(it.nutrients);
 }
 
-/** Recalcule les nutriments de tous les items résolus d'un journal, depuis `foods`. */
+/**
+ * Recalcule les nutriments de tous les items résolus d'un journal, depuis `foods`.
+ *
+ * Un foodId absent de la banque retombe sur le CATALOGUE plutôt que sur le
+ * snapshot figé de l'item : c'est le cas d'un aliment retiré de la banque, ou
+ * d'une entrée reçue en synchro avant l'aliment qu'elle référence. Les vraies
+ * valeurs valent mieux qu'une photo prise on ne sait quand.
+ */
 export function resyncEntries(entries: JournalEntry[], foods: Food[]): JournalEntry[] {
+  // Index monté une fois : sans lui, on refait un scan linéaire de la banque
+  // pour chaque item de tout l'historique, à chaque hydratation.
+  const byId = new Map(foods.map((f) => [f.id, f]));
   return entries.map((e) => ({
     ...e,
     items: e.items.map((it) => ({
       ...it,
-      nutrients: resolveItemNutrients(it, it.foodId ? foods.find((f) => f.id === it.foodId) ?? null : null),
+      nutrients: resolveItemNutrients(it, it.foodId ? byId.get(it.foodId) ?? FOOD_BY_ID.get(it.foodId) ?? null : null),
       ...(it.customN ? { customN: normalizeNutrients(it.customN) } : {}),
       // L'estimation IA « pour 100 g » est rescalée à chaque édition de quantité :
       // elle doit être complétée elle aussi, sinon la correction se reperdrait.
@@ -850,17 +921,35 @@ export function resyncEntries(entries: JournalEntry[], foods: Food[]): JournalEn
  * corrigées) se répercute ainsi sur tout l'historique dès le prochain chargement.
  */
 function mergePersisted(persisted: unknown, current: AppState): AppState {
-  const p = (persisted ?? {}) as Partial<AppState>;
-  const customFoods = (p.customFoods ?? []).map((food) => ({ ...food, n: normalizeNutrients(food.n) }));
-  const overrides = p.foodOverrides ?? {};
-  const entries = resyncEntries(p.entries ?? [], effectiveFoods(customFoods, overrides));
+  // `foodOverrides` est retiré de l'état courant : on ne le lit que pour migrer,
+  // et il ne doit pas être re-persisté par le spread de `p` plus bas.
+  const { foodOverrides, ...p } = (persisted ?? {}) as Partial<AppState> & { foodOverrides?: FoodOverrides };
+  const favoriteMeals = p.favoriteMeals ?? [];
+  const stored = (p.customFoods ?? []).map((food) => ({ ...food, n: normalizeNutrients(food.n) }));
+
+  // Migration unique vers la banque personnelle : les aliments du catalogue
+  // réellement mangés y sont copiés (id conservé), et les estimations IA jusqu'ici
+  // enfermées dans les items deviennent de vrais aliments. Idempotente, mais on la
+  // garde derrière un numéro de version pour ne pas la rejouer à chaque démarrage.
+  const migrated =
+    (p.bankSchemaVersion ?? 1) >= BANK_SCHEMA_VERSION
+      ? { customFoods: stored, entries: p.entries ?? [] }
+      : migrateToPersonalBank({
+          entries: p.entries ?? [],
+          customFoods: stored,
+          foodOverrides: foodOverrides ?? {},
+          favoriteMeals,
+        });
+
+  const customFoods = migrated.customFoods;
+  const entries = resyncEntries(migrated.entries, customFoods);
   return {
     ...current,
     ...p,
     entries,
     customFoods,
-    foodOverrides: p.foodOverrides ?? {},
-    favoriteMeals: p.favoriteMeals ?? [],
+    bankSchemaVersion: BANK_SCHEMA_VERSION,
+    favoriteMeals,
     // Migration : ancien champ `creme` booléen → enum ('aucune' | 'visage' | 'complete').
     sunExposures: (p.sunExposures ?? []).map((e) => ({ ...e, creme: normalizeCreme(e.creme) })),
     // Le seed de pesées ne s'applique qu'à la 1re utilisation (clé absente du persisté).

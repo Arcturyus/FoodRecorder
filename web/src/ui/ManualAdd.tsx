@@ -2,11 +2,12 @@ import { useMemo, useState } from 'react';
 import { useStore, useEffectiveFoods } from '../store/store';
 import { UNITS } from '../nutrition/types';
 import type { Food, Unit } from '../nutrition/types';
-import { SUPPLEMENT_DOSE_DEFAULT } from '../nutrition/foods';
+import { FOODS, SUPPLEMENT_DOSE_DEFAULT } from '../nutrition/foods';
 import { normalizeForMatch, isSupplementQuery } from '../nutrition/normalize';
 import { toGrams, scaleNutrients } from '../nutrition/compute';
 import { fmt, UNIT_LABELS } from './format';
 import { NumberField } from './NumberField';
+import { useBankUsage, derniereFoisLabel } from './useBankUsage';
 
 /**
  * Ajout manuel « à la carte » : on cherche un aliment, on choisit la quantité
@@ -14,8 +15,12 @@ import { NumberField } from './NumberField';
  * Plus proche d'une app de tracking classique, mais rapide.
  * `date` : jour ciblé (défaut aujourd'hui) — permet de compléter un jour passé.
  */
+/** Résultats affichés par groupe : au-delà, la liste déborde de l'écran. */
+const MAX_RESULTS = 8;
+
 export function ManualAdd({ date, title }: { date?: string; title?: string } = {}) {
   const all = useEffectiveFoods();
+  const usage = useBankUsage();
   const addFoodEntry = useStore((s) => s.addFoodEntry);
 
   const [query, setQuery] = useState('');
@@ -24,17 +29,38 @@ export function ManualAdd({ date, title }: { date?: string; title?: string } = {
   const [unite, setUnite] = useState<Unit>('g');
   const [flash, setFlash] = useState('');
 
+  const match = (f: Food, q: string) => {
+    const hay = [f.nom, ...f.aliases].map(normalizeForMatch);
+    if (hay.some((h) => h.includes(q))) return true;
+    // « supplément »/« complément » : fait remonter toute la catégorie
+    return f.categorie === 'supplement' && isSupplementQuery(q);
+  };
+
+  /**
+   * Ma banque d'abord, triée par consommation la plus récente : ce qu'on ajoute à
+   * la main, c'est presque toujours quelque chose qu'on mange déjà. L'ordre
+   * alphabétique ferait remonter un aliment mangé une fois il y a six mois avant
+   * le yaourt de tous les matins.
+   */
   const results = useMemo(() => {
     const q = normalizeForMatch(query);
     if (!q) return [];
     return all
-      .filter((f) => {
-        const hay = [f.nom, ...f.aliases].map(normalizeForMatch);
-        if (hay.some((h) => h.includes(q))) return true;
-        // « supplément »/« complément » : fait remonter toute la catégorie
-        return f.categorie === 'supplement' && isSupplementQuery(q);
-      })
-      .slice(0, 8);
+      .filter((f) => match(f, q))
+      .sort((a, b) => (usage.get(b.id)?.derniere ?? '').localeCompare(usage.get(a.id)?.derniere ?? ''))
+      .slice(0, MAX_RESULTS);
+  }, [query, all, usage]);
+
+  /**
+   * Repli sur le catalogue de référence : un aliment jamais mangé n'est pas dans
+   * la banque, mais il doit rester ajoutable sans dicter ni payer un appel à
+   * l'IA. Le choisir le fera entrer dans la banque (cf. `addFoodEntry`).
+   */
+  const catalogResults = useMemo(() => {
+    const q = normalizeForMatch(query);
+    if (!q) return [];
+    const dansMaBanque = new Set(all.map((f) => f.id));
+    return FOODS.filter((f) => !dansMaBanque.has(f.id) && match(f, q)).slice(0, MAX_RESULTS);
   }, [query, all]);
 
   function pick(food: Food) {
@@ -86,7 +112,37 @@ export function ManualAdd({ date, title }: { date?: string; title?: string } = {
 
       {selected === null && results.length > 0 && (
         <div style={{ marginTop: 8 }}>
-          {results.map((f) => (
+          <div className="small" style={{ color: 'var(--muted)', marginBottom: 4 }}>
+            Déjà mangés
+          </div>
+          {results.map((f) => {
+            const u = usage.get(f.id);
+            return (
+              <div className="item-row" key={f.id} style={{ cursor: 'pointer' }} onClick={() => pick(f)}>
+                <div className="item-name">
+                  <span>{f.nom}</span>
+                  <span className="kcal">
+                    {fmt(f.n.kcal)} kcal/100 g{f.pieceGrams ? ` · 1 pièce ≈ ${fmt(f.pieceGrams)} g` : ''}
+                    {u ? ` · dernière fois ${derniereFoisLabel(u.derniere)} (${u.jours} j)` : ''}
+                  </span>
+                </div>
+                <span />
+                <span />
+                <button className="ghost small" onClick={(e) => { e.stopPropagation(); pick(f); }}>
+                  Choisir
+                </button>
+              </div>
+            );
+          })}
+        </div>
+      )}
+
+      {selected === null && catalogResults.length > 0 && (
+        <div style={{ marginTop: 8 }}>
+          <div className="small" style={{ color: 'var(--muted)', marginBottom: 4 }}>
+            Catalogue de référence — jamais mangés, les choisir les ajoute à votre banque
+          </div>
+          {catalogResults.map((f) => (
             <div className="item-row" key={f.id} style={{ cursor: 'pointer' }} onClick={() => pick(f)}>
               <div className="item-name">
                 <span>{f.nom}</span>
@@ -104,9 +160,10 @@ export function ManualAdd({ date, title }: { date?: string; title?: string } = {
         </div>
       )}
 
-      {selected === null && query.trim() !== '' && results.length === 0 && (
+      {selected === null && query.trim() !== '' && results.length === 0 && catalogResults.length === 0 && (
         <div className="hint" style={{ marginTop: 8 }}>
-          Aucun aliment trouvé. Ajoutez-le dans l'onglet « Aliments », ou dictez-le en haut.
+          Aucun aliment trouvé. Dictez-le en haut (l'IA l'estimera et il rejoindra votre banque), ou créez-le dans
+          l'onglet « Ma banque ».
         </div>
       )}
 

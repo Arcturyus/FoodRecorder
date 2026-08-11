@@ -21,7 +21,6 @@ import {
   normalizeNutrients,
   type JournalEntry,
   type FavoriteMeal,
-  type FoodOverrides,
 } from '../store/store';
 import type { Food } from '../nutrition/types';
 import type { WeightEntry } from '../weight/types';
@@ -102,12 +101,6 @@ function liveArray<T>(rows: DbRow[]): T[] {
   return rows.filter((r) => !r.deleted).map((r) => r.payload as T);
 }
 
-function liveRecord(rows: DbRow[]): Record<string, unknown> {
-  const out: Record<string, unknown> = {};
-  for (const r of rows) if (!r.deleted && r.id) out[r.id] = r.payload;
-  return out;
-}
-
 /** Fusion delta d'une collection tableau : upsert / suppression par id. */
 function mergeArray<T extends { id: string }>(local: T[], rows: DbRow[]): T[] {
   const map = new Map(local.map((x) => [x.id, x]));
@@ -117,17 +110,6 @@ function mergeArray<T extends { id: string }>(local: T[], rows: DbRow[]): T[] {
     else map.set(r.id, r.payload as T);
   }
   return [...map.values()];
-}
-
-/** Fusion delta d'un Record (overrides) : upsert / suppression par clé. */
-function mergeRecord(local: Record<string, unknown>, rows: DbRow[]): Record<string, unknown> {
-  const out = { ...local };
-  for (const r of rows) {
-    if (!r.id) continue;
-    if (r.deleted) delete out[r.id];
-    else out[r.id] = r.payload;
-  }
-  return out;
 }
 
 /** Champs singletons (`profile`, `weightConfig`, `mutedDays`…) à écraser depuis le distant. */
@@ -160,15 +142,13 @@ function applyDelta(remote: RemoteData): void {
   withRemoteApply(() =>
     useStore.setState((s) => {
       const customFoods = normalizeCustomFoods(mergeArray(s.customFoods, remote.tables.custom_foods));
-      const foodOverrides = mergeRecord(s.foodOverrides, remote.tables.food_overrides) as FoodOverrides;
       const entries = resyncEntries(
         mergeArray(s.entries, remote.tables.journal_entries),
-        effectiveFoods(customFoods, foodOverrides),
+        effectiveFoods(customFoods),
       );
       return {
         entries,
         customFoods,
-        foodOverrides,
         favoriteMeals: mergeArray(s.favoriteMeals, remote.tables.favorite_meals),
         weightEntries: mergeArray(s.weightEntries, remote.tables.weight_entries),
         sunExposures: normalizeSun(mergeArray(s.sunExposures, remote.tables.sun_exposures)),
@@ -183,12 +163,10 @@ function replaceFromRemote(remote: RemoteData): void {
   withRemoteApply(() =>
     useStore.setState(() => {
       const customFoods = normalizeCustomFoods(liveArray<Food>(remote.tables.custom_foods));
-      const foodOverrides = liveRecord(remote.tables.food_overrides) as FoodOverrides;
-      const entries = resyncEntries(liveArray<JournalEntry>(remote.tables.journal_entries), effectiveFoods(customFoods, foodOverrides));
+      const entries = resyncEntries(liveArray<JournalEntry>(remote.tables.journal_entries), effectiveFoods(customFoods));
       return {
         entries,
         customFoods,
-        foodOverrides,
         favoriteMeals: liveArray<FavoriteMeal>(remote.tables.favorite_meals),
         weightEntries: liveArray<WeightEntry>(remote.tables.weight_entries),
         sunExposures: normalizeSun(liveArray<SunExposure>(remote.tables.sun_exposures)),

@@ -2,6 +2,7 @@ import { describe, expect, it, beforeEach } from 'vitest';
 import { useStore, todayStr, recentFoodCounts, resolveItemNutrients } from '../src/store/store';
 import { buildBackup, importBackup, journalToCsv, weightsToCsv } from '../src/store/backup';
 import { FOOD_BY_ID } from '../src/nutrition/foods';
+import { adoptFromCatalog } from '../src/nutrition/bank';
 import { isPhotoEntry } from '../src/nutrition/uncertainty';
 import { EMPTY_NUTRIENTS } from '../src/nutrition/types';
 import type { ExtractedItem } from '../src/nutrition/types';
@@ -29,6 +30,15 @@ function iaItem(nom: string): ExtractedItem {
   };
 }
 
+/**
+ * Item que RIEN ne résout : ni la banque (nom inconnu), ni l'IA (aucune valeur
+ * fournie). C'est le seul cas qui reste sans catégorie — depuis la banque
+ * personnelle, une estimation IA devient un aliment et porte donc la sienne.
+ */
+function inconnuItem(nom: string): ExtractedItem {
+  return { aliment: nom, quantite: 1, unite: 'piece', estimation: false };
+}
+
 /** Date locale N jours avant aujourd'hui. */
 function daysAgo(n: number): string {
   const d = new Date();
@@ -36,8 +46,15 @@ function daysAgo(n: number): string {
   return todayStr(d);
 }
 
+/**
+ * Ma banque de test. Elle ne contient QUE des aliments « déjà mangés » : depuis
+ * la bascule vers la banque personnelle, le catalogue de référence ne participe
+ * plus au matching tant qu'un aliment n'y a pas été copié.
+ */
+const bank = (...ids: string[]) => ids.map((id) => adoptFromCatalog(FOOD_BY_ID.get(id)!));
+
 beforeEach(() => {
-  useStore.setState({ entries: [], customFoods: [], foodOverrides: {}, favoriteMeals: [] });
+  useStore.setState({ entries: [], customFoods: bank('banane', 'pomme', 'saumon'), favoriteMeals: [] });
 });
 
 describe('repas favoris', () => {
@@ -120,7 +137,7 @@ describe('duplication de repas / jour', () => {
 
 describe('catégories des aliments non résolus', () => {
   it('setItemCategories classe les items non résolus, sans toucher aux autres', () => {
-    const id = useStore.getState().addEntry('', [iaItem('brick au thon')], 'claudecode');
+    const id = useStore.getState().addEntry('', [inconnuItem('brick au thon')], 'claudecode');
     const bananeId = useStore.getState().addFoodEntry(banane, 1, 'piece');
 
     const n = useStore.getState().setItemCategories({ 'Brick au thon': 'poisson' });
@@ -132,7 +149,7 @@ describe('catégories des aliments non résolus', () => {
   });
 
   it('ne reclasse jamais un item déjà classé', () => {
-    const id = useStore.getState().addEntry('', [iaItem('brick au thon')], 'claudecode');
+    const id = useStore.getState().addEntry('', [inconnuItem('brick au thon')], 'claudecode');
     useStore.getState().setItemCategories({ 'brick au thon': 'poisson' });
     const n = useStore.getState().setItemCategories({ 'brick au thon': 'plat' });
     expect(n).toBe(0);
@@ -309,12 +326,14 @@ describe('renommage d’un aliment du journal (renameItem)', () => {
     expect(after.nutrients.kcal).toBeGreaterThan(0);
   });
 
-  it('garde l’estimation IA d’un plat hors banque quand on précise son nom', () => {
-    // Hors banque, sinon l'item serait résolu par le matching et non par l'IA.
+  it('garde les valeurs de l’aliment né de l’estimation IA quand on précise son nom', () => {
     const entryId = useStore.getState().addEntry('', [iaItem('tarte flambée')], 'llm');
     const item = useStore.getState().entries.find((e) => e.id === entryId)!.items[0];
     const kcal = item.nutrients.kcal;
-    expect(item.foodId).toBeNull();
+    // L'estimation ne reste plus enfermée dans l'item : elle a fait entrer un
+    // aliment dans ma banque, et c'est lui que l'item référence désormais.
+    expect(item.foodId).toBe('mine-tarte-flambee');
+    expect(useStore.getState().customFoods.find((f) => f.id === item.foodId)?.aVerifier).toBe(true);
     expect(kcal).toBeGreaterThan(0);
 
     useStore.getState().renameItem(entryId, item.id, 'tarte flambée maison');

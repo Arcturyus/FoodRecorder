@@ -1,5 +1,6 @@
 import type { ComputedItem, ExtractedItem, Food, Nutrients, NutrientKey, Unit } from './types';
 import { EMPTY_NUTRIENTS } from './types';
+import { splitSaturated } from './foods';
 import { matchFood } from './match';
 import type { RecentCounts } from './match';
 
@@ -44,6 +45,28 @@ export function scaleNutrients(n: Nutrients, grams: number): Nutrients {
   const out = { ...EMPTY_NUTRIENTS };
   // `?? 0` : un snapshot persisté peut manquer des clés ajoutées depuis (sinon NaN).
   for (const k of Object.keys(out) as NutrientKey[]) out[k] = (n[k] ?? 0) * factor;
+  return out;
+}
+
+/**
+ * Complète un objet nutriments avec les clés manquantes (nutriments ajoutés au
+ * modèle après coup).
+ *
+ * Cas de la répartition des AG saturés, ajoutée après coup : les items résolus à
+ * un aliment se recalculent tout seuls (cf. resolveItemNutrients), mais les
+ * valeurs figées — estimations d'IA de l'ancien modèle, ajustements « pour cette
+ * fois », aliments importés d'une vieille sauvegarde — gardent un snapshot
+ * incomplet. Sans rattrapage, la moitié de l'historique compterait 0 g de C16+C14
+ * et sortirait du plafond qui compte ; les clés absentes, elles, donneraient des
+ * NaN. On répartit alors le total selon le profil générique « autre » : la
+ * catégorie n'est pas toujours connue, et une estimation grossière vaut mieux
+ * qu'un trou.
+ */
+export function normalizeNutrients(n: Partial<Nutrients> | undefined): Nutrients {
+  const out = { ...EMPTY_NUTRIENTS, ...(n ?? {}) };
+  if (out.agSatures > 0 && out.agSaturesLdl === 0 && out.agSaturesStearique === 0) {
+    Object.assign(out, splitSaturated(out.agSatures, 'autre'));
+  }
   return out;
 }
 

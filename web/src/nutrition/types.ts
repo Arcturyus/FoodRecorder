@@ -127,6 +127,20 @@ export interface Food {
   n: Nutrients;
   /** aliment ajouté par l'utilisateur */
   custom?: boolean;
+  /**
+   * Provenance dans MA banque (absent ⇒ aliment du catalogue de référence, qui
+   * n'est jamais compté dans les stats) :
+   *  - 'catalogue' : copié depuis le catalogue à la 1re consommation (garde son id) ;
+   *  - 'ia'        : né d'une estimation d'IA forte pour un aliment hors catalogue ;
+   *  - 'manuel'    : saisi à la main dans l'onglet Banque.
+   */
+  origine?: 'catalogue' | 'ia' | 'manuel';
+  /** id du catalogue dont cet aliment est la copie : permet le « ↺ rétablir ». */
+  sourceId?: string;
+  /** Valeurs estimées par l'IA, jamais relues par l'utilisateur (badge « à vérifier »). */
+  aVerifier?: boolean;
+  /** Jour d'entrée dans la banque (YYYY-MM-DD). */
+  ajouteLe?: string;
 }
 
 /** Item extrait d'une phrase (contrat central du plan, §3) */

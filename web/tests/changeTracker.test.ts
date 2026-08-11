@@ -6,6 +6,10 @@ import { importBackup } from '../src/store/backup';
 import { DEFAULT_PROFILE } from '../src/nutrition/targets';
 import { DEFAULT_WEIGHT_CONFIG } from '../src/weight/types';
 import { FOODS } from '../src/nutrition/foods';
+import { adoptFromCatalog } from '../src/nutrition/bank';
+
+/** Ma banque de test : quelques aliments du catalogue, comme après une 1re consommation. */
+const bank = (...ids: string[]) => ids.map((id) => adoptFromCatalog(FOODS.find((f) => f.id === id)!));
 
 /**
  * Le tracker marque « dirty » les modifications locales par DIFF d'état, sans
@@ -21,8 +25,7 @@ beforeEach(() => {
   useSyncStore.setState({ profileId: null, profileName: null, pending: {}, pullCursor: null, lastSyncAt: null, lastError: null });
   useStore.setState({
     entries: [],
-    customFoods: [],
-    foodOverrides: {},
+    customFoods: bank('banane', 'pomme'),
     favoriteMeals: [],
     weightEntries: [],
     sunExposures: [],
@@ -70,12 +73,13 @@ describe('changeTracker', () => {
     expect(change.deleted).toBeFalsy(); // l'entrée existe toujours (1 item restant) → MAJ, pas tombstone
   });
 
-  it('marque l’override et les entrées recalculées lors d’une édition d’aliment', () => {
+  it('marque l’aliment et les entrées recalculées lors d’une édition d’aliment', () => {
     const id = useStore.getState().addEntry('une banane', [{ aliment: 'banane', quantite: 1, unite: 'piece', estimation: false }], 'manuel');
     useSyncStore.setState({ pending: {} }); // isoler l'effet de editFood
 
     useStore.getState().editFood('banane', { n: { kcal: 200 } });
-    expect(pending()['food_overrides:banane']).toBeTruthy();
+    // L'aliment de ma banque est modifié en place (il n'y a plus d'override séparé).
+    expect(pending()['custom_foods:banane']).toBeTruthy();
     expect(pending()[`journal_entries:${id}`]).toBeTruthy(); // nutriments recalculés → à re-pousser
   });
 
@@ -105,7 +109,6 @@ describe('changeTracker', () => {
       exportedAt: new Date().toISOString(),
       entries: [{ id: 'imp1', date: '2026-07-19', createdAt: 1, transcript: 'import', source: 'manuel', items: [] }],
       customFoods: [],
-      foodOverrides: {},
       favoriteMeals: [],
       profile: DEFAULT_PROFILE,
       weightEntries: [],

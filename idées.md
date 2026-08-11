@@ -3,25 +3,19 @@
 
 - [x] Purge les photos de supabase une fois qu'elles ont bien été traités (gagne des données ?)
 
-- [ ] On supprime la banque d'aliments en brut. À la place : un aliment entre dans la banque quand il **revient** (1 ou 2 fois, à décider), ou en tout cas tout est décrit par le LLM. La banque ne sert plus qu'aux stats — et du coup ça peut être cool d'y ajouter de nouveaux éléments.
+- [x] On supprime la banque d'aliments en brut. À la place : un aliment entre dans la banque quand il **revient** (1 ou 2 fois, à décider), ou en tout cas tout est décrit par le LLM. La banque ne sert plus qu'aux stats — et du coup ça peut être cool d'y ajouter de nouveaux éléments.
 
-dans "Ajout manuel rapide" rechercher dans la base + les aliments déjà mangés (+ préciser la dernière fois qu'on les a mangés lorsque l'on ajoute par ex)
+- [x] dans "Ajout manuel rapide" rechercher dans la base + les aliments déjà mangés (+ préciser la dernière fois qu'on les a mangés lorsque l'on ajoute par ex)
 
-**À éclaircir avant de coder (brainstorm demandé) :**
-- Que devient le **matching** (`match.ts`) si la banque est vide au départ : tout passe par le LLM à chaque repas, y compris hors ligne ? Que fait-on quand le LLM n'est pas joignable (téléphone sans pont) ?
-- Seuil d'entrée dans la banque : 1re ou 2e occurrence ? Et si les deux descriptions LLM divergent (valeurs différentes pour le même aliment), laquelle gagne — la dernière, la moyenne, la plus « confiante » ?
-- Que deviennent les modes qui vivent de la banque (Explorer / Comparer / ACP) pendant la période où elle est presque vide ?
-- Migration : que fait-on des 148 aliments actuels et des entrées de journal qui les référencent ?
-- Coût : un appel LLM par aliment jamais vu, ça se compte comment sur un mois ?
+**Ce qui a été décidé et fait** (cf. `nutrition/bank.ts`) :
+- Le **matching** garde une fixture : les 148 restent en *catalogue de référence*, hors stats, à piocher. Le mode « règles » hors ligne continue donc de fonctionner, et ajouter « une pomme » ne coûte aucun appel LLM.
+- Le **coût LLM n'augmente pas** : le pipeline en 2 passes existait déjà (`matchFood` local gratuit, puis `verifyMatches` uniquement sur les douteux, en un seul appel groupé). Seul le traitement du verdict a changé.
+- **Entrée dès la 1re occurrence**, avec badge « à vérifier ». Le filtre des stats se fait après coup, au curseur « mangé au moins N jours » (jours distincts).
+- **Estimations divergentes** : les valeurs sont **figées à la première fois**, éditables, et toute correction est rétroactive sur l'historique. Sinon le même plat vaudrait deux valeurs et les courbes ne voudraient plus rien dire.
+- **Explorer / Comparer / ACP** : état vide explicite tant que la banque l'est ; la migration la remplit d'emblée avec tout l'historique.
+- **Migration** : les aliments du catalogue réellement mangés sont copiés **en gardant leur id** (aucune référence cassée), les overrides sont absorbés, les estimations IA jusque-là enfermées dans les items deviennent de vrais aliments. Les 148 jamais mangés ne sont pas repris.
 
-## 3. Diagnostic : photo/texte qui n'arrivent pas via le pont Claude Code
-
-- [ ] Parfois le système en pont Claude Code sur téléphone prend bien une photo mais je reçois une erreur — la photo ne passe peut-être pas sur Supabase ? Que voir ? Faisons un diagnostic (le texte aussi). Est-ce que Supabase peut bloquer ? Message de confirmation que c'est bien en attente sur Supabase.
-
-**À éclaircir avant de coder :**
-- Le message d'erreur exact reçu sur le téléphone (le code affiche déjà poids · dimensions · poids d'origine, et distingue « échec d'analyse » de « échec d'envoi ») — lequel des deux apparaît ?
-- Piste n°1 à écarter : limite de taille d'une ligne Supabase (le base64 d'une photo réduite ~1024 px fait ~150-300 Ko) et politiques RLS de `sync_queue`.
-- Faut-il un écran « file d'attente » (lignes en attente, envoyées, traitées) plutôt que des messages fugaces ? Ce serait aussi la réponse au « message de confirmation ».
+- [ ] Fusion de doublons : la détection est par similarité de nom (`findDuplicates`). Voir à l'usage s'il faut aussi rapprocher par proximité nutritionnelle.
 
 ## 4. Inspiration
 

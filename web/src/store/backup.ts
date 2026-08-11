@@ -5,8 +5,9 @@
  *  - CSV : exports lisibles (tableur) du journal et des pesées — lecture seule.
  */
 
-import { useStore, todayStr, resyncEntries, effectiveFoods, normalizeNutrients } from './store';
+import { useStore, todayStr, resyncEntries, effectiveFoods, normalizeNutrients, BANK_SCHEMA_VERSION } from './store';
 import type { JournalEntry, FavoriteMeal, FoodOverrides, SttEngine, ExtractionMode } from './store';
+import { migrateToPersonalBank } from '../nutrition/bank';
 import type { Food } from '../nutrition/types';
 import type { Profile } from '../nutrition/targets';
 import type { WeightEntry, WeightConfig } from '../weight/types';
@@ -30,11 +31,14 @@ export interface BackupSettings {
 
 export interface BackupData {
   app: 'foodrecorder';
-  version: 1;
+  /** 1 = catalogue en dur + overrides ; 2 = banque personnelle (migrée à l'import). */
+  version: 1 | 2;
   exportedAt: string; // ISO
   entries: JournalEntry[];
+  /** Ma banque d'aliments (cf. `AppState.customFoods`). */
   customFoods: Food[];
-  foodOverrides: FoodOverrides;
+  /** ANCIEN modèle (version 1) : lu à l'import pour la migration, plus jamais écrit. */
+  foodOverrides?: FoodOverrides;
   favoriteMeals: FavoriteMeal[];
   profile: Profile;
   weightEntries: WeightEntry[];
@@ -56,11 +60,10 @@ export function buildBackup(): BackupData {
   const s = useStore.getState();
   return {
     app: 'foodrecorder',
-    version: 1,
+    version: BANK_SCHEMA_VERSION,
     exportedAt: new Date().toISOString(),
     entries: s.entries,
     customFoods: s.customFoods,
-    foodOverrides: s.foodOverrides,
     favoriteMeals: s.favoriteMeals,
     profile: s.profile,
     weightEntries: s.weightEntries,
@@ -100,13 +103,26 @@ export function importBackup(text: string): string {
   // qui la relit. Sans ça, un nutriment ajouté depuis (la répartition des AG
   // saturés, hier les oméga 3 détaillés) reste absent des items importés — et
   // ressort en « NaN » ou en 0 dans le bilan jusqu'au prochain rechargement.
-  const customFoods = (b.customFoods ?? []).map((food) => ({ ...food, n: normalizeNutrients(food.n) }));
-  const foodOverrides = b.foodOverrides ?? {};
+  const stored = (b.customFoods ?? []).map((food) => ({ ...food, n: normalizeNutrients(food.n) }));
+  const favoriteMeals = b.favoriteMeals ?? [];
+  // Sauvegarde d'avant la banque personnelle : on la migre au vol, exactement
+  // comme à l'hydratation. Les aliments du catalogue qu'elle référence sont
+  // recopiés dans la banque, et ses estimations IA deviennent des aliments.
+  const migrated =
+    (b.version ?? 1) >= BANK_SCHEMA_VERSION
+      ? { customFoods: stored, entries: b.entries }
+      : migrateToPersonalBank({
+          entries: b.entries,
+          customFoods: stored,
+          foodOverrides: b.foodOverrides ?? {},
+          favoriteMeals,
+        });
+  const customFoods = migrated.customFoods;
   useStore.setState({
-    entries: resyncEntries(b.entries, effectiveFoods(customFoods, foodOverrides)),
+    entries: resyncEntries(migrated.entries, effectiveFoods(customFoods)),
     customFoods,
-    foodOverrides,
-    favoriteMeals: b.favoriteMeals ?? [],
+    bankSchemaVersion: BANK_SCHEMA_VERSION,
+    favoriteMeals,
     ...(b.profile ? { profile: b.profile } : {}),
     weightEntries: b.weightEntries,
     ...(b.weightConfig ? { weightConfig: b.weightConfig } : {}),
