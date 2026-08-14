@@ -1,5 +1,9 @@
 # À FAIRE
 
+- [ ] Reconnexions trop fréquentes sur téléphone (redemande le mot de passe). Cause probable : le compte Supabase Auth est **partagé entre appareils** (un seul mot de passe par profil, cf. modèle d'auth), et Supabase fait tourner le refresh token à chaque rafraîchissement — si l'ordi rafraîchit pendant que le téléphone détient encore l'ancien jeton, le téléphone se fait rejeter. À iOS Safari s'ajoute la purge du localStorage après ~7 jours sans ouvrir le site. Trois pistes, à combiner :
+  - Dashboard Supabase (Authentication → Sessions) : vérifier/augmenter la durée de session et le « refresh token reuse interval » (fenêtre de tolérance après rotation).
+  - Utiliser l'app en PWA installée sur téléphone (« ajouter à l'écran d'accueil ») plutôt qu'un onglet Safari classique — stockage moins sujet à purge.
+  - Demander `navigator.storage.persist()` au démarrage de l'app pour réduire le risque d'éviction du localStorage.
 
 - [x] Purge les photos de supabase une fois qu'elles ont bien été traités (gagne des données ?)
 
@@ -23,6 +27,7 @@
 ## 4. Inspiration
 
 - [ ] Analyse de l'app Cronometer, pour y prendre de bonnes idées ou des choses à ne pas faire.
+ou autre concurrent : Yazio...
 
 **À éclaircir :** ce qu'on en attend concrètement — une note comparative écrite (fonctionnalité par fonctionnalité) ? un focus sur un aspect précis (saisie, graphes, base de données) ?
 
