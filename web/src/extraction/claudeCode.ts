@@ -1,5 +1,12 @@
 import type { ExtractedItem } from '../nutrition/types';
-import { validateExtraction, ESTIMATION_PROMPT, FOURCHETTE_PROMPT, UNITES_PROMPT, DECOMPOSITION_PROMPT } from './schema';
+import {
+  validateExtraction,
+  ESTIMATION_PROMPT,
+  FOURCHETTE_PROMPT,
+  UNITES_PROMPT,
+  DECOMPOSITION_PROMPT,
+  PARTIE_COMESTIBLE_PROMPT,
+} from './schema';
 import { parseTranscript } from './ruleParser';
 
 /**
@@ -28,6 +35,8 @@ Aucun texte hors du JSON, pas de bloc de code.
 ${UNITES_PROMPT}
 
 ${DECOMPOSITION_PROMPT}
+
+${PARTIE_COMESTIBLE_PROMPT}
 
 ${FOURCHETTE_PROMPT}
 
@@ -61,6 +70,8 @@ Aucun texte hors du JSON, pas de bloc de code.
 ${UNITES_PROMPT}
 
 ${DECOMPOSITION_PROMPT}
+
+${PARTIE_COMESTIBLE_PROMPT}
 
 ${FOURCHETTE_PROMPT}
 Sur une photo, chaque quantité est une estimation visuelle : renseigne SYSTÉMATIQUEMENT "quantiteMin" et "quantiteMax" pour chaque item.

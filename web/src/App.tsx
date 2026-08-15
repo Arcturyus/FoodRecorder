@@ -4,11 +4,17 @@ import { isSyncConfigured } from './sync/supabase';
 import { runSyncTick } from './sync/poller';
 import { runProfileSyncTick, restoreSession } from './sync/profileSync';
 import { useSyncStore } from './sync/syncStore';
+import { useQueueStatus, pendingTotal } from './sync/queueStatus';
 import { initChangeTracker } from './sync/changeTracker';
 import { runAutoSaveTick } from './store/autosave';
 
 /** Intervalle entre deux vérifications de la file de synchro (30 s). */
 const SYNC_INTERVAL_MS = 30_000;
+/**
+ * Cadence resserrée tant que la file n'est pas vide : à 30 s, le bandeau d'un appareil
+ * sans pont annoncerait pendant une demi-minute une photo déjà analysée.
+ */
+const SYNC_INTERVAL_BUSY_MS = 8_000;
 import { DayView } from './ui/DayView';
 import { DaySwitcher, dayLabel } from './ui/DayPicker';
 import { Foods } from './ui/Foods';
@@ -100,6 +106,21 @@ export function App() {
     const id = setInterval(tick, SYNC_INTERVAL_MS);
     return () => clearInterval(id);
   }, []);
+
+  /**
+   * Deuxième boucle, active seulement quand la file a du retard : elle ne relance que
+   * `runSyncTick` (la synchro d'état garde son rythme de croisière), et sa garde interne
+   * de réentrance ignore l'appel si le pont est déjà en train d'analyser.
+   */
+  const queueBusy = useQueueStatus((s) => pendingTotal(s.pending) > 0);
+  useEffect(() => {
+    if (!isSyncConfigured() || !queueBusy) return;
+    const id = setInterval(() => {
+      const { profileId, sessionExpired } = useSyncStore.getState();
+      if (profileId && !sessionExpired) runSyncTick();
+    }, SYNC_INTERVAL_BUSY_MS);
+    return () => clearInterval(id);
+  }, [queueBusy]);
 
   // Filet de sécurité : une sauvegarde JSON par jour sur le disque, à la
   // première ouverture (sous `npm run dev` uniquement — no-op ailleurs).

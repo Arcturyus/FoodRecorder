@@ -142,6 +142,23 @@ async function fetchPending<T>(kind: SyncKind): Promise<SyncRow<T>[]> {
   return (data ?? []) as SyncRow<T>[];
 }
 
+/**
+ * Compte les lignes en attente par kind, SANS rapatrier les payloads : une photo pèse
+ * plusieurs centaines de Ko, et les appareils sans pont (téléphone) n'ont besoin que du
+ * nombre — ils ne traitent rien. Sert au bandeau « en attente de traitement par l'ordinateur ».
+ */
+export async function countPending(): Promise<Record<SyncKind, number>> {
+  const counts: Record<SyncKind, number> = { transcript: 0, image: 0, sun: 0, weight: 0 };
+  if (!supabase) return counts;
+  const { data, error } = await supabase.from('sync_queue').select('kind').eq('processed', false);
+  if (error) throw new Error(error.message);
+  for (const row of (data ?? []) as { kind: string }[]) {
+    // D'anciennes lignes peuvent porter un kind disparu (cf. les kinds « résultat ») : on les ignore.
+    if (row.kind in counts) counts[row.kind as SyncKind] += 1;
+  }
+  return counts;
+}
+
 /** Récupère les transcriptions en attente (tous appareils confondus). */
 export function fetchPendingTranscripts(): Promise<SyncRow<TranscriptPayload>[]> {
   return fetchPending<TranscriptPayload>('transcript');

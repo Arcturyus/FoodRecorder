@@ -1288,6 +1288,24 @@ button.nutrient-toggle:hover { background: none; color: var(--accent); }
 }
 .day-switch.past .day-switch-label strong { color: var(--accent); text-transform: capitalize; }
 
+/* Bandeau « où en est la file » (dictées/photos envoyées depuis un autre appareil). */
+.queue-status {
+  display: flex; flex-direction: column; gap: 4px;
+  margin-bottom: 14px; padding: 8px 12px;
+  background: var(--panel); border: 1px solid var(--border); border-radius: var(--radius);
+  font-size: 13px; color: var(--muted);
+}
+/* Quelque chose est en cours ou en attente : même mise en avant qu'un jour passé. */
+.queue-status.busy {
+  border-color: var(--accent);
+  background: linear-gradient(90deg, rgba(255, 159, 67, 0.12), transparent 60%), var(--panel);
+}
+.queue-status.busy .queue-status-main { color: var(--text); }
+.queue-status-icon { margin-right: 2px; }
+.queue-status-tally { font-size: 12px; }
+.queue-status-failed { color: var(--danger); }
+.queue-status-fails { margin: 2px 0 0; padding-left: 18px; font-size: 12px; color: var(--danger); }
+
 /* --------------------------------------------------------------------------
    Champ « quel aliment est-ce ? » : recherche dans la banque + nom libre.
    -------------------------------------------------------------------------- */

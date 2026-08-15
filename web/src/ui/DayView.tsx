@@ -12,6 +12,7 @@ import { EntryCard } from './EntryCard';
 import { Sun } from './Sun';
 import { DayNote } from './DayNote';
 import { DayAdviceCard } from './DayAdvice';
+import { QueueStatus } from './QueueStatus';
 import { dayLabel } from './DayPicker';
 
 /**
@@ -60,6 +61,9 @@ export function DayView({ date }: { date: string }) {
 
   return (
     <>
+      {/* En tête : ce que la file a encore à traiter — une dictée envoyée du téléphone
+          n'apparaît dans le journal qu'après analyse, et l'attente était jusqu'ici muette. */}
+      <QueueStatus />
       <Capture
         key={`cap-${date}`}
         date={isToday ? undefined : date}

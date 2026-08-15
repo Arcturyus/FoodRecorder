@@ -31,6 +31,7 @@ Réponds UNIQUEMENT avec un JSON {"items":[{"aliment","quantite","unite","estima
 - PRIVILÉGIE l'unité "g" (ou "ml" pour un liquide) : convertis toi-même les contenants en grammes (un bol de riz → 200 g, une assiette de pâtes → 280 g, une cuillère à soupe d'huile → 14 g, une poignée d'amandes → 30 g). Utilise "mg"/"µg" pour un complément dosé (300 mg de magnésium). "piece" seulement pour un objet dénombrable standard (œuf, banane, yaourt, carré de chocolat).
 - N'invente JAMAIS de valeurs nutritionnelles. N'ajoute aucun aliment non mentionné.
 - DÉCOMPOSE un assemblage d'aliments distincts (salade composée, mélange de légumes, assiette mixte) en UN item par aliment, chacun avec sa quantité. Mais un PLAT transformé et lié (gâteau, tajine, soupe, quiche) reste UN SEUL item.
+- Si le poids annoncé inclut ce qui ne se mange pas (os, arêtes, coquilles, carapaces, noyau, épluchures), ne compte que la partie mangée et mets "estimation": true : cuisse de poulet avec os ≈ 70 % du poids (chair + peau), côte avec os ≈ 75 %, poisson entier ≈ 50 %, moules avec coquilles ≈ 30 %, avocat ≈ 70 %, banane ≈ 65 %. Mais NE retire PAS ce qui se mange : la peau du poulet, la peau du saumon, la peau d'une pomme. Un poids déjà net (« 200 g de blanc de poulet ») ne se réduit pas.
 
 Exemples :
 "j'ai mangé un bol de riz avec 150 g de poulet et un yaourt nature"

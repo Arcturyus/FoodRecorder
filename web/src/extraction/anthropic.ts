@@ -1,6 +1,13 @@
 import Anthropic from '@anthropic-ai/sdk';
 import type { ExtractedItem } from '../nutrition/types';
-import { validateExtraction, ESTIMATION_PROMPT, FOURCHETTE_PROMPT, UNITES_PROMPT, DECOMPOSITION_PROMPT } from './schema';
+import {
+  validateExtraction,
+  ESTIMATION_PROMPT,
+  FOURCHETTE_PROMPT,
+  UNITES_PROMPT,
+  DECOMPOSITION_PROMPT,
+  PARTIE_COMESTIBLE_PROMPT,
+} from './schema';
 import { parseTranscript } from './ruleParser';
 
 /**
@@ -44,6 +51,8 @@ ${UNITES_PROMPT}
 
 ${DECOMPOSITION_PROMPT}
 
+${PARTIE_COMESTIBLE_PROMPT}
+
 ${FOURCHETTE_PROMPT}
 
 ${ESTIMATION_PROMPT}
@@ -76,6 +85,8 @@ Aucun texte hors du JSON.
 ${UNITES_PROMPT}
 
 ${DECOMPOSITION_PROMPT}
+
+${PARTIE_COMESTIBLE_PROMPT}
 
 ${FOURCHETTE_PROMPT}
 Sur une photo, chaque quantité est une estimation visuelle : renseigne SYSTÉMATIQUEMENT "quantiteMin" et "quantiteMax" pour chaque item.

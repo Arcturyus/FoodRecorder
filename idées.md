@@ -5,6 +5,18 @@
   - Utiliser l'app en PWA installée sur téléphone (« ajouter à l'écran d'accueil ») plutôt qu'un onglet Safari classique — stockage moins sujet à purge.
   - Demander `navigator.storage.persist()` au démarrage de l'app pour réduire le risque d'éviction du localStorage.
 
+
+- [ ] Rendre visible le traitement de la file : un texte dans l'onglet Jour disant ce que la CLI est en train de mâcher (nombre de photos/dictées en cours, nombre déjà traitées), qui repart de zéro quand on quitte « Aujourd'hui » et qu'on y revient.
+
+  **Décidé :**
+  - Visible **sur l'ordi ET sur le téléphone**. L'ordi (qui a le pont) affiche « en cours : photo 2/3 » ; le téléphone, qui ne peut pas savoir si l'ordi mouline ou est éteint, affiche seulement « 2 photos en attente de traitement par l'ordinateur ».
+  - « validé » = **traité par la CLI** (`processed: true`, entrée écrite dans le journal). Pas de relecture manuelle à confirmer — ce serait un champ de plus sur les entrées et une UI dédiée.
+  - Les **échecs sont comptés à part**, avec leur motif : `poller.ts` connaît déjà l'erreur (cf. `payload.error`) mais la jette dans des `catch` muets.
+  - Mise en œuvre : store éphémère (non persisté, hors backup JSON), les 4 `fetchPending*` regroupés en tête de tick pour connaître le total d'emblée, un `countPending()` pour les appareils sans pont, et le tick accéléré à ~8 s tant que la file n'est pas vide (30 s sinon, sans quoi le bandeau du téléphone a une demi-minute de retard).
+
+- [x] Ajoute dans le prompt le fait de reduire les quantité automatiquement pour certains nourriture ou l'on mange pas tout (exmeple cuisse de poulet faut compter que le user a donné le poids total mais faut enlever les os)
+  → `PARTIE_COMESTIBLE_PROMPT` (`extraction/schema.ts`), injecté dans les 4 prompts des IA fortes (texte + photo, API Claude et pont Claude Code) + une ligne condensée pour l'IA locale. On ne retire que l'immangeable (os, arêtes, coquilles, noyaux…), jamais ce qui se mange couramment (peau du poulet, du saumon, des fruits) ; quand c'est discutable (peau), l'IA émet deux items séparés chair / peau pour que l'utilisateur supprime celui qu'il n'a pas mangé. La quantité nette passe en `estimation: true` avec fourchette, même si le poids brut était précis.
+
 - [x] Purge les photos de supabase une fois qu'elles ont bien été traités (gagne des données ?)
 
 - [x] On supprime la banque d'aliments en brut. À la place : un aliment entre dans la banque quand il **revient** (1 ou 2 fois, à décider), ou en tout cas tout est décrit par le LLM. La banque ne sert plus qu'aux stats — et du coup ça peut être cool d'y ajouter de nouveaux éléments.

@@ -176,3 +176,26 @@ Quand le repas est un ASSEMBLAGE d'aliments entiers reconnaissables et quantifia
 Si les quantités par composant ne sont pas précisées, estime une part plausible pour chacun ("estimation": true).
 Exemple : "une salade de tomates, poivrons et oignons"
 → {"items":[{"aliment":"tomate","quantite":100,"unite":"g","estimation":true,"quantiteMin":60,"quantiteMax":150},{"aliment":"poivron","quantite":80,"unite":"g","estimation":true,"quantiteMin":50,"quantiteMax":120},{"aliment":"oignon","quantite":40,"unite":"g","estimation":true,"quantiteMin":20,"quantiteMax":70}]}`;
+
+/**
+ * Consigne de PART COMESTIBLE (poids brut → poids réellement mangé), commune aux
+ * IA fortes. L'utilisateur donne souvent le poids de ce qu'il a acheté ou sorti
+ * du frigo (cuisse de poulet avec l'os, crevettes non décortiquées), alors que
+ * seul ce qui est avalé compte au bilan : sans déduction, un poids brut gonfle
+ * mécaniquement les apports.
+ *
+ * La règle est volontairement conservatrice : on ne retire QUE l'immangeable.
+ * Ce qui se mange couramment (peau du poulet, peau du saumon, peau des fruits)
+ * est conservé ; quand c'est vraiment discutable, on émet deux items séparés
+ * pour que l'utilisateur supprime lui-même celui qu'il n'a pas mangé.
+ */
+export const PARTIE_COMESTIBLE_PROMPT = `Poids brut → part réellement MANGÉE :
+Un poids annoncé ou vu sur une photo est souvent le poids BRUT, parties immangeables comprises. Compte alors la seule partie mangée, pas le poids total, avec "estimation": true et une fourchette "quantiteMin"/"quantiteMax" (le rendement est une estimation, même quand le poids brut, lui, était précis). Nomme l'aliment de façon parlante pour que l'utilisateur voie ce qui a été compté (« cuisse de poulet, chair et peau », « crevettes décortiquées »).
+Retire ce qui finit dans l'assiette vide : os, arêtes, carapaces, coquilles, noyaux, pépins, trognons, épluchures réellement épluchées, couenne et gras taillé au couteau, feuilles extérieures, tiges dures, sachet de thé, jus de conserve égoutté.
+NE retire PAS ce qui se mange couramment — dans le doute, on garde : la PEAU DU POULET (elle se mange : « cuisse de poulet » = chair + peau), la peau du saumon, la peau d'une pomme, d'une poire ou d'une pêche, le gras persillé d'une viande, la croûte d'un fromage, le pain d'un sandwich.
+Rendements usuels (part comestible du poids brut) : cuisse de poulet avec os ≈ 70 % (chair + peau), pilon ≈ 65 %, aile ≈ 55 %, poulet entier ≈ 60 %, côte de porc ou d'agneau avec os ≈ 75 %, côte de bœuf ≈ 70 %, poisson entier ≈ 50 %, darne ou pavé avec arête ≈ 85 %, moules avec coquilles ≈ 30 %, crevettes entières ≈ 55 %, œuf en coquille ≈ 88 %, noix en coque ≈ 45 %, avocat ≈ 70 %, mangue ≈ 65 %, orange ou pamplemousse ≈ 70 %, banane ≈ 65 %, melon ou pastèque ≈ 55 %, ananas ≈ 55 %.
+Part DISCUTABLE (typiquement la peau du poulet ou du poisson, mangée par les uns, laissée par les autres) : émets DEUX items séparés — la chair d'un côté, la peau de l'autre, chacun avec sa quantité — plutôt qu'un seul item global. L'utilisateur supprimera d'un geste celui qu'il n'a pas mangé, ce qu'un item unique ne permet pas.
+Quand le poids donné est DÉJÀ net (« 200 g de blanc de poulet », « 150 g de filet de cabillaud », une portion pesée dans l'assiette, un plat servi), ne déduis RIEN et garde "estimation": false : c'est la part mangée.
+Exemple : "j'ai mangé une cuisse de poulet de 250 grammes"
+Raisonnement : 250 g est le poids avec l'os → chair + peau ≈ 70 % ≈ 175 g, dont ≈ 25 g de peau ; la peau se mange mais reste discutable → deux items.
+Sortie : {"items":[{"aliment":"cuisse de poulet, chair sans peau","quantite":150,"unite":"g","estimation":true,"quantiteMin":130,"quantiteMax":170},{"aliment":"peau de poulet","quantite":25,"unite":"g","estimation":true,"quantiteMin":15,"quantiteMax":35}]}`;

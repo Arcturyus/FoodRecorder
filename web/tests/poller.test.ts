@@ -1,6 +1,7 @@
 import { describe, expect, it, vi, beforeEach } from 'vitest';
 import { useStore } from '../src/store/store';
 import { useSyncStore } from '../src/sync/syncStore';
+import { useQueueStatus, NO_PENDING } from '../src/sync/queueStatus';
 
 /**
  * Le poller parle à Supabase et au pont Claude Code : les deux sont simulés.
@@ -24,7 +25,14 @@ vi.mock('../src/sync/supabase', () => ({
   fetchPendingImages: async () => rows.images,
   fetchPendingSun: async () => rows.sun,
   fetchPendingWeight: async () => rows.weight,
+  countPending: async () => ({
+    transcript: rows.transcripts.length,
+    image: rows.images.length,
+    sun: rows.sun.length,
+    weight: rows.weight.length,
+  }),
   markProcessed: async (id: string) => void pushed.processed.push(id),
+  markImageProcessed: async (id: string) => void pushed.processed.push(id),
 }));
 
 vi.mock('../src/extraction/claudeCode', () => ({
@@ -74,6 +82,7 @@ beforeEach(() => {
   });
   // runSyncTick exige désormais une session de profil active (cf. sync_queue cloisonnée par profil).
   useSyncStore.setState({ profileId: 'p1', profileName: 'p1', sessionExpired: false });
+  useQueueStatus.setState({ pending: NO_PENDING, current: null, hasBridge: false, done: 0, failures: [] });
 });
 
 describe('runSyncTick — dictées soleil en attente', () => {
@@ -136,6 +145,55 @@ describe('runSyncTick — dictées de pesée en attente', () => {
     rows.weight = [{ id: 'w1', payload: { transcript: '68,5 kg' } }];
     await runSyncTick();
     expect(useStore.getState().weightEntries).toHaveLength(0);
+    expect(pushed.processed).toHaveLength(0);
+  });
+});
+
+describe('runSyncTick — état publié pour le bandeau', () => {
+  it('vide la file et laisse un bilan « tout traité »', async () => {
+    rows.transcripts = [{ id: 't1', payload: { transcript: 'une banane' } }];
+    rows.images = [{ id: 'i1', payload: { imageBase64: 'AAAA', mediaType: 'image/jpeg' } }];
+
+    await runSyncTick();
+
+    const q = useQueueStatus.getState();
+    expect(q.hasBridge).toBe(true);
+    expect(q.done).toBe(2);
+    expect(q.failures).toEqual([]);
+    // Plus rien en attente ni en cours : le bandeau passe à « Tout est traité ».
+    expect(q.pending).toEqual(NO_PENDING);
+    expect(q.current).toBeNull();
+  });
+
+  it('compte à part une ligne traitée sans résultat, avec son motif', async () => {
+    const claude = await import('../src/extraction/claudeCode');
+    vi.spyOn(claude, 'extractWithClaudeCode').mockResolvedValueOnce({ items: [], source: 'claudecode' });
+    rows.transcripts = [{ id: 't1', payload: { transcript: 'euh…' } }];
+
+    await runSyncTick();
+
+    const q = useQueueStatus.getState();
+    expect(q.done).toBe(0);
+    expect(q.failures).toEqual([{ kind: 'transcript', message: 'Aucun aliment reconnu dans la dictée.' }]);
+    // La ligne quitte quand même la file : sans ça le pont y reviendrait à chaque tick.
+    expect(pushed.processed).toContain('t1');
+  });
+
+  it('sans pont, se contente de compter ce qui attend (cas du téléphone)', async () => {
+    useStore.setState({ extractionMode: 'rules' });
+    rows.images = [
+      { id: 'i1', payload: { imageBase64: 'AAAA', mediaType: 'image/jpeg' } },
+      { id: 'i2', payload: { imageBase64: 'BBBB', mediaType: 'image/jpeg' } },
+    ];
+
+    await runSyncTick();
+
+    const q = useQueueStatus.getState();
+    expect(q.hasBridge).toBe(false);
+    expect(q.pending.image).toBe(2);
+    // Il n'analyse rien : ni entrée créée, ni ligne consommée.
+    expect(q.current).toBeNull();
+    expect(useStore.getState().entries).toHaveLength(0);
     expect(pushed.processed).toHaveLength(0);
   });
 });
