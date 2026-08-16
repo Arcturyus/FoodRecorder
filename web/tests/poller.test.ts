@@ -25,11 +25,21 @@ vi.mock('../src/sync/supabase', () => ({
   fetchPendingImages: async () => rows.images,
   fetchPendingSun: async () => rows.sun,
   fetchPendingWeight: async () => rows.weight,
-  countPending: async () => ({
-    transcript: rows.transcripts.length,
-    image: rows.images.length,
-    sun: rows.sun.length,
-    weight: rows.weight.length,
+  summarizePending: async () => ({
+    counts: {
+      transcript: rows.transcripts.length,
+      image: rows.images.length,
+      sun: rows.sun.length,
+      weight: rows.weight.length,
+    },
+    items: [],
+  }),
+  pendingItemOf: (row: { id: string; kind?: string; payload: { transcript?: string; date?: string } }) => ({
+    id: row.id,
+    kind: row.kind ?? 'transcript',
+    transcript: row.payload.transcript,
+    date: row.payload.date,
+    sentAt: 0,
   }),
   markProcessed: async (id: string) => void pushed.processed.push(id),
   markImageProcessed: async (id: string) => void pushed.processed.push(id),

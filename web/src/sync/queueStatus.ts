@@ -10,7 +10,7 @@
  */
 
 import { create } from 'zustand';
-import type { SyncKind } from './supabase';
+import type { PendingItem, SyncKind } from './supabase';
 
 /** Une ligne traitée sans résultat exploitable, avec le motif à afficher. */
 export interface QueueFailure {
@@ -36,6 +36,11 @@ export function pendingTotal(counts: PendingCounts): number {
 interface QueueStatusState {
   /** Lignes encore en attente, telles que connues au dernier tick. */
   pending: PendingCounts;
+  /**
+   * Les mêmes lignes, une par une (kind, heure d'envoi, texte dicté) : de quoi déplier
+   * le bandeau pour savoir CE QUI attend, et pas seulement combien.
+   */
+  pendingItems: PendingItem[];
   /** Analyse en cours sur ce poste, ou `null` (rien en cours, ou pas de pont ici). */
   current: QueueCurrent | null;
   /**
@@ -48,7 +53,8 @@ interface QueueStatusState {
   /** Lignes traitées sans résultat (erreur CLI, photo illisible, dictée vide). */
   failures: QueueFailure[];
 
-  setPending: (pending: PendingCounts) => void;
+  /** Compte et détail vont toujours ensemble : un seul setter, impossible de les désynchroniser. */
+  setPending: (pending: PendingCounts, items: PendingItem[]) => void;
   setCurrent: (current: QueueCurrent | null) => void;
   setBridge: (hasBridge: boolean) => void;
   recordDone: () => void;
@@ -59,12 +65,13 @@ interface QueueStatusState {
 
 export const useQueueStatus = create<QueueStatusState>()((set) => ({
   pending: NO_PENDING,
+  pendingItems: [],
   current: null,
   hasBridge: false,
   done: 0,
   failures: [],
 
-  setPending: (pending) => set({ pending }),
+  setPending: (pending, pendingItems) => set({ pending, pendingItems }),
   setCurrent: (current) => set({ current }),
   setBridge: (hasBridge) => set({ hasBridge }),
   recordDone: () => set((s) => ({ done: s.done + 1 })),

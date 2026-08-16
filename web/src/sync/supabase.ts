@@ -142,21 +142,82 @@ async function fetchPending<T>(kind: SyncKind): Promise<SyncRow<T>[]> {
   return (data ?? []) as SyncRow<T>[];
 }
 
+/** Une ligne en attente, réduite à ce que le bandeau peut montrer (jamais le base64 d'une photo). */
+export interface PendingItem {
+  id: string;
+  kind: SyncKind;
+  /** Texte dicté ; absent pour une photo, qui n'en porte pas. */
+  transcript?: string;
+  /** Jour visé par l'émetteur (AAAA-MM-JJ), quand il l'a estampillé. */
+  date?: string;
+  /** Heure d'envoi (epoch ms) : celle de l'émetteur, à défaut l'insertion en base. */
+  sentAt: number;
+}
+
+export interface PendingSummary {
+  counts: Record<SyncKind, number>;
+  /** Du plus ancien au plus récent (heure d'envoi). */
+  items: PendingItem[];
+}
+
+/** Une ligne telle que renvoyée par le `select` allégé de `summarizePending`. */
+interface PendingRow {
+  id: string;
+  kind: string;
+  created_at: string;
+  transcript: string | null;
+  date: string | null;
+  /** `->>` renvoie toujours du texte, même pour un nombre JSON. */
+  clientTime: string | null;
+}
+
 /**
- * Compte les lignes en attente par kind, SANS rapatrier les payloads : une photo pèse
- * plusieurs centaines de Ko, et les appareils sans pont (téléphone) n'ont besoin que du
- * nombre — ils ne traitent rien. Sert au bandeau « en attente de traitement par l'ordinateur ».
+ * Relève ce qui attend, SANS rapatrier les payloads entiers : une photo pèse plusieurs
+ * centaines de Ko, et les appareils sans pont (téléphone) ne traitent rien — ils n'ont
+ * besoin que du compte et du détail affichable. Le `select` ne descend donc dans le JSON
+ * que pour les champs légers (texte dicté, jour visé, heure d'envoi) : le base64 d'une
+ * image n'est jamais transféré. Sert au bandeau « en attente de traitement par
+ * l'ordinateur » et à son détail dépliable.
  */
-export async function countPending(): Promise<Record<SyncKind, number>> {
+export async function summarizePending(): Promise<PendingSummary> {
   const counts: Record<SyncKind, number> = { transcript: 0, image: 0, sun: 0, weight: 0 };
-  if (!supabase) return counts;
-  const { data, error } = await supabase.from('sync_queue').select('kind').eq('processed', false);
+  if (!supabase) return { counts, items: [] };
+  const { data, error } = await supabase
+    .from('sync_queue')
+    .select('id,kind,created_at,transcript:payload->>transcript,date:payload->>date,clientTime:payload->>clientTime')
+    .eq('processed', false)
+    .order('created_at', { ascending: true });
   if (error) throw new Error(error.message);
-  for (const row of (data ?? []) as { kind: string }[]) {
+
+  const items: PendingItem[] = [];
+  for (const row of (data ?? []) as unknown as PendingRow[]) {
     // D'anciennes lignes peuvent porter un kind disparu (cf. les kinds « résultat ») : on les ignore.
-    if (row.kind in counts) counts[row.kind as SyncKind] += 1;
+    if (!(row.kind in counts)) continue;
+    counts[row.kind as SyncKind] += 1;
+    items.push({
+      id: row.id,
+      kind: row.kind as SyncKind,
+      ...(row.transcript ? { transcript: row.transcript } : {}),
+      ...(row.date ? { date: row.date } : {}),
+      sentAt: Number(row.clientTime) || Date.parse(row.created_at),
+    });
   }
-  return counts;
+  return { counts, items };
+}
+
+/**
+ * Réduit une ligne DÉJÀ rapatriée en entier (branche du poste qui a le pont) à la même
+ * forme allégée, pour que le bandeau affiche le même détail des deux côtés sans refaire
+ * de requête.
+ */
+export function pendingItemOf(row: SyncRow<StampedPayload & { transcript?: string }>): PendingItem {
+  return {
+    id: row.id,
+    kind: row.kind,
+    ...(row.payload.transcript ? { transcript: row.payload.transcript } : {}),
+    ...(row.payload.date ? { date: row.payload.date } : {}),
+    sentAt: row.payload.clientTime ?? Date.parse(row.created_at),
+  };
 }
 
 /** Récupère les transcriptions en attente (tous appareils confondus). */

@@ -9,10 +9,12 @@ import {
   fetchPendingImages,
   fetchPendingSun,
   fetchPendingWeight,
-  countPending,
+  summarizePending,
+  pendingItemOf,
   markProcessed,
   markImageProcessed,
   isSyncConfigured,
+  type PendingItem,
   type SyncKind,
 } from './supabase';
 import { useSyncStore } from './syncStore';
@@ -68,9 +70,10 @@ export async function runSyncTick(): Promise<void> {
 
     if (!bridge.available) {
       // Ce poste ne traite rien (téléphone, ou extraction non confiée au pont) : il relève
-      // seulement ce qui attend, par un COUNT — inutile de rapatrier des photos en base64
-      // pour afficher « 2 en attente ».
-      queue.setPending(await countPending());
+      // seulement ce qui attend, en colonnes légères — inutile de rapatrier des photos en
+      // base64 pour afficher « 2 en attente » et le détail de chaque ligne.
+      const summary = await summarizePending();
+      queue.setPending(summary.counts, summary.items);
       return;
     }
 
@@ -90,7 +93,12 @@ export async function runSyncTick(): Promise<void> {
       weight: pendingWeight.length,
     };
     const total = pendingTotal(counts);
-    queue.setPending(counts);
+    // Détail affichable, tiré des lignes déjà en main (aucune requête de plus) et remis
+    // dans l'ordre d'envoi, celui que l'utilisateur reconnaît — pas l'ordre de traitement.
+    let items: PendingItem[] = [...pendingTranscripts, ...pendingImages, ...pendingSun, ...pendingWeight]
+      .map(pendingItemOf)
+      .sort((a, b) => a.sentAt - b.sentAt);
+    queue.setPending(counts, items);
     if (total === 0) return;
 
     let index = 0;
@@ -104,9 +112,10 @@ export async function runSyncTick(): Promise<void> {
      * comptée à part et affichée avec son motif, au lieu d'être avalée en silence comme
      * avant (cf. la photo du 11/08 : traitée, 0 item, aucune trace).
      */
-    const finish = (kind: SyncKind, failure?: string) => {
+    const finish = (id: string, kind: SyncKind, failure?: string) => {
       counts[kind] -= 1;
-      queue.setPending({ ...counts });
+      items = items.filter((i) => i.id !== id);
+      queue.setPending({ ...counts }, items);
       if (failure) queue.recordFailure({ kind, message: failure });
       else queue.recordDone();
     };
@@ -131,7 +140,7 @@ export async function runSyncTick(): Promise<void> {
         failure = (e as Error).message;
       }
       await markProcessed(row.id);
-      finish('transcript', failure);
+      finish(row.id, 'transcript', failure);
     }
 
     // Photos en attente (analysées par le CLI multimodal). Succès → le base64 est purgé de
@@ -162,7 +171,7 @@ export async function runSyncTick(): Promise<void> {
         console.error('[sync] échec extraction photo', row.id, e);
         await markImageProcessed(row.id, { ...row.payload, error: failure });
       }
-      finish('image', failure);
+      finish(row.id, 'image', failure);
     }
 
     // Dictées « soleil » en attente : même chemin qu'un repas — le poste qui a
@@ -187,7 +196,7 @@ export async function runSyncTick(): Promise<void> {
         failure = (e as Error).message;
       }
       await markProcessed(row.id);
-      finish('sun', failure);
+      finish(row.id, 'sun', failure);
     }
 
     // Dictées de pesée en attente : même chemin que le soleil. Ce poste n'a
@@ -214,7 +223,7 @@ export async function runSyncTick(): Promise<void> {
         failure = (e as Error).message;
       }
       await markProcessed(row.id);
-      finish('weight', failure);
+      finish(row.id, 'weight', failure);
     }
 
     // Le rejeu des résultats traités par d'AUTRES appareils est pris en charge par

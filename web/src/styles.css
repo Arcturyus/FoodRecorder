@@ -1301,6 +1301,25 @@ button.nutrient-toggle:hover { background: none; color: var(--accent); }
   background: linear-gradient(90deg, rgba(255, 159, 67, 0.12), transparent 60%), var(--panel);
 }
 .queue-status.busy .queue-status-main { color: var(--text); }
+.queue-status-main { display: flex; align-items: baseline; gap: 6px; }
+.queue-status-text { flex: 1; }
+/* Le bandeau se déplie au clic quand des lignes attendent (le survol ne dit rien au doigt,
+   et c'est sur le téléphone que l'attente dure). Le bouton reprend l'allure du texte. */
+button.queue-status-main {
+  width: 100%; padding: 0; text-align: left;
+  background: none; border: none; font: inherit; color: inherit; cursor: pointer;
+}
+button.queue-status-main:hover, button.queue-status-main:hover .queue-status-chevron { color: var(--accent); }
+.queue-status-chevron { font-size: 10px; color: var(--muted); }
+.queue-status-detail {
+  margin: 6px 0 0; padding: 4px 10px; list-style: none;
+  background: var(--panel-2); border: 1px solid var(--border); border-radius: 10px;
+  font-size: 12px;
+}
+.queue-status-detail li { padding: 5px 0; }
+.queue-status-detail li + li { border-top: 1px solid var(--border); }
+.queue-status-detail-head { display: block; color: var(--muted); }
+.queue-status-detail-text { display: block; margin-top: 2px; color: var(--text); }
 .queue-status-icon { margin-right: 2px; }
 .queue-status-tally { font-size: 12px; }
 .queue-status-failed { color: var(--danger); }
