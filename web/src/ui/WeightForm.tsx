@@ -218,7 +218,8 @@ export function WeightForm({ prefill }: { prefill?: { patch: WeightPatch; nonce:
             />
           </label>
           <span className="small" style={{ flex: '1 1 100%' }}>
-            Le sexe ({sexe}) provient du profil (Réglages). Ces constantes servent aux formules IMC / métabolisme.
+            Le sexe ({sexe}) provient du profil (en haut de cet onglet). Ces constantes servent aux formules IMC /
+            métabolisme.
           </span>
         </div>
       )}

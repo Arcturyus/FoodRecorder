@@ -38,16 +38,16 @@ interface TabMeta {
 /** Onglets principaux : accessibles directement dans la barre du bas (mobile). */
 const PRIMARY_TABS: TabMeta[] = [
   { id: 'jour', label: "Aujourd'hui", short: 'Jour', icon: '🍽' },
+  { id: 'poids', label: 'Profil', short: 'Profil', icon: '⚖️' },
   { id: 'historique', label: 'Historique', short: 'Historique', icon: '📅' },
   { id: 'stats', label: 'Stats', short: 'Stats', icon: '📊' },
 ];
 
-/** Onglets secondaires : regroupés derrière « Plus » sur mobile. Réglages et Poids au fond. */
+/** Onglets secondaires : regroupés derrière « Plus » sur mobile. Réglages au fond. */
 const SECONDARY_TABS: TabMeta[] = [
   { id: 'aliments', label: 'Banque d\'aliments', short: 'Banque', icon: '🥗' },
   { id: 'nutriments', label: 'Nutriments', short: 'Nutriments', icon: '🧬' },
   { id: 'reglages', label: 'Réglages', short: 'Réglages', icon: '⚙️' },
-  { id: 'poids', label: 'Poids', short: 'Poids', icon: '⚖️' },
 ];
 
 const ALL_TABS: TabMeta[] = [...PRIMARY_TABS, ...SECONDARY_TABS];

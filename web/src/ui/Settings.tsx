@@ -2,42 +2,16 @@ import { useRef, useState } from 'react';
 import { useStore } from '../store/store';
 import type { ExtractionMode, SttEngine } from '../store/store';
 import { exportJsonFile, exportJournalCsvFile, exportWeightsCsvFile, importBackup } from '../store/backup';
-import { isSyncConfigured } from '../sync/supabase';
-import { useSyncStore } from '../sync/syncStore';
-import {
-  createAndPushProfile,
-  getJoinPreview,
-  joinProfile,
-  renameCurrentProfile,
-  leaveProfile,
-  reauthenticate,
-  cancelJoin,
-  runProfileSyncTick,
-  type JoinPreview,
-  type JoinStrategy,
-} from '../sync/profileSync';
 import { LLM_MODELS, loadLlm, isLlmLoaded, loadedModel } from '../extraction/llm';
 import { CLOUD_MODELS } from '../extraction/anthropic';
 import { checkClaudeCode } from '../extraction/claudeCode';
 import { STT_MODELS } from '../stt/whisper';
 import { isNativeSttSupported } from '../stt/webspeech';
-import {
-  ACTIVITY_LABELS,
-  OBJECTIVE_LABELS,
-  computeTargets,
-  objectivePct,
-  objectiveAdvice,
-  DEFICIT_BOUNDS,
-  SURPLUS_BOUNDS,
-  DEFICIT_DEFAULT,
-  SURPLUS_DEFAULT,
-} from '../nutrition/targets';
-import type { Activity, Objective, Sex, Profile } from '../nutrition/targets';
-import { fmt } from './format';
 
 /**
- * Réglages : choix du moteur d'extraction (règles / IA locale / API Claude),
- * clé API, et modèles STT/LLM selon la machine.
+ * Réglages : sauvegarde des données, choix du moteur d'extraction (règles / IA
+ * locale / API Claude), clé API, et modèles STT/LLM selon la machine. Le profil
+ * et la connexion au compte vivent dans l'onglet « Profil ».
  */
 export function Settings() {
   const sttEngine = useStore((s) => s.sttEngine);
@@ -52,12 +26,6 @@ export function Settings() {
   const setExtractionMode = useStore((s) => s.setExtractionMode);
   const setCloudApiKey = useStore((s) => s.setCloudApiKey);
   const setCloudModel = useStore((s) => s.setCloudModel);
-  const profile = useStore((s) => s.profile);
-  const setProfile = useStore((s) => s.setProfile);
-
-  const targets = computeTargets(profile);
-  const kcalT = targets.find((t) => t.key === 'kcal')!;
-  const protT = targets.find((t) => t.key === 'proteines')!;
 
   const [llmStatus, setLlmStatus] = useState('');
   const [loading, setLoading] = useState(false);
@@ -107,69 +75,25 @@ export function Settings() {
   const modes: { id: ExtractionMode; label: string; desc: string; desktopOnly?: boolean }[] = [
     { id: 'rules', label: 'Règles (par défaut)', desc: 'rapide, hors-ligne, 100 % local' },
     { id: 'local', label: 'IA locale (open source)', desc: 'WebLLM dans le navigateur, WebGPU', desktopOnly: true },
-    { id: 'cloud', label: 'API Claude (clé)', desc: 'plus précis, envoie le texte à Anthropic' },
-    { id: 'claudecode', label: 'Pont Claude Code', desc: 'via le CLI « claude » déjà connecté, sans clé API', desktopOnly: true },
+    { id: 'cloud', label: 'API Claude (clé) — recommandé', desc: 'plus précis, envoie le texte à Anthropic' },
+    {
+      id: 'claudecode',
+      label: 'Pont Claude Code — recommandé',
+      desc: 'via le CLI « claude » déjà connecté, sans clé API',
+      desktopOnly: true,
+    },
   ];
 
   return (
     <>
-      <div className="panel">
-        <h2>Profil &amp; objectifs</h2>
-        <p className="small" style={{ marginTop: -6 }}>
-          Sert à calculer vos cibles quotidiennes (AJR et « optimales »). Par défaut : homme sportif de 70 kg.
-        </p>
-        <div className="row wrap-form">
-          <label className="field">
-            Sexe
-            <select value={profile.sexe} onChange={(e) => setProfile({ sexe: e.target.value as Sex })}>
-              <option value="homme">Homme</option>
-              <option value="femme">Femme</option>
-            </select>
-          </label>
-          <label className="field">
-            Poids (kg)
-            <input
-              value={profile.poids}
-              onChange={(e) => setProfile({ poids: Math.max(1, parseFloat(e.target.value.replace(',', '.')) || 0) })}
-              inputMode="decimal"
-            />
-          </label>
-          <label className="field" style={{ flex: '1 1 200px' }}>
-            Niveau d'activité
-            <select value={profile.activite} onChange={(e) => setProfile({ activite: e.target.value as Activity })}>
-              {(Object.keys(ACTIVITY_LABELS) as Activity[]).map((a) => (
-                <option key={a} value={a}>
-                  {ACTIVITY_LABELS[a]}
-                </option>
-              ))}
-            </select>
-          </label>
-          <label className="field">
-            Objectif
-            <select
-              value={profile.objectif ?? 'maintien'}
-              onChange={(e) => setProfile({ objectif: e.target.value as Objective })}
-            >
-              {(Object.keys(OBJECTIVE_LABELS) as Objective[]).map((o) => (
-                <option key={o} value={o}>
-                  {OBJECTIVE_LABELS[o]}
-                </option>
-              ))}
-            </select>
-          </label>
-        </div>
-
-        <ObjectiveIntensity profile={profile} setProfile={setProfile} />
-
-        <div className="hint">
-          Cibles optimales calculées : <strong>{fmt(kcalT.optimal)} kcal</strong> ·{' '}
-          <strong>{fmt(protT.optimal)} g de protéines</strong> par jour (soit{' '}
-          {fmt(protT.optimal / profile.poids, 1)} g/kg). Visibles en détail sur l'onglet « Aujourd'hui ».
-        </div>
-      </div>
+      <BackupPanel />
 
       <div className="panel">
         <h2>Moteur d'extraction</h2>
+        <p className="small" style={{ marginTop: -6 }}>
+          Ce qui transforme « une pomme et 150 g de riz » en aliments et quantités. Les deux modes Claude (API ou
+          pont) sont nettement plus fiables sur les phrases réelles ; les règles restent le repli hors-ligne.
+        </p>
         <div className="row" style={{ flexDirection: 'column', alignItems: 'stretch', gap: 8 }}>
           {modes.map((m) => (
             <label
@@ -349,318 +273,7 @@ export function Settings() {
         )}
       </div>
 
-      <ProfileSyncPanel />
-
-      <BackupPanel />
     </>
-  );
-}
-
-/** Formatage relatif court d'une date de dernière sync (« il y a 3 min »). */
-function relativeTime(ts: number): string {
-  const s = Math.round((Date.now() - ts) / 1000);
-  if (s < 60) return "à l'instant";
-  const m = Math.round(s / 60);
-  if (m < 60) return `il y a ${m} min`;
-  const h = Math.round(m / 60);
-  if (h < 24) return `il y a ${h} h`;
-  return `il y a ${Math.round(h / 24)} j`;
-}
-
-/** Les 3 stratégies de jonction, expliquées, dans l'ordre recommandé. */
-const JOIN_STRATEGIES: { id: JoinStrategy; label: string; desc: string }[] = [
-  {
-    id: 'pull',
-    label: '⬇ Télécharger le profil (recommandé)',
-    desc: 'Remplace les données de CE navigateur par celles du profil. À choisir si ce navigateur a des données incomplètes ou de test.',
-  },
-  {
-    id: 'push',
-    label: '⬆ Envoyer mes données locales',
-    desc: 'Écrase le profil cloud avec les données de ce navigateur. À choisir si ce navigateur est la vraie référence.',
-  },
-  {
-    id: 'merge',
-    label: '⇄ Fusionner',
-    desc: 'Garde les deux côtés (en cas de conflit sur une même donnée, le cloud gagne). À éviter si ce navigateur a des données douteuses.',
-  },
-];
-
-/**
- * Sauvegarde/synchronisation par PROFIL : on se connecte par un nom + mot de passe
- * (renommable, id stable côté Supabase) et on retrouve ses données sur n'importe
- * quel navigateur. Le mot de passe est vérifié côté serveur (Edge Function) et donne
- * un jeton de session — sans lui, les données du profil restent inaccessibles.
- * Masqué si Supabase n'est pas configuré.
- */
-function ProfileSyncPanel() {
-  const profileId = useSyncStore((s) => s.profileId);
-  const profileName = useSyncStore((s) => s.profileName);
-  const sessionExpired = useSyncStore((s) => s.sessionExpired);
-  const pendingCount = useSyncStore((s) => Object.keys(s.pending).length);
-  const lastSyncAt = useSyncStore((s) => s.lastSyncAt);
-  const lastError = useSyncStore((s) => s.lastError);
-
-  const [name, setName] = useState('');
-  const [password, setPassword] = useState('');
-  const [busy, setBusy] = useState(false);
-  const [status, setStatus] = useState('');
-  const [preview, setPreview] = useState<JoinPreview | null>(null);
-
-  if (!isSyncConfigured()) return null;
-
-  async function run(action: () => Promise<void>, okMessage: string) {
-    setBusy(true);
-    setStatus('');
-    try {
-      await action();
-      setStatus(okMessage);
-    } catch (e) {
-      setStatus(`⚠️ ${(e as Error).message}`);
-    } finally {
-      setBusy(false);
-    }
-  }
-
-  async function handleCreate() {
-    const n = name.trim();
-    if (!n || !password) return;
-    await run(() => createAndPushProfile(n, password), `Profil « ${n} » créé et données envoyées.`);
-    setName('');
-    setPassword('');
-  }
-
-  async function handleLookup() {
-    const n = name.trim();
-    if (!n || !password) return;
-    setBusy(true);
-    setStatus('');
-    try {
-      setPreview(await getJoinPreview(n, password));
-    } catch (e) {
-      setStatus(`⚠️ ${(e as Error).message}`);
-    } finally {
-      setBusy(false);
-    }
-  }
-
-  async function handleJoin(strategy: JoinStrategy) {
-    if (!preview) return;
-    const target = preview;
-    setPreview(null);
-    await run(
-      () => joinProfile(target, strategy),
-      `Connecté au profil « ${target.profile.name} ». Une sauvegarde JSON de sécurité a été téléchargée.`,
-    );
-    setName('');
-    setPassword('');
-  }
-
-  /**
-   * Renonce à la jonction en cours. `getJoinPreview` s'est déjà connecté pour pouvoir compter les
-   * repas du profil : sans cette fermeture, le client Supabase resterait connecté à un profil que
-   * le store, lui, n'a pas rejoint.
-   */
-  function handleCancelJoin() {
-    setPreview(null);
-    cancelJoin();
-  }
-
-  async function handleRename() {
-    const next = window.prompt('Nouveau nom du profil :', profileName ?? '');
-    if (!next || !next.trim()) return;
-    await run(() => renameCurrentProfile(next), `Profil renommé en « ${next.trim() }».`);
-  }
-
-  async function handleLeave() {
-    if (!window.confirm('Se déconnecter du profil ? Les données de ce navigateur restent en place, mais ne seront plus synchronisées.')) return;
-    await run(() => leaveProfile(), 'Déconnecté du profil.');
-  }
-
-  async function handleReauthenticate() {
-    if (!password) return;
-    await run(() => reauthenticate(password), `Reconnecté au profil « ${profileName} ».`);
-    setPassword('');
-  }
-
-  if (sessionExpired) {
-    return (
-      <div className="panel">
-        <h2>Profil &amp; synchronisation cloud</h2>
-        <p className="small" style={{ marginTop: -6, color: 'var(--warn)' }}>
-          Session expirée pour le profil <strong>{profileName}</strong>. Ressaisissez le mot de passe pour reprendre
-          la synchronisation (les données déjà sur ce navigateur restent intactes).
-        </p>
-        <div className="row" style={{ gap: 8, flexWrap: 'wrap' }}>
-          <input
-            type="password"
-            value={password}
-            onChange={(e) => setPassword(e.target.value)}
-            placeholder="Mot de passe"
-            style={{ flex: '1 1 200px' }}
-            disabled={busy}
-            autoFocus
-          />
-          <button className="primary" disabled={busy || !password} onClick={handleReauthenticate}>
-            Se reconnecter
-          </button>
-          <button className="ghost" disabled={busy} onClick={handleLeave}>Oublier ce profil</button>
-        </div>
-        {status && <div className="status">{status}</div>}
-      </div>
-    );
-  }
-
-  return (
-    <div className="panel">
-      <h2>Profil &amp; synchronisation cloud</h2>
-
-      {profileId ? (
-        <>
-          <p className="small" style={{ marginTop: -6 }}>
-            Connecté au profil <strong>{profileName}</strong>. Vos données sont sauvegardées et synchronisées entre vos
-            navigateurs.
-          </p>
-          <div className="hint">
-            {lastSyncAt ? `Dernière synchro ${relativeTime(lastSyncAt)}` : 'Pas encore synchronisé'}
-            {pendingCount > 0 ? ` · ${pendingCount} modification(s) en attente d'envoi` : ' · à jour'}
-            {lastError && <span style={{ color: 'var(--warn)' }}> · ⚠️ {lastError}</span>}
-          </div>
-          <div className="row" style={{ gap: 8, flexWrap: 'wrap', marginTop: 8 }}>
-            <button className="primary" disabled={busy} onClick={() => run(() => runProfileSyncTick(), 'Synchronisation effectuée.')}>
-              🔄 Synchroniser maintenant
-            </button>
-            <button disabled={busy} onClick={handleRename}>✎ Renommer</button>
-            <button className="ghost" disabled={busy} onClick={handleLeave}>Se déconnecter</button>
-          </div>
-        </>
-      ) : (
-        <>
-          <p className="small" style={{ marginTop: -6 }}>
-            Entrez un nom et un mot de passe (6 caractères minimum) pour retrouver vos données depuis
-            n'importe quel navigateur. <strong>Rejoindre</strong> si le profil a déjà un mot de passe,
-            <strong> Créer</strong> sinon — y compris pour un profil existant qui n'en a pas encore, que
-            « Créer » adopte avec le mot de passe saisi. Il protège seul l'accès à vos données :
-            <strong> retenez-le, il n'y a aucune récupération possible</strong>.
-          </p>
-          <div className="row" style={{ gap: 8, flexWrap: 'wrap' }}>
-            <input
-              value={name}
-              onChange={(e) => setName(e.target.value)}
-              placeholder="Nom du profil"
-              style={{ flex: '1 1 160px' }}
-              disabled={busy}
-            />
-            <input
-              type="password"
-              value={password}
-              onChange={(e) => setPassword(e.target.value)}
-              placeholder="Mot de passe"
-              style={{ flex: '1 1 160px' }}
-              disabled={busy}
-            />
-            <button className="primary" disabled={busy || !name.trim() || !password} onClick={handleCreate}>
-              Créer ce profil
-            </button>
-            <button disabled={busy || !name.trim() || !password} onClick={handleLookup}>
-              Rejoindre…
-            </button>
-          </div>
-
-          {preview && (
-            <div style={{ marginTop: 12, padding: 12, border: '1px solid var(--accent)', borderRadius: 10 }}>
-              <div className="small" style={{ marginBottom: 8 }}>
-                Profil « <strong>{preview.profile.name}</strong> » trouvé — ce navigateur : <strong>{preview.localEntries}</strong>{' '}
-                repas · profil cloud : <strong>{preview.cloudEntries}</strong> repas. Comment le rejoindre ?
-                <br />
-                <span style={{ color: 'var(--warn)' }}>
-                  Une sauvegarde JSON de ce navigateur sera téléchargée automatiquement avant toute action.
-                </span>
-              </div>
-              <div className="row" style={{ flexDirection: 'column', alignItems: 'stretch', gap: 8 }}>
-                {JOIN_STRATEGIES.map((st) => (
-                  <button
-                    key={st.id}
-                    disabled={busy}
-                    onClick={() => handleJoin(st.id)}
-                    style={{ textAlign: 'left', padding: '10px 12px', height: 'auto' }}
-                  >
-                    <strong>{st.label}</strong>
-                    <span className="small"> — {st.desc}</span>
-                  </button>
-                ))}
-                <button className="ghost small" disabled={busy} onClick={handleCancelJoin}>
-                  Annuler
-                </button>
-              </div>
-            </div>
-          )}
-        </>
-      )}
-
-      {status && <div className="status">{status}</div>}
-    </div>
-  );
-}
-
-/**
- * Réglage de l'intensité du déficit (perte) ou du surplus (muscle), avec garde-fous.
- * Masqué en objectif « maintien ». Chacun peut s'ajuster s'il se connaît, sans
- * pouvoir sortir d'une fourchette raisonnable (bornes) et prévenu si l'intensité
- * devient agressive.
- */
-function ObjectiveIntensity({
-  profile,
-  setProfile,
-}: {
-  profile: Profile;
-  setProfile: (patch: Partial<Profile>) => void;
-}) {
-  const obj = profile.objectif ?? 'maintien';
-  if (obj === 'maintien') return null;
-
-  const isDeficit = obj === 'perte';
-  const bounds = isDeficit ? DEFICIT_BOUNDS : SURPLUS_BOUNDS;
-  const dflt = isDeficit ? DEFICIT_DEFAULT : SURPLUS_DEFAULT;
-  const sign = isDeficit ? '−' : '+';
-  const pct = objectivePct(profile);
-  const advice = objectiveAdvice(profile);
-  const setPct = (v: number) => setProfile(isDeficit ? { deficitPct: v } : { surplusPct: v });
-
-  return (
-    <div style={{ marginTop: 12 }}>
-      <div className="row" style={{ justifyContent: 'space-between', alignItems: 'baseline', flexWrap: 'wrap', gap: 8 }}>
-        <span className="small" style={{ color: 'var(--text)' }}>
-          {isDeficit ? 'Intensité du déficit' : 'Intensité du surplus'} :{' '}
-          <strong className="mono">{sign}{pct} %</strong> du maintien
-        </span>
-        {pct !== dflt && (
-          <button className="ghost small" onClick={() => setPct(dflt)}>
-            Revenir au conseillé ({sign}{dflt} %)
-          </button>
-        )}
-      </div>
-      <input
-        type="range"
-        min={bounds.min}
-        max={bounds.max}
-        step={1}
-        value={pct}
-        onChange={(e) => setPct(parseInt(e.target.value, 10))}
-        style={{ width: '100%', marginTop: 6 }}
-        aria-label={isDeficit ? 'Intensité du déficit calorique' : 'Intensité du surplus calorique'}
-      />
-      <div className="row small" style={{ justifyContent: 'space-between' }}>
-        <span>doux · {bounds.min} %</span>
-        <span>marqué · {bounds.max} %</span>
-      </div>
-      {advice && (
-        <div className="hint" style={advice.warn ? { color: 'var(--warn)' } : undefined}>
-          {advice.warn ? '⚠️ ' : '💡 '}
-          {advice.text}
-        </div>
-      )}
-    </div>
   );
 }
 

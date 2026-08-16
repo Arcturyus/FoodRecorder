@@ -6,7 +6,8 @@
   - Demander `navigator.storage.persist()` au démarrage de l'app pour réduire le risque d'éviction du localStorage.
 
 
-- [ ] Rendre visible le traitement de la file : un texte dans l'onglet Jour disant ce que la CLI est en train de mâcher (nombre de photos/dictées en cours, nombre déjà traitées), qui repart de zéro quand on quitte « Aujourd'hui » et qu'on y revient.
+- [x] Rendre visible le traitement de la file : un texte dans l'onglet Jour disant ce que la CLI est en train de mâcher (nombre de photos/dictées en cours, nombre déjà traitées), qui repart de zéro quand on quitte « Aujourd'hui » et qu'on y revient.
+  → `sync/queueStatus.ts` (état publié par le poller) + `ui/QueueStatus.tsx` (bandeau en tête de `DayView`).
 
   **Décidé :**
   - Visible **sur l'ordi ET sur le téléphone**. L'ordi (qui a le pont) affiche « en cours : photo 2/3 » ; le téléphone, qui ne peut pas savoir si l'ordi mouline ou est éteint, affiche seulement « 2 photos en attente de traitement par l'ordinateur ».
