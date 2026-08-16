@@ -12,7 +12,7 @@ import {
 import type { FoodFrequency, NutrientContribution } from '../nutrition/frequency';
 import { NUTRIENT_GROUPS } from '../nutrition/groups';
 import { EXTRA_NUTRIENT_META } from '../nutrition/rda';
-import { computeTargets } from '../nutrition/targets';
+import { useTargets } from './useTargets';
 import type { Target } from '../nutrition/targets';
 import type { Food, FoodCategory, NutrientKey } from '../nutrition/types';
 import { sunVitDForDate } from '../sun/vitaminD';
@@ -453,14 +453,13 @@ function NutrientContributorsPanel({
   days: number;
   gran: Granularity;
 }) {
-  const profile = useStore((s) => s.profile);
   const sunExposures = useStore((s) => s.sunExposures);
   const [nutrient, setNutrient] = useState<NutrientKey>('fer');
   const [openKey, setOpenKey] = useState<string | null>(null);
   const [showAll, setShowAll] = useState(false);
   const [tip, setTip] = useState<{ c: NutrientContribution; x: number; y: number } | null>(null);
 
-  const targets = useMemo(() => computeTargets(profile), [profile]);
+  const targets = useTargets();
   const targetByKey = useMemo(() => new Map(targets.map((t) => [t.key, t])), [targets]);
   const target = targetByKey.get(nutrient) ?? null;
   const unit = nutrientUnit(nutrient, targetByKey);

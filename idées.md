@@ -6,6 +6,10 @@
   - Demander `navigator.storage.persist()` au démarrage de l'app pour réduire le risque d'éviction du localStorage.
 
 
+- [ ] Estimation des metabolisme par rapport à la quantité de kcal mangés et la perte de poids ou gain  associés sur une période donnée reglable,
+et possibliité d'automatiquement faire les changements pour mettre les nouveaux objectifs
+
+
 - [x] Rendre visible le traitement de la file : un texte dans l'onglet Jour disant ce que la CLI est en train de mâcher (nombre de photos/dictées en cours, nombre déjà traitées), qui repart de zéro quand on quitte « Aujourd'hui » et qu'on y revient.
   → `sync/queueStatus.ts` (état publié par le poller) + `ui/QueueStatus.tsx` (bandeau en tête de `DayView`).
 

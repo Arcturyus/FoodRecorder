@@ -2,7 +2,7 @@ import { useMemo } from 'react';
 import type { NutrientKey, Nutrients } from '../nutrition/types';
 import { EMPTY_NUTRIENTS } from '../nutrition/types';
 import type { JournalItem } from '../store/store';
-import { computeTargets } from '../nutrition/targets';
+import { useTargets } from './useTargets';
 import type { Target } from '../nutrition/targets';
 import { computeRatios } from '../nutrition/ratios';
 import type { RatioResult } from '../nutrition/ratios';
@@ -353,8 +353,7 @@ export function Totals({
   /** Jour affiché (défaut : aujourd'hui) — ancre la moyenne 7 j du seuil de carence. */
   date?: string;
 }) {
-  const profile = useStore((s) => s.profile);
-  const targets = useMemo(() => computeTargets(profile), [profile]);
+  const targets = useTargets();
   const recentAvg = useTrailingAverage(date ?? todayStr(), LOW_THRESHOLD_WINDOW);
 
   const kcalT = targets.find((t) => t.key === 'kcal')!;

@@ -5,7 +5,7 @@ import { matchFood } from '../nutrition/match';
 import { normalizeForMatch } from '../nutrition/normalize';
 import { UNITS } from '../nutrition/types';
 import type { Food, NutrientKey } from '../nutrition/types';
-import { computeTargets } from '../nutrition/targets';
+import { useTargets } from './useTargets';
 import { fmt, UNIT_LABELS } from './format';
 import { DETAIL_GROUPS, SHORT_LABELS, draftToContribution, nutrientsToDraft } from './itemDetail';
 import { DayPickerButton, relativeDayLabel } from './DayPicker';
@@ -339,9 +339,8 @@ const SPLIT_CHECKS: { parent: NutrientKey; parts: NutrientKey[]; label: string }
  * estimations IA ou une portion atypique, y compris dans l'historique.
  */
 function ItemDetail({ entryId, item }: { entryId: string; item: JournalItem }) {
-  const profile = useStore((s) => s.profile);
   const setItemNutrients = useStore((s) => s.setItemNutrients);
-  const targets = useMemo(() => computeTargets(profile), [profile]);
+  const targets = useTargets();
   const byKey = useMemo(() => new Map(targets.map((t) => [t.key, t])), [targets]);
 
   const [editing, setEditing] = useState(false);

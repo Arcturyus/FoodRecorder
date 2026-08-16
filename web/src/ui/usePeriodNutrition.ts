@@ -1,6 +1,6 @@
 import { useMemo, useState } from 'react';
 import { useStore, todayStr, useEffectiveFoods, isDayCounted } from '../store/store';
-import { computeTargets } from '../nutrition/targets';
+import { useTargets } from './useTargets';
 import type { Target } from '../nutrition/targets';
 import type { NutrientKey, Nutrients } from '../nutrition/types';
 import { EMPTY_NUTRIENTS } from '../nutrition/types';
@@ -63,8 +63,7 @@ export function usePeriodNutrition(): PeriodNutrition {
   const entries = useStore((s) => s.entries);
   const sunExposures = useStore((s) => s.sunExposures);
   const mutedDays = useStore((s) => s.mutedDays);
-  const profile = useStore((s) => s.profile);
-  const targets = useMemo(() => computeTargets(profile), [profile]);
+  const targets = useTargets();
   const targetByKey = useMemo(() => new Map(targets.map((t) => [t.key, t])), [targets]);
 
   const [period, setPeriod] = useState<PeriodState>(defaultPeriodState);

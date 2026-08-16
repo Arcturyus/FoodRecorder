@@ -86,6 +86,12 @@ interface Series {
   hoverable?: boolean;
   /** Unité affichée dans le tooltip (défaut : unité du graphe). */
   unit?: string;
+  /**
+   * Valeurs brutes derrière une courbe lissée : dessinées en trait fin/estompé
+   * sous la courbe épaisse (même principe que la tendance de Stats — la moyenne
+   * mobile ne remplace plus les vraies valeurs, elle les accompagne).
+   */
+  rawPoints?: SeriesPoint[];
 }
 
 /**
@@ -388,10 +394,12 @@ export function WeightChart({ onEditEntry }: { onEditEntry?: (id: string) => voi
   /**
    * Assemble les séries à tracer selon le mode et les options.
    *
-   * Moyenne mobile active ⇒ on n'affiche QUE les courbes lissées (mesures,
-   * squelettique, kcal). Superposer brut + lissé pour trois séries rendait le
-   * graphe illisible. Contrepartie assumée : les points de pesée (et donc le
-   * clic pour éditer) ne reviennent qu'en décochant la moyenne mobile.
+   * Moyenne mobile active ⇒ la courbe lissée (épaisse) s'affiche PAR-DESSUS la
+   * courbe brute (fine, estompée) au lieu de la remplacer — même principe que
+   * la tendance de Stats : on lit le mouvement de fond sans perdre les vraies
+   * valeurs. Le clic pour éditer une pesée reste toutefois réservé à la courbe
+   * brute non lissée (décocher la moyenne mobile) pour ne pas cliquer un point
+   * qui n'a jamais existé tel quel.
    */
   const series: Series[] = useMemo(() => {
     if (mode === 'metabolismes') return metaboSeries;
@@ -405,7 +413,7 @@ export function WeightChart({ onEditEntry }: { onEditEntry?: (id: string) => voi
     const suffix = ` · moy. ${maWindow} j`;
 
     const out: Series[] = smoothed
-      ? [{ label: label + suffix, color: C.accent2, points: ma(points), hoverable: true }]
+      ? [{ label: label + suffix, color: C.accent, points: ma(points), hoverable: true, rawPoints: points }]
       : [{ label, color: C.accent, points, drawPoints: true }];
 
     // En kg, la part squelettique (× 0,9, cf. compute.ts) accompagne la courbe.
@@ -417,11 +425,13 @@ export function WeightChart({ onEditEntry }: { onEditEntry?: (id: string) => voi
         }),
         gran,
       );
+      const skelSmoothed = smoothed && skel.length >= 2;
       out.push({
-        label: `dont squelettique (× 0,9)${smoothed ? suffix : ''}`,
+        label: `dont squelettique (× 0,9)${skelSmoothed ? suffix : ''}`,
         color: C.violet,
-        points: smoothed && skel.length >= 2 ? ma(skel) : skel,
+        points: skelSmoothed ? ma(skel) : skel,
         dashed: true,
+        rawPoints: skelSmoothed ? skel : undefined,
       });
     }
 
@@ -434,6 +444,7 @@ export function WeightChart({ onEditEntry }: { onEditEntry?: (id: string) => voi
         rightAxis: true,
         dashed: true,
         unit: 'kcal',
+        rawPoints: lisse ? kcalPoints : undefined,
       });
     }
     return out;
@@ -506,7 +517,7 @@ export function WeightChart({ onEditEntry }: { onEditEntry?: (id: string) => voi
               </button>
             </span>
           )}
-          <span className="row" style={{ gap: 6, alignItems: 'center' }} data-tip="Lisse le bruit des pesées. Active, elle remplace les courbes brutes (y compris les kcal) au lieu de s'y ajouter — décochez-la pour revoir les mesures et cliquer un point.">
+          <span className="row" style={{ gap: 6, alignItems: 'center' }} data-tip="Lisse le bruit des pesées ; la courbe brute reste visible en trait fin derrière. Décochez-la pour cliquer un point et l'éditer.">
             <label className="small" style={{ display: 'flex', alignItems: 'center', gap: 6, cursor: 'pointer' }}>
               <input type="checkbox" checked={showMa} onChange={(e) => setShowMa(e.target.checked)} style={{ width: 'auto' }} />
               Moyenne mobile
@@ -856,11 +867,23 @@ function MultiLineChart({
           const lineGen = d3line<SeriesPoint>().x((d) => xs(d.t)).y((d) => yScale(d.value));
           return (
             <g key={s.label}>
+              {s.rawPoints && s.rawPoints.length > 0 && (
+                <path
+                  d={lineGen(s.rawPoints)!}
+                  fill="none"
+                  stroke={s.color}
+                  strokeWidth={1}
+                  strokeDasharray={s.dashed ? '5 4' : undefined}
+                  strokeLinejoin="round"
+                  strokeLinecap="round"
+                  opacity={0.3}
+                />
+              )}
               <path
                 d={lineGen(s.points)!}
                 fill="none"
                 stroke={s.color}
-                strokeWidth={si === 0 ? 2 : 1.8}
+                strokeWidth={s.rawPoints ? 2.5 : si === 0 ? 2 : 1.8}
                 strokeDasharray={s.dashed ? '5 4' : undefined}
                 strokeLinejoin="round"
                 strokeLinecap="round"

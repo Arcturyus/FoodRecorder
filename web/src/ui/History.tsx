@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useStore, todayStr, useEffectiveFoods, isDayCounted } from '../store/store';
-import { computeTargets } from '../nutrition/targets';
+import { useTargets } from './useTargets';
 import { foodFrequencies, frequencyKey } from '../nutrition/frequency';
 import type { FoodFrequency } from '../nutrition/frequency';
 import { matchFood } from '../nutrition/match';
@@ -23,11 +23,10 @@ const WEEKDAYS = ['L', 'M', 'M', 'J', 'V', 'S', 'D'];
  */
 export function History() {
   const entries = useStore((s) => s.entries);
-  const profile = useStore((s) => s.profile);
   const mutedDays = useStore((s) => s.mutedDays);
   const dayNotes = useStore((s) => s.dayNotes);
   const toggleDayMute = useStore((s) => s.toggleDayMute);
-  const targets = useMemo(() => computeTargets(profile), [profile]);
+  const targets = useTargets();
   const kcalTarget = targets.find((t) => t.key === 'kcal')?.optimal ?? 2000;
 
   const today = todayStr();

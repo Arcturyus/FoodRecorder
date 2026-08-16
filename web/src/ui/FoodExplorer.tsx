@@ -2,10 +2,9 @@ import { createContext, useContext, useEffect, useMemo, useRef, useState } from 
 import { scaleLinear, scaleLog, scaleSqrt } from 'd3-scale';
 import { extent, max as d3max, mean as d3mean, quantile } from 'd3-array';
 import { RDA } from '../nutrition/rda';
-import { computeTargets } from '../nutrition/targets';
+import { useTargets } from './useTargets';
 import { portionGrams } from '../nutrition/recommend';
 import type { Food, FoodCategory, NutrientKey } from '../nutrition/types';
-import { useStore } from '../store/store';
 import { fmt } from './format';
 
 /**
@@ -268,8 +267,7 @@ function ScatterView() {
   const svgRef = useRef<SVGSVGElement>(null);
   const [hover, setHover] = useState<{ i: number; px: number; py: number } | null>(null);
   const explorable = useExplorable();
-  const profile = useStore((s) => s.profile);
-  const targets = useMemo(() => computeTargets(profile), [profile]);
+  const targets = useTargets();
   const tx = targets.find((r) => r.key === xk);
   const ty = targets.find((r) => r.key === yk);
 

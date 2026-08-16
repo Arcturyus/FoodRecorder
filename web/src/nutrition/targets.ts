@@ -1,6 +1,8 @@
 import type { NutrientKey } from './types';
 import { RDA } from './rda';
 import type { Goal } from './rda';
+import { computeEnergy, protRecommandeParKg, PROT_BOUNDS } from './energy';
+import type { BmrFormula, EnergyBreakdown, Sex, SportType, WorkPosture } from './energy';
 
 /**
  * Objectifs nutritionnels personnalisés. Deux niveaux, dont l'interprétation
@@ -17,7 +19,12 @@ import type { Goal } from './rda';
  */
 
 export type { Goal } from './rda';
-export type Sex = 'homme' | 'femme';
+export type { Sex, SportType, WorkPosture, BmrFormula } from './energy';
+/**
+ * Ancien réglage « niveau d'activité » : un seul curseur pour la marche et le sport.
+ * Conservé pour les profils déjà enregistrés (et la synchro), mais il ne sert plus
+ * qu'à deviner des valeurs de départ pour les réglages séparés — cf. `energyInputs`.
+ */
 export type Activity = 'sedentaire' | 'modere' | 'sportif' | 'intense';
 /** Objectif de composition corporelle : ajuste calories et protéines cibles. */
 export type Objective = 'maintien' | 'perte' | 'muscle';
@@ -35,6 +42,23 @@ export interface Profile {
   deficitPct?: number;
   /** Intensité du surplus calorique, en % au-dessus du maintien (objectif « muscle »). */
   surplusPct?: number;
+
+  // --- Dépense énergétique : postes réglables séparément (cf. nutrition/energy.ts).
+  // Tous optionnels : un profil enregistré avant cette version les déduit d'`activite`.
+  /** Pas par jour (hors séances de sport). */
+  pasParJour?: number;
+  /** Posture dominante dans la journée de travail — indépendante des pas. */
+  posture?: WorkPosture;
+  /** Volume de sport, en heures par semaine (lissé sur 7 jours). */
+  sportHeures?: number;
+  /** Nature dominante des séances : pilote leur coût calorique et le conseil protéines. */
+  sportType?: SportType;
+  /** Protéines voulues (g/kg/j). Absent ⇒ la valeur conseillée, recalculée à chaque changement. */
+  protParKg?: number;
+  /** Formule de métabolisme de base retenue. `auto` = masse maigre si elle est connue. */
+  bmrFormule?: BmrFormula;
+  /** % de masse grasse saisi à la main — sinon celui de la dernière pesée qui en porte un. */
+  masseGrassePct?: number;
 }
 
 export const DEFAULT_PROFILE: Profile = {
@@ -44,7 +68,84 @@ export const DEFAULT_PROFILE: Profile = {
   objectif: 'maintien',
   deficitPct: 20,
   surplusPct: 10,
+  pasParJour: 5500,
+  posture: 'assis',
+  sportHeures: 5,
+  sportType: 'muscu',
+  bmrFormule: 'auto',
 };
+
+/**
+ * Mesures du corps qui ne vivent pas dans le profil : taille et âge viennent des
+ * constantes de pesée (`weightConfig`), le % de masse grasse de la dernière pesée
+ * qui en comporte un. `useTargets` les rassemble ; les valeurs ici ne servent que
+ * de secours si le contexte n'est pas fourni.
+ */
+export interface BodyContext {
+  tailleCm: number;
+  age: number;
+  /** % de masse grasse mesuré (la saisie manuelle du profil est prioritaire). */
+  masseGrassePct?: number;
+}
+
+export const DEFAULT_BODY: BodyContext = { tailleCm: 175, age: 30 };
+
+/** Valeurs de départ des postes de dépense pour un profil qui n'a que l'ancien `activite`. */
+const ACTIVITY_FALLBACK: Record<Activity, { pasParJour: number; sportHeures: number; sportType: SportType }> = {
+  sedentaire: { pasParJour: 3500, sportHeures: 0, sportType: 'mixte' },
+  modere: { pasParJour: 6000, sportHeures: 3.5, sportType: 'mixte' },
+  sportif: { pasParJour: 7000, sportHeures: 5.5, sportType: 'mixte' },
+  intense: { pasParJour: 8500, sportHeures: 9, sportType: 'mixte' },
+};
+
+/** Postes de dépense effectifs d'un profil (réglages explicites, ou déduits de l'ancien niveau). */
+export function energySettings(profile: Profile): {
+  pasParJour: number;
+  posture: WorkPosture;
+  sportHeures: number;
+  sportType: SportType;
+  bmrFormule: BmrFormula;
+} {
+  const fb = ACTIVITY_FALLBACK[profile.activite] ?? ACTIVITY_FALLBACK.modere;
+  return {
+    pasParJour: profile.pasParJour ?? fb.pasParJour,
+    posture: profile.posture ?? 'assis',
+    sportHeures: profile.sportHeures ?? fb.sportHeures,
+    sportType: profile.sportType ?? fb.sportType,
+    bmrFormule: profile.bmrFormule ?? 'auto',
+  };
+}
+
+/** Décomposition complète de la dépense pour un profil et un corps donnés. */
+export function computeEnergyFor(profile: Profile, body: BodyContext = DEFAULT_BODY): EnergyBreakdown {
+  const s = energySettings(profile);
+  return computeEnergy({
+    sexe: profile.sexe,
+    poids: profile.poids,
+    tailleCm: body.tailleCm,
+    age: body.age,
+    masseGrassePct: profile.masseGrassePct ?? body.masseGrassePct,
+    pasParJour: s.pasParJour,
+    posture: s.posture,
+    sportHeures: s.sportHeures,
+    sportType: s.sportType,
+    formule: s.bmrFormule,
+    kcalFactor: objectiveKcalFactor(profile),
+  });
+}
+
+/** Protéines conseillées (g/kg) pour ce profil — le point de repère du réglage libre. */
+export function protConseilParKg(profile: Profile): number {
+  const s = energySettings(profile);
+  return protRecommandeParKg(s.sportHeures, s.sportType, profile.objectif ?? 'maintien');
+}
+
+/** Protéines effectivement visées (g/kg) : le réglage libre, borné, ou le conseil. */
+export function protParKgEffectif(profile: Profile): number {
+  const v = profile.protParKg;
+  if (v == null || !Number.isFinite(v)) return protConseilParKg(profile);
+  return Math.min(PROT_BOUNDS.max, Math.max(PROT_BOUNDS.min, v));
+}
 
 /** Réglages par défaut et bornes recommandées du déficit / surplus (en %). */
 export const DEFICIT_DEFAULT = 20;
@@ -65,9 +166,6 @@ export const OBJECTIVE_LABELS: Record<Objective, string> = {
   perte: 'Perte de poids',
   muscle: 'Prise de muscle',
 };
-
-/** Bonus de protéines (g/kg) : plus haut en sèche (préserver le muscle) et en prise de masse. */
-const OBJECTIVE_PROT_BONUS: Record<Objective, number> = { maintien: 0, perte: 0.4, muscle: 0.3 };
 
 /** % effectif de déficit/surplus retenu pour un profil (valeur bornée). */
 export function objectivePct(profile: Profile): number {
@@ -145,20 +243,16 @@ export interface Target {
   parent?: NutrientKey;
 }
 
-/** Calories par kg de poids selon le niveau d'activité (maintien). */
-const KCAL_PER_KG: Record<Activity, number> = { sedentaire: 31, modere: 35, sportif: 40, intense: 45 };
-/** Protéines par kg de poids selon le niveau d'activité. */
-const PROT_PER_KG: Record<Activity, number> = { sedentaire: 0.9, modere: 1.4, sportif: 1.8, intense: 2.2 };
+export function computeTargets(profile: Profile, body: BodyContext = DEFAULT_BODY): Target[] {
+  const { poids, sexe } = profile;
 
-export function computeTargets(profile: Profile): Target[] {
-  const { poids, activite, sexe } = profile;
-  const objectif = profile.objectif ?? 'maintien'; // profil persisté avant l'ajout de l'objectif
-  const sexFactor = sexe === 'homme' ? 1 : 0.87; // besoin énergétique moyen plus faible
-
-  // Objectif : déficit (perte) ou surplus (muscle) sur les calories, protéines relevées.
-  // L'intensité du déficit/surplus est réglable (objectiveKcalFactor), avec garde-fous.
-  const kcalOptimal = Math.round((poids * KCAL_PER_KG[activite] * sexFactor * objectiveKcalFactor(profile)) / 10) * 10;
-  const protOptimal = Math.round(poids * (PROT_PER_KG[activite] + OBJECTIVE_PROT_BONUS[objectif]));
+  // Calories : métabolisme de base réel + NEAT + sport + digestion, puis déficit ou
+  // surplus selon l'objectif (cf. nutrition/energy.ts). Les protéines suivent le
+  // volume d'entraînement, et restent réglables à la main.
+  const energy = computeEnergyFor(profile, body);
+  const kcalOptimal = energy.cible;
+  const kcalMaintien = energy.tdee;
+  const protOptimal = Math.round(poids * protParKgEffectif(profile));
 
   return RDA.map((r): Target => {
     const base = {
@@ -176,8 +270,11 @@ export function computeTargets(profile: Profile): Target[] {
       ...(r.lowNote !== undefined ? { lowNote: r.lowNote } : {}),
     };
 
+    // Calories : le plancher n'est plus un forfait au kilo mais le métabolisme de
+    // base lui-même — manger durablement en dessous, c'est puiser dans le muscle.
+    // La cible « optimale » est la dépense totale corrigée de l'objectif.
     if (r.key === 'kcal') {
-      return { ...base, ajr: Math.round((poids * 31 * sexFactor) / 10) * 10, optimal: kcalOptimal };
+      return { ...base, ajr: Math.round(energy.bmr / 10) * 10, optimal: kcalOptimal };
     }
     // Protéines : les seuls seuils hauts proportionnels au poids. 3,5 g/kg =
     // début de la zone où le foie peine à évacuer l'azote, 4,5 g/kg = la dose du
@@ -202,7 +299,6 @@ export function computeTargets(profile: Profile): Target[] {
     // le maintien plutôt que sur la cible optimale — sinon un déficit calorique
     // assumé (objectif « perte ») ferait mécaniquement baisser ce seuil.
     if (r.key === 'lipides') {
-      const kcalMaintien = Math.round((poids * 31 * sexFactor) / 10) * 10;
       return { ...base, ajr: r.rda, optimal: r.rda, lowThreshold: Math.round((0.2 * kcalMaintien) / 9) };
     }
     // Fer : 9 mg suffisent chez l'homme (pertes faibles). Chez la femme, ce sont

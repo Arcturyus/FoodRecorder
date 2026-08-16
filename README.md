@@ -7,12 +7,14 @@ React + TypeScript, tout dans le navigateur, extraction des nutriments par LLM (
 
 ▶ **[Démo complète (30 s)](https://github.com/Arcturyus/FoodRecorder)**
 
+
+Des grosses parties de ce projet sont écrites par des agents IA, micro managé avec énormément d'iterations, quelques points clés sont refait ou reverifiés par moi.
+
 ---
 
 ## Le projet
 
-J'ai tester des applis de comptage de calories. Y en a vraiment plein mais j'aimais pas trop, ca ne faisait pas ce que je voulais. Saisie, dictée, photo IA ca marce bien. Ce qui m'a manqué, c'est **tout ce qui vient après** : l'analyse est pauvre, et les
-conseils d'aliments ou de nutriments qu'on te sort restent très génériques alors qu'on peut analyser ses données.
+J'ai tester des applis de comptage de calories. Y en a vraiment plein mais j'aimais pas trop, ca ne faisait pas ce que je voulais. Saisie, dictée, photo IA ca marche bien. Ce qui m'a manqué, c'est **tout ce qui vient après** : l'analyse est pauvre, et les conseils d'aliments ou de nutriments qu'on te sort restent très génériques alors qu'on peut analyser ses données.
 
 C'est le but de FoodRecorder. Une fois que les repas sont enregistrés, on peut :
 
@@ -32,7 +34,7 @@ différence est dans ces angles-là.
 C'est un **projet perso**, à prendre avec la modération qui va avec : je l'ai fait d'abord pour moi, je
 l'utilise tous les jours, et il reste plein de choses à faire.
 
-Et y a un petit coté fourre tout à plein de fonctionnalités pas user friendly vu que c'est pour moi
+Et y a un petit coté fourre tout à plein de fonctionnalités, pas user friendly vu que c'est pour moi
 
 ---
 
@@ -87,8 +89,7 @@ Deux choses à savoir :
   Le changer déconnecte donc tout le monde — ce qui est aussi la façon de révoquer un appareil perdu.
 
 > ⚠️ L'instance déployée pointe sur **mon** projet Supabase (URL et clé anonyme injectées au build par des
-> secrets GitHub). Créer un profil dessus écrit donc sur ma base, sur un plan gratuit : c'est fait pour que
-> tu puisses essayer, pas pour héberger tes données à long terme. Pour un usage sérieux, clone le repo et
+> secrets GitHub). Créer un profil dessus écrit donc sur ma base gratuite... Pour un usage, il faut cloner le repo et
 > mets tes propres `VITE_SUPABASE_URL` / `VITE_SUPABASE_ANON_KEY` dans `web/.env.local`. Sans ces deux
 > variables, le client n'est simplement pas construit : la synchro disparaît de l'interface et l'app
 > fonctionne en 100 % local.
@@ -133,7 +134,7 @@ Une fiche d'aliment fait une quarantaine de valeurs pour 100 g :
   l'ALA pondéré ×0,1 pour son mauvais rendement de conversion), oméga-6 et oméga-9.
 - **Minéraux** : fer, magnésium, potassium, calcium, zinc, sodium. **Oligo-éléments** : sélénium, iode.
 - **Vitamines** : A, C, D, E, K1, **K2**, B1, B2, B3, B5, B6, B9, B12.
-- **Divers** : créatine, collagène.
+- **Divers** (compléments): créatine, collagène.
 
 K2 et créatine sont absents des tables officielles (CIQUAL) : valeurs saisies à la main depuis la
 littérature pour les viandes, poissons, œufs, fromages et beurre.
@@ -174,7 +175,7 @@ catégories, et relecture d'une fiche **sous forme de discussion** où l'on peut
 ```
 web/
   src/
-    nutrition/   catalogue, banque, matching flou, calculs, AJR, ACP, recommandations   (TS pur, testé)
+    nutrition/   catalogue, banque, matching flou, AJR, dépense énergétique, ACP, reco   (TS pur, testé)
     extraction/  parseur à règles FR · WebLLM · API Claude · pont Claude Code · schéma zod
     stt/         dictée : reconnaissance native du navigateur ou Whisper (transformers.js)
     sync/        file Supabase (téléphone → ordinateur) + synchro d'état par profil
@@ -206,7 +207,7 @@ rien d'intéressant, juste du personnel.
 ## Statut
 
 **Première version.** Il reste beaucoup à faire — portage mobile, pipeline CIQUAL complet, fusion des
-doublons, relecture IA en masse (voir [`idées.md`](idées.md)) — et les valeurs nutritionnelles sont des
+doublons, relecture IA en masse et les valeurs nutritionnelles sont des
 approximations destinées au suivi, pas à un usage clinique.
 
 Cela dit, pour mon usage personnel, elle m'est déjà bien plus utile que les applis que j'ai pu tester.

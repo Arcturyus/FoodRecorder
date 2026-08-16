@@ -2,7 +2,7 @@ import { useMemo, useState } from 'react';
 import { normalize, isSupplementQuery } from '../nutrition/normalize';
 import { RDA } from '../nutrition/rda';
 import type { RdaEntry } from '../nutrition/rda';
-import { computeTargets } from '../nutrition/targets';
+import { useTargets } from './useTargets';
 import { useStore, useEffectiveFoods } from '../store/store';
 import { EMPTY_NUTRIENTS } from '../nutrition/types';
 import type { Food, FoodCategory, NutrientKey, Nutrients } from '../nutrition/types';
@@ -897,8 +897,7 @@ function FoodForm({ food, submitLabel, onDone }: { food?: Food; submitLabel: str
 const TOP_N = 30;
 
 function NutrientRanking({ foods }: { foods: Food[] }) {
-  const profile = useStore((s) => s.profile);
-  const targets = useMemo(() => computeTargets(profile), [profile]);
+  const targets = useTargets();
 
   const [key, setKey] = useState<NutrientKey>('proteines');
   const t = targets.find((r) => r.key === key)!;

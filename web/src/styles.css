@@ -1356,3 +1356,67 @@ button.queue-status-main:hover, button.queue-status-main:hover .queue-status-che
    l'IA, alors qu'il n'existe dans aucune banque. */
 .food-suggest-free { border-bottom: 1px solid var(--border) !important; border-radius: 7px 7px 0 0 !important; }
 .food-suggest-free small { color: var(--muted); font-style: italic; }
+
+/* --- Profil : titres de section du panneau de réglages --- */
+.section-title {
+  font-size: 12px;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--muted);
+  margin: 18px 0 8px;
+  padding-bottom: 4px;
+  border-bottom: 1px solid var(--border);
+}
+
+/* --- Dépense énergétique : chiffres clés, barre empilée, notes --- */
+.energy-headline {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 12px;
+  flex-wrap: wrap;
+  margin-bottom: 12px;
+}
+.energy-big { font-size: 26px; font-weight: 600; color: var(--accent); }
+
+.energy-stack {
+  display: flex;
+  height: 14px;
+  border-radius: 7px;
+  overflow: hidden;
+  background: var(--panel-2);
+  border: 1px solid var(--border);
+}
+.energy-stack > span { display: block; min-width: 2px; cursor: help; }
+.energy-stack > span:hover { filter: brightness(1.15); }
+
+.energy-legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 16px;
+  margin-top: 8px;
+  font-size: 12px;
+  color: var(--muted);
+}
+.energy-legend i { display: inline-block; width: 9px; height: 9px; border-radius: 3px; margin-right: 5px; }
+
+.energy-forecast {
+  margin-top: 14px;
+  padding: 10px 12px;
+  border: 1px solid var(--border);
+  border-left: 3px solid var(--accent-2);
+  border-radius: 10px;
+  background: var(--panel-2);
+}
+
+.energy-table { width: 100%; border-collapse: collapse; margin-top: 8px; font-size: 12px; }
+.energy-table td { padding: 6px 8px; border-top: 1px solid var(--border); vertical-align: top; }
+.energy-table td:first-child { color: var(--accent); white-space: nowrap; width: 1%; }
+.energy-table tr.sel { background: var(--panel-2); }
+
+.energy-notes { margin: 8px 0 0; padding-left: 18px; font-size: 12px; color: var(--muted); line-height: 1.6; }
+.energy-notes li { margin-bottom: 8px; }
+.energy-notes strong { color: var(--text); }
+
+/* Curseurs : le bleu natif du navigateur jurait avec la palette « feu de cuisine ». */
+input[type="range"] { accent-color: var(--accent); }

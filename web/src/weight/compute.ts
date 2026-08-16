@@ -6,6 +6,10 @@
 
 import type { WeightComputed, WeightConfig } from './types';
 import type { Sex } from '../nutrition/targets';
+// Les formules vivent dans le moteur de dépense énergétique, qui pilote aussi les
+// cibles quotidiennes : une seule implémentation, donc pas de divergence possible
+// entre le métabolisme affiché sur une pesée et celui qui calcule vos objectifs.
+import { bmrRozaShizgal as harrisBenedict, bmrMifflinStJeor as mifflinStJeor } from '../nutrition/energy';
 
 interface WeightInput {
   poids: number;
@@ -14,19 +18,6 @@ interface WeightInput {
 
 /** Facteur empirique du tableur : squelettique = masse musculaire (kg) × 0,9. */
 const SKELETAL_FACTOR = 0.9;
-
-/** Harris-Benedict révisé (Roza & Shakir, 1984), kcal/j. */
-function harrisBenedict(poids: number, tailleCm: number, age: number, sexe: Sex): number {
-  return sexe === 'homme'
-    ? 88.362 + 13.397 * poids + 4.799 * tailleCm - 5.677 * age
-    : 447.593 + 9.247 * poids + 3.098 * tailleCm - 4.33 * age;
-}
-
-/** Mifflin-St Jeor, kcal/j. */
-function mifflinStJeor(poids: number, tailleCm: number, age: number, sexe: Sex): number {
-  const base = 10 * poids + 6.25 * tailleCm - 5 * age;
-  return sexe === 'homme' ? base + 5 : base - 161;
-}
 
 export function computeWeight(entry: WeightInput, config: WeightConfig, sexe: Sex): WeightComputed {
   const { poids } = entry;

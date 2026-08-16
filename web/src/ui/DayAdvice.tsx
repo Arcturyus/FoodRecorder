@@ -1,7 +1,7 @@
 import { useMemo, useState } from 'react';
 import type { Nutrients, NutrientKey } from '../nutrition/types';
 import { useStore, useEffectiveFoods, dayTotals, isDayCounted, todayStr } from '../store/store';
-import { computeTargets } from '../nutrition/targets';
+import { useTargets } from './useTargets';
 import type { Target } from '../nutrition/targets';
 import { sunVitDForDate } from '../sun/vitaminD';
 import {
@@ -289,11 +289,10 @@ function AdviceBody({
    */
   gate?: { progress: number };
 }) {
-  const profile = useStore((s) => s.profile);
   const entries = useStore((s) => s.entries);
   const nutrientImportance = useStore((s) => s.nutrientImportance);
   const foods = useEffectiveFoods();
-  const targets = useMemo(() => computeTargets(profile), [profile]);
+  const targets = useTargets();
   const importance = useMemo(() => makeImportanceFn(nutrientImportance), [nutrientImportance]);
 
   /** Aliments déjà mangés (tout l'historique) : priorité aux suggestions déjà connues. */
@@ -381,8 +380,7 @@ function AdviceBody({
  * peut être bonne ou mauvaise par hasard.
  */
 export function DayAdviceCard({ totals, date }: { totals: Nutrients; date?: string }) {
-  const profile = useStore((s) => s.profile);
-  const targets = useMemo(() => computeTargets(profile), [profile]);
+  const targets = useTargets();
 
   const [scope, setScope] = useState<AdviceScope>('jour');
   const [halfLife, setHalfLife] = useState(DECAY_HALF_LIFE_DEFAULT);
