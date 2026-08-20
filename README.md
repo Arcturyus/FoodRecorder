@@ -1,14 +1,22 @@
 # FoodRecorder
 
-**Journal nutritionnel qu'on remplit à la voix ou en photo, pensé pour ce qu'on fait des données *après*.** Stats, données à observer, liassant l'utilisateur joué avec ses données comme j'aime.
+**Journal nutritionnel qu'on remplit à la voix ou en photo, pensé pour ce qu'on fait des données *après*.** 
+Stats, données à observer, laissant l'utilisateur libre avec ses données comme j'aime.
 React + TypeScript, tout dans le navigateur, extraction des nutriments par LLM (Claude) (API ou CLI voir plus bas)
 
-![Démo](docs/demo.gif)
+<p align="center">
+  <img src="docs/demo.gif" alt="Démo de FoodRecorder" width="560" />
+</p>
 
-▶ **[Démo complète (30 s)](https://github.com/Arcturyus/FoodRecorder)**
+<!-- ▶ **[Démo complète (30 s)](https://github.com/Arcturyus/FoodRecorder)** -->
 
 
-Des grosses parties de ce projet sont écrites par des agents IA, micro managé avec énormément d'iterations, quelques points clés sont refait ou reverifiés par moi.
+C'est un **projet perso**, à prendre avec la modération qui va avec : je l'ai fait d'abord pour moi, je l'utilise souvent, et il reste plein de choses à faire.
+
+Et y a un petit coté fourre tout à plein de fonctionnalités, pas user friendly vu que c'est pour moi à la base.
+
+
+Des grosses parties de ce projet sont écrites par des agents IA, micro managé avec énormément d'iterations, quelques points clés ou bug sont  corrigés, refait ou reverifiés par moi.
 
 ---
 
@@ -31,10 +39,6 @@ C'est le but de FoodRecorder. Une fois que les repas sont enregistrés, on peut 
 Le reste ressemble à ce que font les autres applis — c'est normal, le besoin de base est le même. La
 différence est dans ces angles-là.
 
-C'est un **projet perso**, à prendre avec la modération qui va avec : je l'ai fait d'abord pour moi, je
-l'utilise tous les jours, et il reste plein de choses à faire.
-
-Et y a un petit coté fourre tout à plein de fonctionnalités, pas user friendly vu que c'est pour moi
 
 ---
 
