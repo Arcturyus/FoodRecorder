@@ -1,14 +1,34 @@
 # À FAIRE
 
+
+- [ ] Le système de mathcing c'est trop chiant ca marche rarement (il faut vraimetn que si y a un doute l'ia refait un nouveau élément c'est pas normal qu'escalope de poulet il me sorte cuise de poulet limite faut supprimer le matching tout court si c'est pas parfait)
+
 - [ ] Reconnexions trop fréquentes sur téléphone (redemande le mot de passe). Cause probable : le compte Supabase Auth est **partagé entre appareils** (un seul mot de passe par profil, cf. modèle d'auth), et Supabase fait tourner le refresh token à chaque rafraîchissement — si l'ordi rafraîchit pendant que le téléphone détient encore l'ancien jeton, le téléphone se fait rejeter. À iOS Safari s'ajoute la purge du localStorage après ~7 jours sans ouvrir le site. Trois pistes, à combiner :
   - Dashboard Supabase (Authentication → Sessions) : vérifier/augmenter la durée de session et le « refresh token reuse interval » (fenêtre de tolérance après rotation).
   - Utiliser l'app en PWA installée sur téléphone (« ajouter à l'écran d'accueil ») plutôt qu'un onglet Safari classique — stockage moins sujet à purge.
   - Demander `navigator.storage.persist()` au démarrage de l'app pour réduire le risque d'éviction du localStorage.
 
+- [ ] On avait parlé d'un endroit ou tu parles avec un LLM mais il peut prendre des données de l'app se baladait sur l'app et recup tes données pour repondre et chat avec toi : idéee complexe mais ca serait bien 
+(peut être se lance via un bouton chat présent partout en bas à droite par exemple jsp à voir l'ux)
 
 - [ ] Estimation des metabolisme par rapport à la quantité de kcal mangés et la perte de poids ou gain  associés sur une période donnée reglable,
 et possibliité d'automatiquement faire les changements pour mettre les nouveaux objectifs
 
+- [ ] Quand tu as qu'un graph affiché dans stats mais aussi les quantités pas que l'echelle du % par rapport à l'objectif. (et fais en sorte que de base sur la page on voit que calories par et prot et kcal)
+
+- Seitan / Tofu léger / Flocons d'avoine  quantité : verifie qu'il sont dans la bdd de base car c'est les element haut en prot vegetales souvent cités
+et possibilités de les voir dans les graphiques en cochant "ajouté des aliments jamais mangés mais présents dans la bdd" notamment sur les pareto
+
+- [ ] 
+1 681	Mifflin-St Jeor
+Référence sans composition corporelle : l'équation recommandée par l'Academy of Nutrition and Dietetics.
+1 706	Harris-Benedict révisée (Roza & Shizgal, 1984)
+Correction de la formule de 1919. Bonne, mais surestime encore ~5 % en moyenne.
+1 677	Cunningham (masse maigre)retenue
+La plus juste chez les personnes entraînées — à condition que le % de masse grasse le soit aussi.
+1 525	Katch-McArdle (masse maigre)
+Même logique que Cunningham, résultat systématiquement ~130 kcal plus bas.
+vu qu'on parle des 4 autant pouvoir choisir celle des 4 qu'on prend même si de base c'est Cunningham si masse maigre connu
 
 - [x] Rendre visible le traitement de la file : un texte dans l'onglet Jour disant ce que la CLI est en train de mâcher (nombre de photos/dictées en cours, nombre déjà traitées), qui repart de zéro quand on quitte « Aujourd'hui » et qu'on y revient.
   → `sync/queueStatus.ts` (état publié par le poller) + `ui/QueueStatus.tsx` (bandeau en tête de `DayView`).
