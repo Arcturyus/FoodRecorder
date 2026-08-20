@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { matchFood } from '../src/nutrition/match';
 import { FOODS } from '../src/nutrition/foods';
+import { STRONG_DB_MATCH } from '../src/nutrition/compute';
 
 /**
  * ≥ 40 aliments FR courants (dont pièges). Critère plan §Phase 1 : ≥ 90 % top-1.
@@ -93,6 +94,71 @@ describe('matchFood', () => {
   it('propose des alternatives', () => {
     const res = matchFood('poulet', FOODS);
     expect(res.alternatives.length).toBeGreaterThan(0);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Les mots de forme sont des aliments, pas du décor
+// ---------------------------------------------------------------------------
+
+/**
+ * Un filet de poulet (165 kcal), une cuisse (215) et une aile (290) ne sont pas
+ * le même aliment. Le matching a longtemps traité « filet / cuisse / aile /
+ * escalope / pavé » comme des mots de présentation à poids réduit, retirés avant
+ * le calcul de similarité : « cuisse de poulet » ressortait alors sur le FILET
+ * avec un score de 0,98 — au-dessus de STRONG_DB_MATCH, donc sans même passer par
+ * la 2e passe de l'IA (cf. extraction/verify.ts). L'erreur était silencieuse.
+ *
+ * Ces cas sont testés un par un, et non noyés dans le taux global ci-dessus : un
+ * taux de 90 % laisse justement passer quatre confusions sur quarante.
+ */
+describe('découpes : filet ≠ cuisse ≠ aile', () => {
+  const COUPES: [input: string, expectedId: string][] = [
+    ['filet de poulet', 'filet-poulet'],
+    ['blanc de poulet', 'filet-poulet'],
+    ['cuisse de poulet', 'cuisse-poulet'],
+    ['cuisses de poulet', 'cuisse-poulet'],
+    ['aile de poulet', 'aile-poulet'],
+    ['ailes de poulet', 'aile-poulet'],
+  ];
+
+  it.each(COUPES)('« %s » → %s', (input, expectedId) => {
+    expect(matchFood(input, FOODS).food?.id).toBe(expectedId);
+  });
+
+  it('tolère toujours une faute de frappe', () => {
+    // Le fuzzy plein texte doit survivre au durcissement : sinon on force un
+    // aller-retour IA sur une simple coquille.
+    expect(matchFood('cuise de poulet', FOODS).food?.id).toBe('cuisse-poulet');
+    expect(matchFood('filet de poullet', FOODS).food?.id).toBe('filet-poulet');
+  });
+});
+
+/**
+ * L'app ne garde la valeur de la base sans avis de l'IA qu'au-dessus de
+ * STRONG_DB_MATCH (cf. nutrition/compute.ts). Ces libellés désignent autre chose
+ * que ce que la base propose de plus proche : ils DOIVENT rester sous le seuil,
+ * pour que `verifyMatches` les soumette à l'IA, qui en refera un aliment estimé.
+ */
+describe('les aliments distincts restent sous le seuil « quasi exact »', () => {
+  const PIEGES = [
+    'steak de thon',
+    'tarte aux myrtilles',
+    'gâteau au chocolat',
+    'poulet tikka masala',
+    'nuggets de poulet',
+    'brochette de poulet',
+    'jambon de dinde',
+    'boulettes de boeuf',
+    'escalope de veau',
+    // « escalope de poulet » n'est plus un alias déclaré du filet : à l'IA de dire
+    // si la découpe change quelque chose (cf. aliases de filet-poulet dans foods.ts).
+    'escalope de poulet',
+    'poulet',
+  ];
+
+  it.each(PIEGES)("« %s » n'est pas donné pour un aliment de la base", (input) => {
+    expect(matchFood(input, FOODS).score).toBeLessThan(STRONG_DB_MATCH);
   });
 });
 
