@@ -22,22 +22,15 @@ Des grosses parties de ce projet sont écrites par des agents IA, micro managé 
 
 ## Le projet
 
-J'ai tester des applis de comptage de calories. Y en a vraiment plein mais j'aimais pas trop, ca ne faisait pas ce que je voulais. Saisie, dictée, photo IA ca marche bien. Ce qui m'a manqué, c'est **tout ce qui vient après** : l'analyse est pauvre, et les conseils d'aliments ou de nutriments qu'on te sort restent très génériques alors qu'on peut analyser ses données.
+J'ai tester des applis de comptage de calories. Y en a vraiment plein mais j'aimais pas trop, ca ne faisait pas ce que je voulais. Saisie, dictée, photo IA ca marche bien. Ce qui m'a manqué, c'est **tout ce qui vient après** : l'analyse est pauvre, notamment statistiques très génériques alors qu'on peut analyser ses données en profondeur.
 
-C'est le but de FoodRecorder. Une fois que les repas sont enregistrés, on peut :
+C'est le but de FoodRecorder. Une fois que les repas sont enregistrés, on peut mieux comprendre son alimentation:
 
 
-- **voir ce qui manque**, nutriment par nutriment, sur la période de son choix, et recevoir des
-  recommandations d'aliments calculées **par portion habituelle** (pas par 100 g, ce qui conseillerait de manger que des
-  épices) et pondérées par l'importance qu'on donne soi-même à chaque nutriment ;
-- **explorer la base visuellement** : nuages de points avec frontière de Pareto (« max protéines / min
-  kcal »), chercher les aliments qui complètent les nutriment qu'on manque sans monter ce qu'on veut pas.
-- et pour ceux qui, comme moi, aiment bien les stats : une **ACP** (plus t-SNE et MDS) de sa propre banque
-  d'aliments, pour voir qui ressemble à qui, quelles familles se dessinent, et où tombent les intrus. C'est
-  moins « utile » que le reste, mais c'est ce qui rend une base d'aliments intéressante à regarder.
+- **voir ce qui manque**, nutriment par nutriment, sur la période de son choix, et donc visualiser des aliments utiles, comparer, comprendre aussi si on a un vrai manque ou si ce nutriment les AJR ne sont pas bien qualifiés.
+- **explorer la base visuellement** : nuages de points avec frontière de Pareto (maximiser deux éléments, maximiser l'un tout en minimisant un autre...), chercher les aliments qui complètent les nutriment qu'on manque sans monter ce qu'on veut pas.
 
-Le reste ressemble à ce que font les autres applis — c'est normal, le besoin de base est le même. La
-différence est dans ces angles-là.
+Le reste ressemble à ce que font les autres applis. Ladifférence est dans ces angles-là.
 
 
 ---
@@ -194,24 +187,10 @@ idées.md         ce qui reste à faire, et pourquoi certaines pistes ont été 
 
 ---
 
-## Comment c'est écrit
 
-Autant le dire franchement : au départ, c'est du **vibe coding** — je ne codais pas, je décrivais. Très vite
-ça m'a surtout servi à **aller vite**, et mon travail s'est déplacé vers le cadrage : tenir Claude sur une
-architecture cohérente, refuser les raccourcis qui feraient diverger le modèle de données, exiger que chaque
-décision non évidente soit **expliquée en commentaire** — c'est pour ça que le code en contient autant, et
-que ces commentaires disent le *pourquoi* plutôt que le *quoi*. Les tests servent au même but : verrouiller
-ce qui a été décidé pour que la génération suivante ne le défasse pas.
-
-Quelques éléments ne sont pas commités (skill Claude perso, sauvegardes de données, archives d'appels) :
-rien d'intéressant, juste du personnel.
-
----
 
 ## Statut
 
-**Première version.** Il reste beaucoup à faire — portage mobile, pipeline CIQUAL complet, fusion des
-doublons, relecture IA en masse et les valeurs nutritionnelles sont des
-approximations destinées au suivi, pas à un usage clinique.
+**Première version.** Il reste beaucoup à faire
 
 Cela dit, pour mon usage personnel, elle m'est déjà bien plus utile que les applis que j'ai pu tester.
