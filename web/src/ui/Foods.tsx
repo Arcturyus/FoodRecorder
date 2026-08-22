@@ -63,8 +63,24 @@ type Mode = 'liste' | 'classement' | 'consommation' | 'explorer' | 'comparer' | 
 /** Au-delà, le curseur devient inutilisable ; les gros habitués se filtrent à la main. */
 const SLIDER_MAX = 30;
 
+/** Référence stable : un `new Set()` en valeur par défaut relancerait les mémos à chaque rendu. */
+const EMPTY_IDS: ReadonlySet<string> = new Set();
+
 /** Modes qui travaillent sur la banque et respectent donc le filtre de fréquence. */
 const FILTRABLE: Mode[] = ['liste', 'classement', 'explorer', 'comparer'];
+
+/**
+ * Modes où l'on peut élargir au catalogue entier, aliments jamais mangés compris.
+ *
+ * Réservé aux vues **comparatives** (classement, nuages de points, Pareto, ACP) :
+ * elles répondent à « qu'est-ce qui serait bon à manger ? », et une réponse tirée
+ * des seuls aliments déjà mangés ne peut rien apprendre — un Pareto protéines/kcal
+ * sans tofu ni seitan ne dit pas qu'ils sont mauvais, il dit qu'on ne les a jamais
+ * essayés. La « Liste », elle, reste la banque et rien d'autre : c'est l'écran
+ * d'édition de ses propres aliments, y mélanger du catalogue non consommé
+ * inviterait à modifier des fiches sans rapport avec son historique.
+ */
+const ELARGISSABLE: Mode[] = ['classement', 'explorer', 'comparer'];
 
 /**
  * Onglet « Ma banque » : les aliments RÉELLEMENT consommés, seule matière des
@@ -81,6 +97,7 @@ export function Foods() {
   const [mode, setMode] = useState<Mode>('liste');
   const [compareIds, setCompareIds] = useState<[string | null, string | null]>([null, null]);
   const [minJours, setMinJours] = useState(0);
+  const [avecCatalogue, setAvecCatalogue] = useState(false);
   const bank = useEffectiveFoods();
   const usage = useBankUsage();
 
@@ -89,9 +106,25 @@ export function Foods() {
     [bank, usage],
   );
 
-  const foods = useMemo(
-    () => (minJours <= 0 ? bank : bank.filter((f) => (usage.get(f.id)?.jours ?? 0) >= minJours)),
-    [bank, usage, minJours],
+  const elargissable = ELARGISSABLE.includes(mode);
+  /** Aliments du catalogue absents de la banque — ceux qu'on n'a jamais mangés. */
+  const jamaisManges = useMemo(() => {
+    const dansBanque = new Set(bank.map((f) => f.id));
+    return FOODS.filter((f) => !dansBanque.has(f.id) && f.categorie !== 'supplement');
+  }, [bank]);
+
+  const foods = useMemo(() => {
+    // Le filtre de fréquence ne s'applique qu'à la banque : un aliment du catalogue
+    // est à 0 jour par construction, le lui appliquer le ferait disparaître dès le
+    // premier cran du curseur — soit exactement l'inverse de ce qu'on vient de demander.
+    const mangés = minJours <= 0 ? bank : bank.filter((f) => (usage.get(f.id)?.jours ?? 0) >= minJours);
+    return avecCatalogue && elargissable ? [...mangés, ...jamaisManges] : mangés;
+  }, [bank, usage, minJours, avecCatalogue, elargissable, jamaisManges]);
+
+  /** Vide tant que le catalogue n'est pas ajouté : les vues n'ont alors rien à distinguer. */
+  const idsNonManges = useMemo(
+    () => (avecCatalogue && elargissable ? new Set(jamaisManges.map((f) => f.id)) : new Set<string>()),
+    [avecCatalogue, elargissable, jamaisManges],
   );
 
   /** Depuis la liste : « comparer » charge l'aliment en emplacement A et bascule sur le mode. */
@@ -167,6 +200,24 @@ export function Foods() {
             </span>
           </div>
         )}
+
+        {elargissable && jamaisManges.length > 0 && (
+          <div className="row" style={{ marginTop: 10, gap: 8, alignItems: 'baseline', flexWrap: 'wrap' }}>
+            <label className="small row" style={{ gap: 6, alignItems: 'center', cursor: 'pointer' }}>
+              <input
+                type="checkbox"
+                checked={avecCatalogue}
+                onChange={(e) => setAvecCatalogue(e.target.checked)}
+              />
+              Ajouter les aliments du catalogue jamais mangés ({jamaisManges.length})
+            </label>
+            {avecCatalogue && (
+              <span className="small" style={{ color: 'var(--muted)' }}>
+                — repères de comparaison ; ils ne comptent toujours dans aucune statistique.
+              </span>
+            )}
+          </div>
+        )}
       </div>
 
       {bank.length === 0 && mode !== 'catalogue' ? (
@@ -182,10 +233,12 @@ export function Foods() {
       ) : (
         <>
           {mode === 'liste' && <FoodList foods={foods} usage={usage} onCompare={startCompare} />}
-          {mode === 'classement' && <NutrientRanking foods={foods} />}
+          {mode === 'classement' && <NutrientRanking foods={foods} jamaisManges={idsNonManges} />}
           {mode === 'consommation' && <FoodConsumption />}
-          {mode === 'explorer' && <FoodExplorer foods={foods} />}
-          {mode === 'comparer' && <FoodCompare foods={foods} ids={compareIds} setIds={setCompareIds} />}
+          {mode === 'explorer' && <FoodExplorer foods={foods} jamaisManges={idsNonManges} />}
+          {mode === 'comparer' && (
+            <FoodCompare foods={foods} ids={compareIds} setIds={setCompareIds} jamaisManges={idsNonManges} />
+          )}
         </>
       )}
       {mode === 'catalogue' && <Catalogue bank={bank} />}
@@ -896,8 +949,9 @@ function FoodForm({ food, submitLabel, onDone }: { food?: Food; submitLabel: str
 
 const TOP_N = 30;
 
-function NutrientRanking({ foods }: { foods: Food[] }) {
+function NutrientRanking({ foods, jamaisManges }: { foods: Food[]; jamaisManges?: ReadonlySet<string> }) {
   const targets = useTargets();
+  const jamais = jamaisManges ?? EMPTY_IDS;
 
   const [key, setKey] = useState<NutrientKey>('proteines');
   const t = targets.find((r) => r.key === key)!;
@@ -960,6 +1014,7 @@ function NutrientRanking({ foods }: { foods: Food[] }) {
                 <div className="row" style={{ justifyContent: 'space-between', gap: 8 }}>
                   <span>
                     <span className="small mono">#{i + 1}</span> {f.nom}
+                    {jamais.has(f.id) && <span className="badge">jamais mangé</span>}
                   </span>
                   <span className="mono">
                     {fmt(value, value < 10 ? 1 : 0)} {t.unit}

@@ -147,15 +147,22 @@ function ChartHeader({ title, sel }: { title: string; sel: NutSel }) {
   );
 }
 
+/** Référence stable : un `new Set()` par défaut relancerait les mémos à chaque rendu. */
+const EMPTY_IDS: ReadonlySet<string> = new Set();
+
 export function FoodCompare({
   foods,
   ids,
   setIds,
+  jamaisManges,
 }: {
   foods: Food[];
   ids: [string | null, string | null];
   setIds: (ids: [string | null, string | null]) => void;
+  /** Ids présents pour comparaison mais jamais consommés (catalogue élargi). */
+  jamaisManges?: ReadonlySet<string>;
 }) {
+  const jamais = jamaisManges ?? EMPTY_IDS;
   const overrides = useStore((s) => s.nutrientImportance);
   const [mode, setMode] = useState<NormMode>('100kcal');
   // Pondération désactivée par défaut : sinon un nutriment à faible importance (ou ×0)
@@ -190,8 +197,8 @@ export function FoodCompare({
           Chaque graphe a son propre choix de nutriments.
         </p>
         <div className="row" style={{ gap: 10, flexWrap: 'wrap' }}>
-          <FoodPicker slot={0} food={foodA} foods={foods} onPick={(id) => setSlot(0, id)} />
-          <FoodPicker slot={1} food={foodB} foods={foods} onPick={(id) => setSlot(1, id)} />
+          <FoodPicker slot={0} food={foodA} foods={foods} onPick={(id) => setSlot(0, id)} jamais={jamais} />
+          <FoodPicker slot={1} food={foodB} foods={foods} onPick={(id) => setSlot(1, id)} jamais={jamais} />
         </div>
         <div className="row" style={{ gap: 6, marginTop: 12, flexWrap: 'wrap', alignItems: 'center' }}>
           <span className="small" style={{ color: C.muted }}>Base :</span>
@@ -247,11 +254,13 @@ function FoodPicker({
   food,
   foods,
   onPick,
+  jamais,
 }: {
   slot: 0 | 1;
   food: Food | null;
   foods: Food[];
   onPick: (id: string | null) => void;
+  jamais: ReadonlySet<string>;
 }) {
   const [query, setQuery] = useState('');
   const [open, setOpen] = useState(false);
@@ -270,7 +279,10 @@ function FoodPicker({
       </span>
       {food ? (
         <div className="row" style={{ gap: 6, alignItems: 'center', justifyContent: 'space-between' }}>
-          <span style={{ borderLeft: `3px solid ${SLOT_COLOR[slot]}`, paddingLeft: 8 }}>{food.nom}</span>
+          <span style={{ borderLeft: `3px solid ${SLOT_COLOR[slot]}`, paddingLeft: 8 }}>
+            {food.nom}
+            {jamais.has(food.id) && <span className="badge">jamais mangé</span>}
+          </span>
           <button className="ghost small" onClick={() => onPick(null)} data-tip="Changer">
             ✕
           </button>
@@ -299,6 +311,9 @@ function FoodPicker({
                   }}
                 >
                   {f.nom} <span className="small" style={{ color: C.muted }}>· {fmt(f.n.kcal)} kcal</span>
+                  {jamais.has(f.id) && (
+                    <span className="small" style={{ color: C.muted }}> · jamais mangé</span>
+                  )}
                 </button>
               ))}
             </div>

@@ -1,7 +1,14 @@
 # À FAIRE
 
 
-- [ ] Le système de mathcing c'est trop chiant ca marche rarement (il faut vraimetn que si y a un doute l'ia refait un nouveau élément c'est pas normal qu'escalope de poulet il me sorte cuise de poulet limite faut supprimer le matching tout court si c'est pas parfait)
+- [x] Le système de mathcing c'est trop chiant ca marche rarement (il faut vraimetn que si y a un doute l'ia refait un nouveau élément c'est pas normal qu'escalope de poulet il me sorte cuise de poulet limite faut supprimer le matching tout court si c'est pas parfait)
+  → Réglé par le commit `edea66b`. « filet », « cuisse » et « aile » ne sont plus des mots de
+  décor autour de « poulet » mais trois aliments distincts (165 / 215 / 290 kcal) : un mot de la
+  requête absent de la cible fait chuter le score (`nutrition/match.ts`). En dessous de
+  `STRONG_DB_MATCH` (0,9, cf. `nutrition/compute.ts`), c'est l'estimation de l'IA qui prime et non
+  la base — donc « en cas de doute, un nouvel élément », comme demandé. Le fuzzy plein texte
+  survit au durcissement, pour ne pas payer un appel IA sur une simple coquille (« cuise »).
+  Testé cas par cas dans `tests/match.test.ts`, « escalope de poulet » compris.
 
 - [ ] Reconnexions trop fréquentes sur téléphone (redemande le mot de passe). Cause probable : le compte Supabase Auth est **partagé entre appareils** (un seul mot de passe par profil, cf. modèle d'auth), et Supabase fait tourner le refresh token à chaque rafraîchissement — si l'ordi rafraîchit pendant que le téléphone détient encore l'ancien jeton, le téléphone se fait rejeter. À iOS Safari s'ajoute la purge du localStorage après ~7 jours sans ouvrir le site. Trois pistes, à combiner :
   - Dashboard Supabase (Authentication → Sessions) : vérifier/augmenter la durée de session et le « refresh token reuse interval » (fenêtre de tolérance après rotation).
@@ -14,12 +21,69 @@
 - [ ] Estimation des metabolisme par rapport à la quantité de kcal mangés et la perte de poids ou gain  associés sur une période donnée reglable,
 et possibliité d'automatiquement faire les changements pour mettre les nouveaux objectifs
 
-- [ ] Quand tu as qu'un graph affiché dans stats mais aussi les quantités pas que l'echelle du % par rapport à l'objectif. (et fais en sorte que de base sur la page on voit que calories par et prot et kcal)
+  **Vérifié le 22/08/2026 : PAS fait.** Le commit `5915636` a bâti le calcul **prédictif**
+  (du corps vers la dépense : BMR + NEAT + sport + TEF → TDEE, cf. `nutrition/energy.ts`), qui est
+  l'inverse de cette idée. Rien ne remonte des données réelles vers le métabolisme observé.
 
-- Seitan / Tofu léger / Flocons d'avoine  quantité : verifie qu'il sont dans la bdd de base car c'est les element haut en prot vegetales souvent cités
+  Les deux briques existent déjà dans `ui/WeightChart.tsx` mais ne sont **jamais croisées
+  numériquement** : les kcal/jour y sont superposées à la courbe de poids (visuel seulement), et
+  une pente de poids y est calculée (pour l'ETA d'objectif, pas pour en déduire une dépense). Le
+  bouton « appliquer les nouveaux objectifs » n'existe pas. À noter : `nutrition/guide.ts:73`
+  conseille déjà à l'utilisateur de « corriger ce chiffre avec la balance sur 3-4 semaines » —
+  sans lui donner l'outil pour le faire.
+
+  **Question de conception déjà tranchée** (reste à implémenter) : les jours sans saisie ne
+  doivent pas être comptés comme des jours à 0 kcal (un seul suffit à fausser la moyenne). On ne
+  calcule que sur les jours réellement saisis, et on **refuse d'afficher un résultat sous ~80 %
+  de couverture** sur la période, en disant combien de jours manquent.
+
+  **Restent à décider :** ce que fait le bouton « appliquer » (un correctif personnel daté et
+  annulable ajouté à la dépense calculée ? une recalibration des postes ? l'écrasement direct de
+  la cible ?) et où loger l'écran (panneau « Dépense énergétique », où les deux chiffres se
+  confrontent, ou onglet Poids, où vivent les données).
+
+- [x] Quand tu as qu'un graph affiché dans stats mais aussi les quantités pas que l'echelle du % par rapport à l'objectif. (et fais en sorte que de base sur la page on voit que calories par et prot et kcal)
+
+  **Fait** (`ui/Stats.tsx`). À **une seule série**, un second axe apparaît à droite en unité
+  réelle (g / mg / kcal, ou « :1 » pour un rapport), unité rappelée en haut. La ligne cible
+  annonce en plus la valeur visée (« cible 100 % · 2 310 kcal »), les graduations de d3 ne
+  tombant pas forcément dessus. Au-delà d'une série l'axe droit disparaît et la marge se
+  referme : à plusieurs unités, aucune graduation en quantité n'est commune — c'est justement
+  la raison d'être de l'axe en %.
+
+  Aucun recalcul de données : la cible étant fixe par série, l'axe droit est le même quadrillage
+  converti (`valeur = pct × objectif / 100`), donc les deux lectures ne peuvent pas diverger.
+
+  **Défaut de la page : `['kcal']`**, les calories seules — et non plus calories + protéines.
+  Une seule courbe au démarrage, c'est aussi l'axe des quantités visible d'emblée.
+
+  Vérifié au navigateur (Chrome piloté) : chip « Calories » seul actif au chargement, axe droit
+  gradué 0 / 1 155 / 2 310 / 3 465 pour une cible à 2 310, aucun débordement du viewBox (fin
+  652,9 sur 680) ni chevauchement avec le label de cible, et disparition propre de l'axe après
+  ajout des protéines.
+
+- [x] Seitan / Tofu léger / Flocons d'avoine  quantité : verifie qu'il sont dans la bdd de base car c'est les element haut en prot vegetales souvent cités
 et possibilités de les voir dans les graphiques en cochant "ajouté des aliments jamais mangés mais présents dans la bdd" notamment sur les pareto
 
-- [ ] 
+  **Fait.** Les flocons d'avoine y étaient déjà ; **tofu ferme, tofu soyeux, seitan et tempeh**
+  ont été ajoutés au catalogue (`nutrition/foods.ts`). Ils sont classés en `feculent` avec les
+  légumineuses — l'app n'a pas de catégorie « protéines végétales », et en créer une toucherait
+  les 4 prompts d'extraction ; le tofu y détonne (2 g de glucides), à rouvrir si ça gêne les
+  stats par catégorie. « Tofu léger » est un alias du **soyeux** (55 kcal) et non du ferme (144) :
+  les confondre triplerait les calories d'une portion, c'est testé.
+
+  **La case à cocher existe** (`ui/Foods.tsx`) : « Ajouter les aliments du catalogue jamais
+  mangés », dans Classement / Explorer visuel / Comparer. Trois décisions :
+  - Pas dans la « Liste » : c'est l'écran d'édition de SES aliments, y mêler du catalogue non
+    consommé inviterait à modifier des fiches sans rapport avec son historique.
+  - Le curseur « mangé au moins N jours » ne s'applique qu'à la banque : un aliment de catalogue
+    est à 0 jour par construction, le filtrer le ferait disparaître dès le premier cran.
+  - Les non-mangés sont **traçables à l'œil** : points en pointillés et remplissage pâle sur le
+    nuage/Pareto, badge « jamais mangé » dans le classement et le comparateur, entrée de légende
+    dédiée. Sans ça, une frontière de Pareto ne dirait plus si elle est faite de ce qu'on mange
+    ou de ce qu'on pourrait manger. Ils ne comptent toujours dans aucune statistique.
+
+- [x] 
 1 681	Mifflin-St Jeor
 Référence sans composition corporelle : l'équation recommandée par l'Academy of Nutrition and Dietetics.
 1 706	Harris-Benedict révisée (Roza & Shizgal, 1984)
@@ -29,6 +93,24 @@ La plus juste chez les personnes entraînées — à condition que le % de masse
 1 525	Katch-McArdle (masse maigre)
 Même logique que Cunningham, résultat systématiquement ~130 kcal plus bas.
 vu qu'on parle des 4 autant pouvoir choisir celle des 4 qu'on prend même si de base c'est Cunningham si masse maigre connu
+
+  **Fait.** Les quatre formules étaient déjà calculées et affichées dans le tableau comparatif,
+  mais le sélecteur n'en proposait que trois entrées dont deux équivalentes (`auto` retombait sur
+  Cunningham dès que la masse maigre était connue) — soit **2 résultats distincts** seulement.
+  `BmrFormula` s'ouvre aux quatre clés et la sélection passe par `resolveBmrKey`
+  (`nutrition/energy.ts`) ; le sélecteur d'`ui/EnergyPanel.tsx` les liste toutes.
+
+  - **`auto` reste le défaut** et garde son sens : Cunningham si masse maigre connue, Mifflin sinon.
+  - Les deux formules à masse maigre restent **listées mais désactivées** quand la masse grasse
+    est inconnue, avec la mention « masse grasse requise » : les masquer ferait croire qu'elles
+    n'existent pas, juste après un tableau qui explique qu'elles sont les plus justes.
+  - **Repli explicite** si la masse grasse disparaît après coup (pesée supprimée, profil vidé) :
+    les cibles basculent sur Mifflin, un avertissement le dit, et le choix enregistré est conservé
+    pour le jour où la mesure revient — plutôt qu'un panneau en erreur ou un choix effacé en silence.
+  - `ffm`, l'ancien nom de Cunningham, est traduit à la lecture : les profils déjà enregistrés et
+    la synchro entre appareils ne changent pas de comportement.
+  - 11 tests ajoutés dans `tests/energy.test.ts` (dont : les quatre donnent bien quatre valeurs
+    distinctes, et Katch tombe ~130 kcal sous Cunningham).
 
 - [x] Rendre visible le traitement de la file : un texte dans l'onglet Jour disant ce que la CLI est en train de mâcher (nombre de photos/dictées en cours, nombre déjà traitées), qui repart de zéro quand on quitte « Aujourd'hui » et qu'on y revient.
   → `sync/queueStatus.ts` (état publié par le poller) + `ui/QueueStatus.tsx` (bandeau en tête de `DayView`).

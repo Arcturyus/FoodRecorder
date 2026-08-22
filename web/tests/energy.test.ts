@@ -14,6 +14,7 @@ import {
   KCAL_PER_KG_FAT,
   DAYS_PER_MONTH,
   TEF_RATIO,
+  resolveBmrKey,
 } from '../src/nutrition/energy';
 import type { EnergyInput } from '../src/nutrition/energy';
 
@@ -144,5 +145,58 @@ describe('protéines conseillées', () => {
     const v = protRecommandeParKg(30, 'muscu', 'perte');
     expect(v).toBeGreaterThanOrEqual(1.2);
     expect(v).toBeLessThanOrEqual(2.6);
+  });
+});
+
+/**
+ * Les quatre formules sont sélectionnables une par une, et pas seulement affichées
+ * dans le tableau comparatif. Le point délicat est le repli : deux d'entre elles
+ * exigent la masse maigre, qui peut manquer au moment du choix ou disparaître
+ * ensuite (pesée supprimée, masse grasse effacée du profil).
+ */
+describe('choix de la formule de métabolisme', () => {
+  const avecMg: EnergyInput = { ...base, masseGrassePct: 17 };
+
+  it.each(['mifflin', 'roza', 'cunningham', 'katch'] as const)('« %s » est retenue telle quelle', (formule) => {
+    expect(computeEnergy({ ...avecMg, formule }).bmrKey).toBe(formule);
+  });
+
+  it('les quatre donnent quatre valeurs distinctes', () => {
+    const valeurs = (['mifflin', 'roza', 'cunningham', 'katch'] as const).map(
+      (formule) => computeEnergy({ ...avecMg, formule }).bmr,
+    );
+    expect(new Set(valeurs).size).toBe(4);
+  });
+
+  it('Katch-McArdle tombe environ 130 kcal sous Cunningham', () => {
+    const katch = computeEnergy({ ...avecMg, formule: 'katch' }).bmr;
+    const cunningham = computeEnergy({ ...avecMg, formule: 'cunningham' }).bmr;
+    expect(cunningham - katch).toBeGreaterThan(100);
+    expect(cunningham - katch).toBeLessThan(160);
+  });
+
+  it('une formule à masse maigre se replie sur Mifflin quand la masse grasse manque', () => {
+    expect(computeEnergy({ ...base, formule: 'cunningham' }).bmrKey).toBe('mifflin');
+    expect(computeEnergy({ ...base, formule: 'katch' }).bmrKey).toBe('mifflin');
+  });
+
+  it('une formule sans masse maigre reste retenue même sans masse grasse', () => {
+    expect(computeEnergy({ ...base, formule: 'roza' }).bmrKey).toBe('roza');
+  });
+
+  it('« ffm », l’ancien libellé enregistré dans les profils, vaut toujours Cunningham', () => {
+    expect(computeEnergy({ ...avecMg, formule: 'ffm' }).bmrKey).toBe('cunningham');
+    expect(resolveBmrKey('ffm', true)).toBe('cunningham');
+  });
+
+  it('resolveBmrKey couvre les deux replis vers Mifflin', () => {
+    expect(resolveBmrKey('auto', false)).toBe('mifflin');
+    expect(resolveBmrKey('auto', true)).toBe('cunningham');
+    expect(resolveBmrKey('katch', false)).toBe('mifflin');
+  });
+
+  it('le BMR retenu est bien celui du tableau comparatif', () => {
+    const e = computeEnergy({ ...avecMg, formule: 'roza' });
+    expect(e.estimates.find((est) => est.key === e.bmrKey)?.value).toBe(e.bmr);
   });
 });

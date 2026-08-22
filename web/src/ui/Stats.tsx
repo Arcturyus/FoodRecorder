@@ -127,7 +127,10 @@ export function Stats() {
 
   // Sélection unifiée : ids de nutriments (NutrientKey) ET de rapports (clé RatioDef,
   // sans collision avec les nutriments). Une seule tendance, une seule moyenne mobile.
-  const [selected, setSelected] = useState<string[]>(['kcal', 'proteines']);
+  // Une seule série au démarrage : les calories sont le chiffre qu'on vient vérifier
+  // en premier, et à une seule courbe le graphe affiche aussi les quantités réelles
+  // (axe de droite) — la lecture la plus directe possible dès l'ouverture.
+  const [selected, setSelected] = useState<string[]>(['kcal']);
   const [maOn, setMaOn] = useState(false);
   const [maWindow, setMaWindow] = useState(7);
   /**
@@ -385,6 +388,9 @@ export function Stats() {
         <p className="small" style={{ marginTop: 2 }}>
           Chaque courbe = un élément (nutriment <em>ou</em> rapport) en <strong>% de sa cible</strong> (ligne 100 %),
           pour comparer sur un seul axe. Survolez pour les valeurs réelles.
+          {selected.length === 1
+            ? ' Un seul élément affiché : l’axe de droite donne directement les quantités.'
+            : ' Les quantités réelles s’affichent sur un second axe dès qu’un seul élément est sélectionné — à plusieurs, leurs unités ne partagent aucune graduation.'}
           {gran !== 'jour' &&
             ` Un point = ${gran === 'semaine' ? 'une semaine' : 'un mois'} (${buckets.length} au total), en moyenne PAR JOUR des jours enregistrés — comparable à la cible journalière.`}
           {selected.includes('vitD') && ' La vitamine D inclut l\'apport du soleil ☀️.'}
@@ -499,7 +505,14 @@ function MultiTrend({
 }) {
   const W = 680;
   const H = 300;
-  const m = { top: 16, right: 16, bottom: 30, left: 44 };
+  /**
+   * Axe de droite en unité réelle : possible uniquement à UNE série. Au-delà,
+   * chaque courbe a sa propre unité (g, mg, kcal, « :1 ») et une graduation
+   * commune en quantité n'existe pas — c'est précisément pourquoi l'axe principal
+   * est en % de la cible.
+   */
+  const solo = series.length === 1 ? series[0] : null;
+  const m = { top: 16, right: solo ? 58 : 16, bottom: 30, left: 44 };
   const svgRef = useRef<SVGSVGElement>(null);
   const [hover, setHover] = useState<number | null>(null);
   const [ptr, setPtr] = useState({ px: 0, py: 0 });
@@ -577,13 +590,32 @@ function MultiTrend({
             <text x={m.left - 8} y={ys(tk)} fill={C.muted} fontSize={10} textAnchor="end" dominantBaseline="middle">
               {fmt(tk, logY && tk < 10 ? 1 : 0)}%
             </text>
+            {/* Mêmes lignes de grille, seconde lecture : le % de gauche converti dans
+                l'unité de la série. La cible étant fixe, la conversion est un simple
+                produit — les deux graduations ne peuvent donc pas se contredire. */}
+            {solo && (
+              <text x={W - m.right + 8} y={ys(tk)} fill={C.muted} fontSize={10} dominantBaseline="middle">
+                {solo.kind === 'ratio'
+                  ? fmtRatio((tk * solo.objective) / 100, solo.suffix ?? '')
+                  : fmtVal((tk * solo.objective) / 100)}
+              </text>
+            )}
           </g>
         ))}
+        {solo && solo.kind !== 'ratio' && solo.unit && (
+          <text x={W - m.right + 8} y={m.top - 4} fill={C.muted} fontSize={10}>
+            {solo.unit}
+          </text>
+        )}
 
         {/* ligne cible 100 % */}
         <line x1={m.left} x2={W - m.right} y1={ys(100)} y2={ys(100)} stroke={C.accent2} strokeWidth={1.5} strokeDasharray="5 4" />
         <text x={W - m.right} y={ys(100) - 5} fill={C.accent2} fontSize={10} textAnchor="end">
+          {/* À une seule série, la cible est nommée en clair : les graduations de droite
+              sont choisies par d3 et ne tombent pas forcément sur elle. */}
           cible 100 %
+          {solo &&
+            ` · ${solo.kind === 'ratio' ? fmtRatio(solo.objective, solo.suffix ?? '') : `${fmtVal(solo.objective)} ${solo.unit ?? ''}`.trim()}`}
         </text>
 
         {series.map((s) => (
