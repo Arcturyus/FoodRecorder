@@ -199,3 +199,26 @@ describe('départage par consommation récente (recentCounts)', () => {
     expect(res.alternatives.map((f) => f.id)).toContain('fb0');
   });
 });
+
+/**
+ * Protéines végétales : les sources les plus citées doivent être trouvables sans
+ * passer par l'IA, sinon chaque « tofu » coûte un appel. « Tofu léger » désigne
+ * le tofu soyeux (55 kcal), pas le tofu ferme (144) : les confondre triplerait
+ * les calories d'une portion.
+ */
+describe('protéines végétales', () => {
+  const CAS: [input: string, expectedId: string][] = [
+    ['tofu', 'tofu'],
+    ['du tofu ferme', 'tofu'],
+    ['tofu soyeux', 'tofu-soyeux'],
+    ['tofu léger', 'tofu-soyeux'],
+    ['seitan', 'seitan'],
+    ['tempeh', 'tempeh'],
+    ["flocons d'avoine", 'avoine'],
+    ['porridge', 'avoine'],
+  ];
+
+  it.each(CAS)('« %s » → %s', (input, expectedId) => {
+    expect(matchFood(input, FOODS).food?.id).toBe(expectedId);
+  });
+});
