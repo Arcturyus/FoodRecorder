@@ -237,6 +237,21 @@ export const FOODS: Food[] = [
   f('haricots-blancs', 'Haricots blancs (boîte)', 'feculent', ['haricot blanc', 'haricots blancs', 'cocos', 'flageolets', 'mogette'], { kcal: 118, proteines: 7.5, glucides: 17, lipides: 0.6, fibres: 6, fer: 2.5, magnesium: 45, potassium: 380, zinc: 1, sodium: 280, vitB9: 60, vitB1: 0.12, vitB2: 0.05, vitB3: 0.5, vitB5: 0.24, vitB6: 0.12 }, { unitGrams: { bol: 200, assiette: 250, portion: 180 } }),
   f('pois-chiches', 'Pois chiches (cuits)', 'feculent', ['pois chiche', 'houmous'], { kcal: 164, proteines: 8.9, glucides: 24, lipides: 2.6, fibres: 7.6, fer: 2.9, magnesium: 48, potassium: 291, zinc: 1.5, vitB9: 172, vitE: 0.4, vitB1: 0.12, vitB2: 0.06, vitB3: 0.5, vitB5: 0.3, vitB6: 0.14 }, { unitGrams: { bol: 200, portion: 180, cas: 25 } }),
   f('haricots-rouges', 'Haricots rouges (cuits)', 'feculent', ['haricot rouge'], { kcal: 127, proteines: 8.7, glucides: 19, lipides: 0.5, fibres: 6.4, fer: 2.9, magnesium: 45, potassium: 403, zinc: 1, vitB9: 130, vitB1: 0.16, vitB2: 0.06, vitB3: 0.58, vitB5: 0.28, vitB6: 0.12 }, { unitGrams: { bol: 200, portion: 180 } }),
+  // ---- Protéines végétales (substituts de viande). Classées en féculent, comme les
+  //      légumineuses ci-dessus : l'app n'a pas de catégorie dédiée, et c'est le
+  //      groupe où l'on va naturellement les chercher. Le tofu y détonne un peu
+  //      (2 g de glucides), c'est le prix de la cohérence avec lentilles/pois chiches.
+  //
+  //      Ces valeurs varient PLUS que la moyenne de la base, d'un produit à l'autre :
+  //      le calcium du tofu dépend du coagulant (sulfate de calcium ~350 mg, nigari
+  //      ~120 mg au magnésium), le sodium du seitan de son assaisonnement (souvent
+  //      préparé à la sauce soja), et les kcal du seitan de son hydratation. À
+  //      corriger avec l'étiquette du produit réellement acheté.
+  f('tofu', 'Tofu ferme (nature)', 'feculent', ['tofu', 'tofu nature', 'tofu ferme', 'tofu fumé'], { kcal: 144, proteines: 15.8, glucides: 2.8, lipides: 8.7, fibres: 2.3, agSatures: 1.3, agMonoInsatures: 1.9, agPolyInsatures: 4.9, omega3Ala: 0.6, omega6: 4.3, omega9: 1.9, calcium: 200, fer: 2.7, magnesium: 58, potassium: 237, zinc: 1.6, selenium: 9, vitB9: 19, vitE: 0.5, vitB1: 0.16, vitB2: 0.1, vitB3: 0.4, vitB5: 0.13, vitB6: 0.09 }, { unitGrams: { portion: 125, tranche: 40, assiette: 150 } }),
+  f('tofu-soyeux', 'Tofu soyeux', 'feculent', ['tofu soyeux', 'tofu léger', 'tofu silken', 'tofu mou'], { kcal: 55, proteines: 5.5, glucides: 2, lipides: 2.7, fibres: 0.2, agSatures: 0.4, agMonoInsatures: 0.6, agPolyInsatures: 1.5, omega3Ala: 0.2, omega6: 1.3, omega9: 0.6, calcium: 30, fer: 0.9, magnesium: 27, potassium: 150, zinc: 0.6, selenium: 8, vitB9: 15, vitB1: 0.1, vitB2: 0.05, vitB3: 0.2, vitB5: 0.1, vitB6: 0.05 }, { unitGrams: { portion: 100, pot: 300, cas: 20 } }),
+  f('seitan', 'Seitan', 'feculent', ['seitan', 'gluten de blé', 'steak de seitan'], { kcal: 141, proteines: 25, glucides: 14, lipides: 1.9, fibres: 1.2, agSatures: 0.3, agMonoInsatures: 0.2, agPolyInsatures: 0.8, omega6: 0.8, sodium: 300, calcium: 30, fer: 1.5, magnesium: 25, potassium: 100, zinc: 0.9, selenium: 25, vitB9: 8, vitB1: 0.05, vitB2: 0.04, vitB3: 0.9, vitB5: 0.2, vitB6: 0.05 }, { unitGrams: { portion: 120, tranche: 40, assiette: 150 } }),
+  f('tempeh', 'Tempeh', 'feculent', ['tempeh', 'tempe'], { kcal: 192, proteines: 19, glucides: 9, lipides: 11, fibres: 4.5, agSatures: 2.2, agMonoInsatures: 3, agPolyInsatures: 6, omega3Ala: 0.4, omega6: 5.4, omega9: 2.9, calcium: 111, fer: 2.7, magnesium: 81, potassium: 412, zinc: 1.1, selenium: 7, vitB9: 24, vitB2: 0.36, vitB3: 2.6, vitB1: 0.08, vitB5: 0.28, vitB6: 0.22 }, { unitGrams: { portion: 100, tranche: 30, assiette: 150 } }),
+
   f('frites', 'Frites', 'feculent', ['frite', 'pommes frites'], { kcal: 290, proteines: 3.5, glucides: 36, lipides: 14, fibres: 3, agSatures: 2, agTrans: 0.3, agMonoInsatures: 5, agPolyInsatures: 6.5, omega6: 6.3, omega9: 5, potassium: 550, sodium: 250, vitC: 10, vitB1: 0.1, vitB2: 0.04, vitB3: 1.8, vitB5: 0.5, vitB6: 0.3 }, { unitGrams: { portion: 150, assiette: 250, poignee: 40 } }),
 
   // ============ VIANDES ============

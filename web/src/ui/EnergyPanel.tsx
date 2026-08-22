@@ -11,8 +11,17 @@ import {
   DAYS_PER_MONTH,
   SPORT_LABELS,
 } from '../nutrition/energy';
-import type { BmrFormula } from '../nutrition/energy';
+import { BMR_KEYS, bmrNeedsFfm, resolveBmrKey } from '../nutrition/energy';
+import type { BmrEstimate, BmrFormula } from '../nutrition/energy';
 import { fmt } from './format';
+
+/** Libellés courts du sélecteur — le tableau au-dessus porte déjà les noms complets. */
+const BMR_OPTION_LABELS: Record<BmrEstimate['key'], string> = {
+  mifflin: 'Mifflin-St Jeor',
+  roza: 'Harris-Benedict révisée',
+  cunningham: 'Cunningham (masse maigre)',
+  katch: 'Katch-McArdle (masse maigre)',
+};
 
 /**
  * Restitution du calcul de dépense : d'où viennent les calories dépensées, ce
@@ -47,6 +56,17 @@ export function EnergyPanel() {
   // laisserait croire à une perte garantie.
   const bornes = [e.kgParMoisMin, e.kgParMoisMax].sort((a, b) => a - b);
   const mgSource = profile.masseGrassePct != null ? 'saisie' : body.masseGrassePct != null ? 'pesée' : null;
+
+  // `ffm` est l'ancien libellé de Cunningham : on l'affiche sous son nom actuel,
+  // sinon le sélecteur retomberait sur « Automatique » pour un profil enregistré
+  // avant l'ouverture aux quatre formules.
+  const formuleChoisie: BmrFormula = profile.bmrFormule === 'ffm' ? 'cunningham' : profile.bmrFormule ?? 'auto';
+  // Formule demandée mais impossible à calculer faute de masse grasse — `auto`
+  // n'est jamais un repli, c'est son rôle de s'adapter en silence.
+  const replié =
+    formuleChoisie !== 'auto' && resolveBmrKey(formuleChoisie, e.masseMaigre != null) !== formuleChoisie
+      ? (formuleChoisie as BmrEstimate['key'])
+      : null;
 
   return (
     <div className="panel">
@@ -144,17 +164,35 @@ export function EnergyPanel() {
             indisponibles. Renseignez-la dans le profil ou enregistrez une pesée qui la contient.
           </div>
         )}
-        <label className="field" style={{ marginTop: 10, maxWidth: 320 }}>
+        <label className="field" style={{ marginTop: 10, maxWidth: 380 }}>
           Formule utilisée pour les cibles
           <select
-            value={profile.bmrFormule ?? 'auto'}
+            value={formuleChoisie}
             onChange={(ev) => setProfile({ bmrFormule: ev.target.value as BmrFormula })}
           >
             <option value="auto">Automatique (masse maigre si connue)</option>
-            <option value="ffm">Cunningham (masse maigre)</option>
-            <option value="mifflin">Mifflin-St Jeor</option>
+            {BMR_KEYS.map((key) => {
+              // Les formules à masse maigre restent listées sans masse grasse connue,
+              // mais désactivées : les masquer ferait croire qu'elles n'existent pas,
+              // alors que le tableau au-dessus vient d'expliquer pourquoi elles sont
+              // les plus justes. On dit qu'elles manquent, et ce qu'il faut pour elles.
+              const indispo = bmrNeedsFfm(key) && e.masseMaigre == null;
+              return (
+                <option key={key} value={key} disabled={indispo}>
+                  {BMR_OPTION_LABELS[key]}
+                  {indispo ? ' — masse grasse requise' : ''}
+                </option>
+              );
+            })}
           </select>
         </label>
+        {replié && (
+          <div className="hint" style={{ color: 'var(--warn)' }}>
+            ⚠️ La formule choisie ({BMR_OPTION_LABELS[replié]}) a besoin de la masse maigre, qui n'est plus connue :
+            les cibles utilisent Mifflin-St Jeor en attendant. Votre choix reste enregistré et reprendra effet dès
+            qu'une masse grasse sera renseignée.
+          </div>
+        )}
       </details>
 
       <details className="reco-settings" style={{ marginTop: 8 }}>

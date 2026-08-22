@@ -62,6 +62,15 @@ export const COLOR_BY_CAT = new Map(CATS.map((c) => [c.key, c.color]));
 const ExplorableCtx = createContext<Food[]>([]);
 const useExplorable = () => useContext(ExplorableCtx);
 
+/**
+ * Ids des aliments présents pour la comparaison mais **jamais mangés** (catalogue
+ * ajouté à la demande). Ils sont tracés en pointillés : sans ce marquage, un
+ * Pareto ne dirait plus si sa frontière est faite de ce qu'on mange ou de ce qu'on
+ * pourrait manger — deux lectures opposées.
+ */
+const NeverEatenCtx = createContext<ReadonlySet<string>>(new Set());
+const useNeverEaten = () => useContext(NeverEatenCtx);
+
 /** Nutriments sélectionnables (pilotés par la table RDA pour label + unité). */
 const NUT = RDA.map((r) => ({ key: r.key, label: r.label, unit: r.unit }));
 const NUT_LABEL = new Map(NUT.map((n) => [n.key, n.label]));
@@ -105,16 +114,31 @@ export function paretoFrontier<P extends ParetoPoint>(points: P[], xGoal: 'min' 
 
 type View = 'nuage' | 'correlation';
 
-export function FoodExplorer({ foods }: { foods: Food[] }) {
+export function FoodExplorer({ foods, jamaisManges }: { foods: Food[]; jamaisManges?: ReadonlySet<string> }) {
   const [view, setView] = useState<View>('nuage');
   const explorable = useMemo(() => foods.filter((f) => f.categorie !== 'supplement'), [foods]);
+  const neverEaten = useMemo(() => jamaisManges ?? new Set<string>(), [jamaisManges]);
+  const nbNonManges = useMemo(
+    () => explorable.reduce((n, f) => n + (neverEaten.has(f.id) ? 1 : 0), 0),
+    [explorable, neverEaten],
+  );
 
   return (
     <ExplorableCtx.Provider value={explorable}>
+      <NeverEatenCtx.Provider value={neverEaten}>
       <div className="panel">
         <p className="small" style={{ marginTop: 0, marginBottom: 8 }}>
           {explorable.length} aliments · valeurs pour 100 g. Croisez les nutriments, mesurez leurs corrélations,
           comparez les profils. Couleur = catégorie sur toutes les vues.
+          {nbNonManges > 0 && (
+            <>
+              {' '}
+              <span style={{ color: C.muted }}>
+                Dont {nbNonManges} jamais mangé{nbNonManges > 1 ? 's' : ''}, tracé
+                {nbNonManges > 1 ? 's' : ''} en pointillés.
+              </span>
+            </>
+          )}
         </p>
         <div className="row" style={{ gap: 6, flexWrap: 'wrap' }}>
           <button className={`ghost small ${view === 'nuage' ? 'chip-active' : ''}`} onClick={() => setView('nuage')}>
@@ -132,7 +156,8 @@ export function FoodExplorer({ foods }: { foods: Food[] }) {
       {view === 'nuage' && <ScatterView />}
       {view === 'correlation' && <CorrelationView />}
 
-      <CategoryLegend />
+      <CategoryLegend showNeverEaten={nbNonManges > 0} />
+      </NeverEatenCtx.Provider>
     </ExplorableCtx.Provider>
   );
 }
@@ -141,7 +166,7 @@ export function FoodExplorer({ foods }: { foods: Food[] }) {
 // Légende catégories (partagée)
 // ---------------------------------------------------------------------------
 
-function CategoryLegend() {
+function CategoryLegend({ showNeverEaten = false }: { showNeverEaten?: boolean }) {
   return (
     <div className="panel">
       <div className="small" style={{ marginBottom: 8 }}>Catégories</div>
@@ -152,6 +177,14 @@ function CategoryLegend() {
             <span className="small" style={{ color: C.text }}>{c.label}</span>
           </span>
         ))}
+        {showNeverEaten && (
+          <span className="row" style={{ gap: 5, alignItems: 'center' }}>
+            <svg width={14} height={14} aria-hidden>
+              <circle cx={7} cy={7} r={5} fill={C.muted} fillOpacity={0.35} stroke={C.muted} strokeWidth={1.5} strokeDasharray="3 2" />
+            </svg>
+            <span className="small" style={{ color: C.muted }}>Jamais mangé (catalogue)</span>
+          </span>
+        )}
       </div>
     </div>
   );
@@ -251,6 +284,7 @@ function NutSelect({ label, value, onChange, allowNone }: {
 // ===========================================================================
 
 function ScatterView() {
+  const neverEaten = useNeverEaten();
   const [xk, setXk] = useState<NutrientKey>('kcal');
   const [yk, setYk] = useState<NutrientKey>('proteines');
   const [sizeK, setSizeK] = useState<NutrientKey | 'none'>('none');
@@ -602,6 +636,7 @@ function ScatterView() {
               {points.map((p, i) => {
                 const onFront = pareto && frontierSet.has(p.f.id);
                 const isHover = hover?.i === i;
+                const jamais = neverEaten.has(p.f.id);
                 const r = radius(p.s);
                 // Zone de tap agrandie et invisible : sur mobile, les bulles réelles (souvent
                 // 3-8 px) sont trop petites pour viser précisément au doigt. Le survol (souris)
@@ -614,9 +649,14 @@ function ScatterView() {
                       cy={cy(p.y)}
                       r={r * (isHover ? 1.35 : 1)}
                       fill={COLOR_BY_CAT.get(p.f.categorie)}
-                      fillOpacity={onFront ? 0.95 : 0.72}
-                      stroke={onFront ? C.accent2 : isHover ? C.text : 'none'}
-                      strokeWidth={onFront ? 2 : isHover ? 1.5 : 0}
+                      // Jamais mangé : rempli plus clair et cerclé de pointillés. Le
+                      // contour reste celui de Pareto quand le point est sur la
+                      // frontière — c'est justement là qu'il faut voir d'un coup d'œil
+                      // si le meilleur compromis est un aliment habituel ou une piste.
+                      fillOpacity={jamais ? 0.34 : onFront ? 0.95 : 0.72}
+                      stroke={onFront ? C.accent2 : isHover ? C.text : jamais ? C.muted : 'none'}
+                      strokeWidth={onFront ? 2 : isHover ? 1.5 : jamais ? 1.5 : 0}
+                      strokeDasharray={jamais ? '3 2' : undefined}
                       pointerEvents="none"
                     />
                     <circle
@@ -669,6 +709,7 @@ function ScatterView() {
               <Tooltip px={hover.px} py={hover.py}>
                 <strong>{p.f.nom}</strong>
                 {frontierSet.has(p.f.id) && pareto && <span style={{ color: C.accent2 }}> · Pareto</span>}
+                {neverEaten.has(p.f.id) && <span style={{ color: C.muted }}> · jamais mangé</span>}
                 <br />
                 {NUT_LABEL.get(xk)} : {fmt(p.x, p.x < 10 ? 1 : 0)} {NUT_UNIT.get(xk)} /100 g
                 <br />

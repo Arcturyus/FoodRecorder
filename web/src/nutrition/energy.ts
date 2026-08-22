@@ -168,7 +168,14 @@ export const TDEE_UNCERTAINTY_PCT = 12;
 // Calcul complet
 // ---------------------------------------------------------------------------
 
-export type BmrFormula = 'auto' | 'mifflin' | 'ffm';
+/**
+ * Formule de métabolisme de base retenue pour les cibles. `auto` prend la plus
+ * juste possible avec ce qu'on sait du corps : Cunningham dès que la masse maigre
+ * est connue, Mifflin sinon. Les autres valeurs forcent une formule précise.
+ * `ffm` est l'ancien nom de `cunningham`, gardé pour les profils déjà enregistrés
+ * (et la synchro entre appareils) ; `resolveBmrKey` le traduit.
+ */
+export type BmrFormula = 'auto' | 'mifflin' | 'roza' | 'cunningham' | 'katch' | 'ffm';
 
 export interface EnergyInput {
   sexe: Sex;
@@ -225,6 +232,34 @@ export interface EnergyBreakdown {
   kgParMoisMax: number;
 }
 
+/** Les quatre formules sélectionnables, dans l'ordre où l'UI les présente. */
+export const BMR_KEYS = ['mifflin', 'roza', 'cunningham', 'katch'] as const;
+
+/** Vrai si la formule a besoin de la masse maigre, donc du % de masse grasse. */
+export function bmrNeedsFfm(key: BmrEstimate['key']): boolean {
+  return key === 'cunningham' || key === 'katch';
+}
+
+/**
+ * Traduit le choix de l'utilisateur en formule effectivement calculable.
+ *
+ * Deux replis, tous deux vers Mifflin — la référence quand la composition
+ * corporelle est inconnue :
+ *  - `auto` sans masse maigre (le cas de départ, avant toute pesée à impédance) ;
+ *  - une formule à masse maigre explicitement choisie, alors que la masse grasse
+ *    a disparu depuis (profil vidé, pesée supprimée). Mieux vaut un métabolisme
+ *    calculé par une autre formule qu'un panneau en erreur : le repli est signalé
+ *    dans l'UI, qui laisse le choix enregistré intact pour le jour où la mesure
+ *    revient.
+ */
+export function resolveBmrKey(formule: BmrFormula, hasFfm: boolean): BmrEstimate['key'] {
+  if (formule === 'auto') return hasFfm ? 'cunningham' : 'mifflin';
+  // `ffm` : ancien libellé d'avant l'ouverture aux quatre formules.
+  const key = formule === 'ffm' ? 'cunningham' : formule;
+  if (bmrNeedsFfm(key) && !hasFfm) return 'mifflin';
+  return key;
+}
+
 /** Masse maigre (kg) à partir du poids et du % de masse grasse. */
 export function masseMaigreDe(poids: number, masseGrassePct?: number): number | null {
   if (masseGrassePct == null || !Number.isFinite(masseGrassePct)) return null;
@@ -275,10 +310,7 @@ export function computeEnergy(input: EnergyInput): EnergyBreakdown {
     );
   }
 
-  // Formule retenue : la masse maigre l'emporte quand elle est connue (choix « auto »).
-  let bmrKey: BmrEstimate['key'] = 'mifflin';
-  if (input.formule === 'ffm' && ffm != null) bmrKey = 'cunningham';
-  else if (input.formule === 'auto' && ffm != null) bmrKey = 'cunningham';
+  const bmrKey = resolveBmrKey(input.formule, ffm != null);
   const bmr = estimates.find((e) => e.key === bmrKey)!.value;
 
   const neatPas = Math.round(pasParJour * poids * KCAL_PER_STEP_PER_KG);
