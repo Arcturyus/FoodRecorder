@@ -10,6 +10,13 @@ export interface Nutrients {
   lipides: number;
   fibres: number;
   /**
+   * g d'éthanol pur. 7 kcal/g : des calories qui n'apparaissent dans aucune des
+   * trois macros — sans ce champ, les 43 kcal d'une bière ou les 83 kcal d'un
+   * verre de vin sortaient de nulle part et creusaient l'écart entre les kcal de
+   * la table et celles reconstituées. Un verre standard ≈ 10 g.
+   */
+  alcool: number;
+  /**
    * g — TOTAL des acides gras saturés. Fourre-tout : il additionne des acides
    * gras qui ne se comportent pas pareil (cf. les deux sous-ensembles ci-dessous).
    * Sert de filet de sécurité (plafond haut) ; le vrai plafond porte sur
@@ -186,7 +193,7 @@ export interface ComputedItem {
 }
 
 export const EMPTY_NUTRIENTS: Nutrients = {
-  kcal: 0, proteines: 0, glucides: 0, lipides: 0, fibres: 0,
+  kcal: 0, proteines: 0, glucides: 0, lipides: 0, fibres: 0, alcool: 0,
   agSatures: 0, agSaturesLdl: 0, agSaturesStearique: 0,
   agTrans: 0, agMonoInsatures: 0, agPolyInsatures: 0, omega3: 0, omega6: 0, omega9: 0,
   omega3Ala: 0, omega3Epa: 0, omega3Dha: 0,

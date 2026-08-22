@@ -9,7 +9,7 @@ import { round } from './format';
  * du bilan.
  */
 export const DETAIL_GROUPS: { title: string; keys: NutrientKey[] }[] = [
-  { title: 'Macros', keys: ['kcal', 'proteines', 'glucides', 'lipides', 'fibres'] },
+  { title: 'Macros', keys: ['kcal', 'proteines', 'glucides', 'lipides', 'fibres', 'alcool'] },
   {
     title: 'Lipides & oméga',
     keys: [

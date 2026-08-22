@@ -38,17 +38,24 @@ const C = {
 const SLOT_COLOR = ['#5b8cff', '#f5a623'] as const;
 
 /**
- * Nutriments comparables : tout sauf les calories (constantes en densité
- * /100 kcal) et sauf les SOUS-DÉTAILS (C16+C14, stéarique). Un sous-détail est
- * par construction colinéaire avec son parent : le garder ferait compter deux
- * fois la même information dans la similarité cosinus et étirerait artificiellement
- * l'axe « gras saturé » de l'ACP.
+ * Nutriments manipulables ici : tout sauf les calories (constantes en densité
+ * /100 kcal). Deux univers distincts en découlent, parce que voir un nutriment
+ * et le faire entrer dans un calcul ne demandent pas la même chose :
+ *
+ *  - `DISPLAY_KEYS` — ce qu'on peut AFFICHER (barres A/B, radar) : tout, y
+ *    compris les sous-détails (C16+C14, stéarique). Les lire côte à côte est
+ *    justement l'intérêt du comparateur.
+ *  - `ANALYSIS_KEYS` — ce qui entre dans un CALCUL de distance (similarité
+ *    cosinus des voisins, ACP de la carte) : sans les sous-détails. Un
+ *    sous-détail est colinéaire avec son parent ; le garder compterait deux fois
+ *    la même information et étirerait artificiellement l'axe « gras saturé ».
  */
-const NUT = RDA.filter((r) => r.key !== 'kcal' && !r.parent).map((r) => ({ key: r.key, label: r.label, unit: r.unit }));
+const NUT = RDA.filter((r) => r.key !== 'kcal').map((r) => ({ key: r.key, label: r.label, unit: r.unit }));
 const NUT_LABEL = new Map(NUT.map((n) => [n.key, n.label]));
 const NUT_UNIT = new Map(NUT.map((n) => [n.key, n.unit]));
 const NUT_RDA = new Map(RDA.map((r) => [r.key, r.rda]));
-const COMPARABLE_KEYS = NUT.map((n) => n.key);
+const DISPLAY_KEYS = NUT.map((n) => n.key);
+const ANALYSIS_KEYS = RDA.filter((r) => r.key !== 'kcal' && !r.parent).map((r) => r.key);
 
 /** Jeu de nutriments actifs par défaut : un représentant lisible par famille. */
 const DEFAULT_ACTIVE: NutrientKey[] = [
@@ -78,15 +85,20 @@ function normalizedValue(food: Food, key: NutrientKey, mode: NormMode): number {
 // Sélection de nutriments par graphique (état local + sélecteur compact)
 // ---------------------------------------------------------------------------
 
-/** État d'une sélection de nutriments propre à un graphe (+ ouverture du sélecteur). */
-function useNutrientSelection(initial: NutrientKey[]) {
+/**
+ * État d'une sélection de nutriments propre à un graphe (+ ouverture du
+ * sélecteur). `universe` dit ce que CE graphe accepte : tout pour un affichage,
+ * les seules clés non colinéaires pour un calcul de distance.
+ */
+function useNutrientSelection(initial: NutrientKey[], universe: NutrientKey[] = DISPLAY_KEYS) {
+  const universeSet = useMemo(() => new Set(universe), [universe]);
   const [active, setActive] = useState<NutrientKey[]>(initial);
   const [pickerOpen, setPickerOpen] = useState(false);
   const activeSet = useMemo(() => new Set(active), [active]);
-  const activeKeys = useMemo(() => COMPARABLE_KEYS.filter((k) => activeSet.has(k)), [activeSet]);
+  const activeKeys = useMemo(() => universe.filter((k) => activeSet.has(k)), [universe, activeSet]);
   const toggle = (k: NutrientKey) =>
     setActive((prev) => (prev.includes(k) ? prev.filter((x) => x !== k) : [...prev, k]));
-  return { active, activeSet, activeKeys, setActive, toggle, pickerOpen, setPickerOpen };
+  return { active, activeSet, activeKeys, universe, universeSet, setActive, toggle, pickerOpen, setPickerOpen };
 }
 type NutSel = ReturnType<typeof useNutrientSelection>;
 
@@ -110,11 +122,11 @@ function NutrientChipsBlock({ sel, defaultKeys }: { sel: NutSel; defaultKeys: Nu
     <div style={{ marginTop: 8, padding: 10, border: `1px solid ${C.border}`, borderRadius: 8 }}>
       <div className="row" style={{ gap: 6, marginBottom: 4 }}>
         <button className="ghost small" onClick={() => sel.setActive(defaultKeys)}>Défaut</button>
-        <button className="ghost small" onClick={() => sel.setActive(COMPARABLE_KEYS)}>Tout</button>
+        <button className="ghost small" onClick={() => sel.setActive(sel.universe)}>Tout</button>
         <button className="ghost small" onClick={() => sel.setActive([])}>Aucun</button>
       </div>
       {NUTRIENT_GROUPS.map((g) => {
-        const keys = g.keys.filter((k) => k !== 'kcal' && NUT_LABEL.has(k));
+        const keys = g.keys.filter((k) => k !== 'kcal' && sel.universeSet.has(k));
         if (keys.length === 0) return null;
         return (
           <div key={g.title} style={{ marginTop: 8 }}>
@@ -169,7 +181,7 @@ export function FoodCompare({
   // est neutralisé et la carte s'aplatit (ex. « tout au milieu » avec 3 macros dont
   // 2 peu pondérés). L'utilisateur l'active sciemment pour refléter ses priorités.
   const [weighted, setWeighted] = useState(false);
-  const [showArrows, setShowArrows] = useState(true);
+  const [arrowMode, setArrowMode] = useState<ArrowMode>('main');
   const [hideCats, setHideCats] = useState<Set<FoodCategory>>(new Set());
 
   const byId = useMemo(() => new Map(foods.map((f) => [f.id, f])), [foods]);
@@ -235,8 +247,8 @@ export function FoodCompare({
         mode={mode}
         weightFor={weightFor}
         selected={[foodA, foodB]}
-        showArrows={showArrows}
-        setShowArrows={setShowArrows}
+        arrowMode={arrowMode}
+        setArrowMode={setArrowMode}
         hideCats={hideCats}
         setHideCats={setHideCats}
         onPick={setSlot}
@@ -332,7 +344,7 @@ function FoodPicker({
 const RATIO_CAP = 4;
 
 function DivergentBars({ a, b, mode }: { a: Food; b: Food; mode: NormMode }) {
-  const sel = useNutrientSelection(DEFAULT_ACTIVE);
+  const sel = useNutrientSelection(DEFAULT_ACTIVE, DISPLAY_KEYS);
   const keys = sel.activeKeys;
 
   const rows = useMemo(() => {
@@ -453,7 +465,7 @@ function DivergentBars({ a, b, mode }: { a: Food; b: Food; mode: NormMode }) {
 // ---------------------------------------------------------------------------
 
 function RadarCompare({ a, b, mode }: { a: Food; b: Food; mode: NormMode }) {
-  const sel = useNutrientSelection(DEFAULT_ACTIVE);
+  const sel = useNutrientSelection(DEFAULT_ACTIVE, DISPLAY_KEYS);
   const keys = sel.activeKeys;
 
   const axes = useMemo(() => {
@@ -576,7 +588,7 @@ function NeighborsPanel({
   weightFor: (k: NutrientKey) => number;
   onPick: (slot: 0 | 1, id: string) => void;
 }) {
-  const sel = useNutrientSelection(COMPARABLE_KEYS);
+  const sel = useNutrientSelection(ANALYSIS_KEYS, ANALYSIS_KEYS);
   const activeKeys = sel.activeKeys;
   const data = useNeighborData(foods, activeKeys, mode, weightFor);
   const [detailKey, setDetailKey] = useState<string | null>(null);
@@ -777,13 +789,34 @@ const ZOOM_MAX = 24;
 type EmbedMethod = 'pca' | 'tsne' | 'mds';
 const METHOD_LABEL: Record<EmbedMethod, string> = { pca: 'ACP', tsne: 't-SNE', mds: 'MDS' };
 
+/**
+ * Fléchage de la carte ACP. `main` (défaut) ne trace que les nutriments les plus
+ * contributifs : c'est la lecture normale d'un biplot — les 34 flèches
+ * complètes se recouvrent et disent surtout du bruit. `all` reste accessible
+ * pour qui veut vérifier une direction précise.
+ */
+type ArrowMode = 'none' | 'main' | 'all';
+/** Nombre de directions fléchées en mode `main`. */
+const MAIN_ARROWS = 10;
+/**
+ * Cosinus au-delà duquel deux flèches sont tenues pour la même direction et
+ * partagent une étiquette (0,985 ≈ 10° d'écart).
+ */
+const COLINEAR_COS = 0.985;
+const ARROW_LABEL: Record<ArrowMode, string> = {
+  none: 'Flèches : aucune',
+  main: `Flèches : principales (${MAIN_ARROWS})`,
+  all: 'Flèches : toutes',
+};
+const NEXT_ARROW_MODE: Record<ArrowMode, ArrowMode> = { none: 'main', main: 'all', all: 'none' };
+
 function PcaBiplot({
   foods,
   mode,
   weightFor,
   selected,
-  showArrows,
-  setShowArrows,
+  arrowMode,
+  setArrowMode,
   hideCats,
   setHideCats,
   onPick,
@@ -792,13 +825,13 @@ function PcaBiplot({
   mode: NormMode;
   weightFor: (k: NutrientKey) => number;
   selected: [Food | null, Food | null];
-  showArrows: boolean;
-  setShowArrows: (v: boolean) => void;
+  arrowMode: ArrowMode;
+  setArrowMode: (v: ArrowMode) => void;
   hideCats: Set<FoodCategory>;
   setHideCats: (s: Set<FoodCategory>) => void;
   onPick: (slot: 0 | 1, id: string) => void;
 }) {
-  const sel = useNutrientSelection(COMPARABLE_KEYS);
+  const sel = useNutrientSelection(ANALYSIS_KEYS, ANALYSIS_KEYS);
   const activeKeys = sel.activeKeys;
   const svgRef = useRef<SVGSVGElement>(null);
   const [hover, setHover] = useState<{ id: string; px: number; py: number } | null>(null);
@@ -1018,8 +1051,12 @@ function PcaBiplot({
                   </button>
                 ))}
                 {isPca && (
-                  <button className={`ghost small ${showArrows ? 'chip-active' : ''}`} onClick={() => setShowArrows(!showArrows)}>
-                    Flèches nutriments
+                  <button
+                    className={`ghost small ${arrowMode !== 'none' ? 'chip-active' : ''}`}
+                    onClick={() => setArrowMode(NEXT_ARROW_MODE[arrowMode])}
+                    data-tip="Directions des nutriments dans le plan de l'ACP. Les principales sont les plus contributives ; les autres pointent dans les mêmes directions en plus court."
+                  >
+                    {ARROW_LABEL[arrowMode]}
                   </button>
                 )}
                 <input
@@ -1088,20 +1125,81 @@ function PcaBiplot({
                   <line x1={m.left} x2={W - m.right} y1={originY} y2={originY} stroke={C.border} strokeWidth={1} opacity={0.6} />
 
                   <g clipPath="url(#pca-clip)">
-                    {pcaRes && showArrows &&
-                      pcaRes.loadings.map((l) => {
-                        const x2 = ax(l.x);
-                        const y2 = ay(l.y);
-                        if (Math.hypot(l.x, l.y) < loadR * 0.12) return null; // flèches trop courtes : ignorées
+                    {pcaRes && arrowMode !== 'none' && (() => {
+                      const ranked = pcaRes.loadings
+                        // Flèches trop courtes : elles n'orientent pas la lecture.
+                        .filter((l) => Math.hypot(l.x, l.y) >= loadR * 0.12)
+                        // Les plus contributives d'abord : elles représenteront leur direction.
+                        .sort((a, b) => Math.hypot(b.x, b.y) - Math.hypot(a.x, a.y));
+
+                      /**
+                       * Regroupement par DIRECTION. Deux nutriments dont les flèches pointent
+                       * au même endroit disent exactement la même chose de la carte — vitamine
+                       * D, oméga 3, créatine et collagène sont tous les marqueurs du poisson
+                       * et de la viande. Les tracer séparément empilait leurs noms au même
+                       * pixel sans rien ajouter : un seul trait les porte, nommé pour tous.
+                       */
+                      const groups: { x: number; y: number; keys: NutrientKey[] }[] = [];
+                      for (const l of ranked) {
+                        const r = Math.hypot(l.x, l.y) || 1;
+                        const g = groups.find((gr) => {
+                          const rr = Math.hypot(gr.x, gr.y) || 1;
+                          return (gr.x * l.x + gr.y * l.y) / (rr * r) >= COLINEAR_COS;
+                        });
+                        if (g) g.keys.push(l.key);
+                        else groups.push({ x: l.x, y: l.y, keys: [l.key] });
+                      }
+                      const arrows = groups.slice(0, arrowMode === 'main' ? MAIN_ARROWS : Infinity);
+
+                      /**
+                       * Les longueurs d'un biplot sont de toute façon à une échelle
+                       * arbitraire (scores et loadings ne vivent pas dans le même repère) :
+                       * on la resserre pour que TOUTES les pointes tiennent dans le cadre,
+                       * marge d'étiquette comprise. Sans ça, les flèches longues sortaient du
+                       * graphe et leurs noms s'empilaient les uns sur les autres au bord.
+                       */
+                      const room = (dx: number, dy: number) => {
+                        const limX = dx > 0 ? W - m.right - 46 - originX : originX - (m.left + 46);
+                        const limY = dy > 0 ? H - m.bottom - 14 - originY : originY - (m.top + 14);
+                        return Math.min(
+                          Math.abs(dx) > 0.5 ? Math.abs(limX) / Math.abs(dx) : 1,
+                          Math.abs(dy) > 0.5 ? Math.abs(limY) / Math.abs(dy) : 1,
+                        );
+                      };
+                      const fit = Math.max(
+                        0.15,
+                        Math.min(1, ...arrows.map((l) => room(ax(l.x) - originX, ay(l.y) - originY))),
+                      );
+
+                      return arrows.map((l) => {
+                        const x2 = originX + (ax(l.x) - originX) * fit;
+                        const y2 = originY + (ay(l.y) - originY) * fit;
+                        // L'étiquette part de la pointe VERS L'INTÉRIEUR du cadre : ancrée
+                        // « middle », celles qui pointaient à gauche commençaient à une
+                        // abscisse négative et étaient rognées par le bord gauche.
+                        const anchor = x2 < originX ? 'start' : 'end';
+                        const names = l.keys.map((k) => NUT_LABEL.get(k) ?? k);
+                        // Au-delà de deux noms, la liste ne tiendrait plus : le compte suffit,
+                        // le détail est dans l'info-bulle native du trait.
+                        const label = names.length <= 2 ? names.join(', ') : `${names[0]}, ${names[1]} +${names.length - 2}`;
                         return (
-                          <g key={l.key} opacity={0.75}>
+                          <g key={l.keys.join('|')} opacity={0.75}>
+                            <title>{names.join(' · ')}</title>
                             <line x1={originX} y1={originY} x2={x2} y2={y2} stroke={C.accent} strokeWidth={1.2} />
-                            <text x={x2} y={y2} fontSize={10} fill={C.accent} textAnchor="middle" dominantBaseline="middle">
-                              {NUT_LABEL.get(l.key)}
+                            <text
+                              x={x2}
+                              y={y2}
+                              dy={y2 < originY ? -5 : 11}
+                              fontSize={10}
+                              fill={C.accent}
+                              textAnchor={anchor}
+                            >
+                              {label}
                             </text>
                           </g>
                         );
-                      })}
+                      });
+                    })()}
 
                     {/* Trait entre les deux sélectionnés. */}
                     {selected[0] && selected[1] && (() => {

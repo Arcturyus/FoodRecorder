@@ -112,6 +112,16 @@ export const RDA: RdaEntry[] = [
     lowNote: 'Transit ralenti, microbiote appauvri ; mortalité toutes causes plus élevée dans les cohortes.',
   },
   {
+    // Plafond OMS 2023 plutôt que le repère français (2 verres/j) : les deux
+    // existent, mais l'OMS et le CIRC écrivent qu'aucun niveau de consommation
+    // n'est sans risque. Le plafond retenu vaut donc UN verre standard, et la
+    // cible basse est zéro — cf. le guide pour ce qui est établi et ce qui l'est
+    // moins dans ce chiffre.
+    key: 'alcool', label: 'Alcool', unit: 'g', rda: 10, goal: 'limit', optimalLow: 0, upper: 20, toxic: 60,
+    role: 'Éthanol pur : 7 kcal/g qui ne nourrissent rien, et un cancérogène avéré (CIRC groupe 1).',
+    optimalNote: "Plafond 10 g/j = 1 verre standard (un demi de bière, un ballon de vin). L'OMS ne reconnaît aucun seuil sans risque : la cible idéale est 0, le plafond est un compromis d'usage.",
+  },
+  {
     key: 'agSatures', label: 'AG saturés', unit: 'g', rda: 30, goal: 'limit', optimalLow: 20, importance: 0.5,
     role: 'Total des acides gras saturés — un fourre-tout : c\'est le palmitique et le myristique qui élèvent le LDL, pas le stéarique.',
     optimalNote: 'Devenu un FILET DE SÉCURITÉ (plafond 30 g, idéal ≤ 20 g), avec un poids réduit : le vrai plafond porte sur les deux sous-détails ci-dessous, pour ne pas pénaliser deux fois le même excès. Le total sert surtout à couvrir la part non détaillée (laurique C12, chaînes courtes des laitages). Voir « AG saturés : tous ne se valent pas » dans Nutriments.',

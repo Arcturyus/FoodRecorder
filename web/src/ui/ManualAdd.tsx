@@ -28,6 +28,8 @@ export function ManualAdd({ date, title }: { date?: string; title?: string } = {
   const [quantite, setQuantite] = useState('100');
   const [unite, setUnite] = useState<Unit>('g');
   const [flash, setFlash] = useState('');
+  /** Second clic demandé quand la quantité saisie est démesurée (cf. `ABSURDE_KCAL`). */
+  const [confirmBig, setConfirmBig] = useState(false);
 
   const match = (f: Food, q: string) => {
     const hay = [f.nom, ...f.aliases].map(normalizeForMatch);
@@ -82,12 +84,32 @@ export function ManualAdd({ date, title }: { date?: string; title?: string } = {
   }
 
   const qNum = parseFloat(quantite.replace(',', '.'));
+  // Réinitialise la confirmation dès que la saisie change : elle ne vaut que
+  // pour la quantité exacte qu'on avait sous les yeux.
+  const qKey = `${quantite}|${unite}|${selected?.id ?? ''}`;
+  const [confirmedKey, setConfirmedKey] = useState('');
   const grams = selected && qNum > 0 ? toGrams({ aliment: selected.nom, quantite: qNum, unite, estimation: false }, selected) : 0;
   const kcal = selected && grams > 0 ? scaleNutrients(selected.n, grams).kcal : 0;
   const canAdd = selected !== null && qNum > 0;
+  /**
+   * Une saisie au-delà de ce seuil est presque toujours une confusion d'unité
+   * (« 99 999 » tapé en pensant grammes sur une unité « pièce ») : un seul clic
+   * suffisait à ruiner toutes les moyennes de la période. On n'interdit rien —
+   * 3 kg de riz cuit, ça existe — on demande de confirmer.
+   */
+  const ABSURDE_KCAL = 5000;
+  const absurde = canAdd && kcal > ABSURDE_KCAL;
+  const pending = absurde && confirmBig && confirmedKey === qKey;
 
   function add() {
     if (!selected || !(qNum > 0)) return;
+    // Premier clic sur une quantité démesurée : on demande confirmation.
+    if (absurde && !pending) {
+      setConfirmBig(true);
+      setConfirmedKey(qKey);
+      return;
+    }
+    setConfirmBig(false);
     addFoodEntry(selected, qNum, unite, date);
     const when = date ? ` au ${new Date(`${date}T00:00:00`).toLocaleDateString('fr-FR')}` : '';
     setFlash(`Ajouté${when} : ${fmt(qNum, 2)} ${UNIT_LABELS[unite]} de ${selected.nom} (${fmt(kcal)} kcal).`);
@@ -128,7 +150,13 @@ export function ManualAdd({ date, title }: { date?: string; title?: string } = {
                 </div>
                 <span />
                 <span />
-                <button className="ghost small" onClick={(e) => { e.stopPropagation(); pick(f); }}>
+                {/* Le nom de l'aliment est dans l'aria-label, pas seulement à l'écran :
+                    seize boutons « Choisir » alignés se lisent tous pareil à la voix. */}
+                <button
+                  className="ghost small"
+                  aria-label={`Choisir ${f.nom}`}
+                  onClick={(e) => { e.stopPropagation(); pick(f); }}
+                >
                   Choisir
                 </button>
               </div>
@@ -152,7 +180,11 @@ export function ManualAdd({ date, title }: { date?: string; title?: string } = {
               </div>
               <span />
               <span />
-              <button className="ghost small" onClick={(e) => { e.stopPropagation(); pick(f); }}>
+              <button
+                className="ghost small"
+                aria-label={`Choisir ${f.nom} (catalogue)`}
+                onClick={(e) => { e.stopPropagation(); pick(f); }}
+              >
                 Choisir
               </button>
             </div>
@@ -174,6 +206,8 @@ export function ManualAdd({ date, title }: { date?: string; title?: string } = {
             <NumberField
               min={0}
               step={1}
+              inputStep="any"
+              adaptiveStep
               value={quantite}
               onChange={setQuantite}
               autoFocus
@@ -193,9 +227,19 @@ export function ManualAdd({ date, title }: { date?: string; title?: string } = {
           <span className="small mono" style={{ flex: 1 }}>
             = {fmt(grams)} g · {fmt(kcal)} kcal
           </span>
-          <button className="primary" disabled={!canAdd} onClick={add}>
-            Ajouter
+          <button className={pending ? 'danger' : 'primary'} disabled={!canAdd} onClick={add}>
+            {pending ? 'Confirmer' : 'Ajouter'}
           </button>
+        </div>
+      )}
+
+      {absurde && (
+        <div className="hint" style={{ marginTop: 8, borderColor: 'var(--warn)', color: 'var(--warn)' }}>
+          ⚠ {fmt(qNum, 2)} {UNIT_LABELS[unite]} de {selected.nom}
+          {unite !== 'g' && ` = ${fmt(grams)} g`}, soit {fmt(kcal)} kcal — l'équivalent de{' '}
+          {fmt(kcal / 2000, 1)} journées d'alimentation.{' '}
+          {unite !== 'g' && unite !== 'ml' && `Vouliez-vous dire ${fmt(qNum, 2)} g ?`}{' '}
+          {pending ? "Cliquez « Confirmer » pour l'ajouter quand même." : "Un second clic sur « Ajouter » sera demandé."}
         </div>
       )}
 
