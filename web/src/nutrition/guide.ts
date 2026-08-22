@@ -119,6 +119,17 @@ export const NUTRIENT_GUIDE: Partial<Record<NutrientKey, NutrientGuide>> = {
   },
 
   // ------------------------------------------------------ lipides & oméga
+  alcool: {
+    evidence: {
+      level: 'discute',
+      text: "Deux choses très différentes se cachent derrière ce chiffre. Le caractère cancérogène est ÉTABLI : le CIRC classe les boissons alcoolisées groupe 1 depuis 1988, l'acétaldéhyde qu'elles produisent aussi, et la relation est dose-dépendante sans seuil visible pour le sein et l'œsophage — environ +7 à +10 % de risque de cancer du sein par 10 g/j. Ce qui est DISCUTÉ, c'est où poser le plafond. Le fameux bénéfice cardiovasculaire du verre quotidien reposait sur des cohortes où le groupe « zéro alcool » contenait d'anciens buveurs malades (biais du sick quitter) ; les études de randomisation mendélienne, qui comparent des porteurs de variants ALDH2 buvant naturellement moins, ne le retrouvent pas. Le Global Burden of Disease 2018 conclut que le niveau minimisant le risque global est 0. D'où le plafond retenu ici (10 g/j, un verre) plutôt que les 20 g/j du repère français : c'est un compromis d'usage, pas un seuil de sécurité démontré.",
+    },
+    low: "Aucun besoin physiologique : l'éthanol n'est pas un nutriment, le corps n'en réclame pas et la carence n'existe pas. L'apport idéal est 0 g/j, et c'est la seule ligne de cette page avec les AG trans où le bas de l'échelle n'a aucun inconvénient.",
+    role: "Éthanol pur. Il apporte 7 kcal/g — presque autant que le gras, sans protéine, sans vitamine, sans minéral : des calories qui ne construisent rien. Le foie l'oxyde en priorité absolue (alcool déshydrogénase → acétaldéhyde → acétate), au rythme d'environ 7 à 10 g par heure, ce qui met en pause l'oxydation des graisses pendant tout ce temps. L'acétaldéhyde intermédiaire est le vrai coupable : il abîme l'ADN et les protéines. Effets secondaires souvent sous-estimés : il fragmente la seconde moitié de nuit et supprime le sommeil paradoxal, il réduit la synthèse protéique musculaire après l'effort (de l'ordre de 25 à 35 % à forte dose), et il augmente les besoins en vitamine B1 tout en gênant son absorption.",
+    higher: "Sans objet : il n'existe pas de dose à laquelle en boire davantage apporte quelque chose de mesurable. Les polyphénols du vin rouge invoqués comme bénéfice se trouvent dans le raisin, les fruits rouges et le thé, sans l'éthanol qui va avec.",
+    high: "Le plafond de cette page (10 g/j = 1 verre) est déjà une tolérance. Les repères français (Santé publique France 2017) autorisent 2 verres par jour et 10 par semaine, avec des jours sans. Au-delà, les risques se rangent par ordre d'apparition : tension artérielle et fibrillation auriculaire montent dès la consommation modérée (environ +8 % de risque de fibrillation par verre quotidien) ; la stéatose hépatique s'installe en quelques semaines à 40 g/j ; la cirrhose devient un vrai risque au-delà de ~30 g/j chez l'homme et ~20 g/j chez la femme, tenus sur des années. Une remarque de méthode : la répartition compte autant que le total — 70 g le samedi soir ne valent pas 10 g par jour, l'ivresse aiguë ayant ses propres dégâts (accidents, arythmies, gastrite).",
+    tip: "En pratique, le levier n'est pas le verre isolé mais la régularité : des jours sans alcool dans la semaine changent plus le total que passer du vin à la bière. Et pour qui suit ses calories, c'est le poste le plus discret — trois pintes ajoutent l'équivalent d'un repas sans jamais rassasier.",
+  },
   agSatures: {
     evidence: {
       level: 'discute',

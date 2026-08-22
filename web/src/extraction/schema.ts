@@ -110,6 +110,7 @@ export function validateExtraction(raw: unknown): ExtractedItem[] | null {
 export const NUTRIMENTS_PROMPT_DOC = `Toutes les valeurs sont POUR 100 g d'aliment. Unités :
 - kcal : énergie en kcal
 - proteines, glucides, lipides, fibres : g
+- alcool : g d'éthanol PUR pour 100 g (0 pour tout aliment non alcoolisé). Repères : bière 5° ≈ 4 g, vin 12,5° ≈ 10 g, spiritueux 40° ≈ 32 g, et il compte pour 7 kcal/g — les kcal d'une boisson alcoolisée viennent surtout de là, pas des glucides.
 - agSatures, agMonoInsatures, agPolyInsatures, omega3, omega6, omega9 : g (omega3/6 ⊂ poly-insaturés, omega9 ⊂ mono-insaturés)
 - agSaturesLdl, agSaturesStearique : g — RÉPARTITION des AG saturés (sous-ensembles de agSatures, à renseigner dès que agSatures > 0).
   · agSaturesLdl = palmitique C16:0 + myristique C14:0, ceux qui élèvent le LDL (beurre, crème, fromage, viande grasse, huile de palme).
@@ -135,7 +136,7 @@ Dans ce cas, ajoute à l'item :
 - "grammesParPiece" (optionnel) : poids en g d'une pièce/portion si l'unité est "piece"/"portion"
 - "nutriments" : un objet contenant TOUS les champs ci-dessous (n'en omets AUCUN ; mets 0 si négligeable).
 ${NUTRIMENTS_PROMPT_DOC}
-Exemple : {"aliment":"pastel de nata","quantite":1,"unite":"piece","estimation":true,"categorie":"sucre-snack","grammesParPiece":60,"nutriments":{"kcal":298,"proteines":6,"glucides":37,"lipides":13,"fibres":1,"agSatures":6,"agSaturesLdl":3.9,"agSaturesStearique":1.1,"agMonoInsatures":4,"agPolyInsatures":1.5,"omega3":0.1,"omega6":1.2,"omega9":3.5,"fer":0.6,"magnesium":12,"potassium":90,"calcium":80,"zinc":0.5,"sodium":180,"selenium":8,"iode":10,"vitA":90,"vitC":0,"vitD":0.8,"vitE":0.4,"vitK1":2,"vitK2":1,"vitB1":0.05,"vitB2":0.2,"vitB3":0.4,"vitB5":0.5,"vitB6":0.05,"vitB9":18,"vitB12":0.4,"creatine":0,"collagene":0}}
+Exemple : {"aliment":"pastel de nata","quantite":1,"unite":"piece","estimation":true,"categorie":"sucre-snack","grammesParPiece":60,"nutriments":{"kcal":298,"proteines":6,"glucides":37,"lipides":13,"fibres":1,"agSatures":6,"agSaturesLdl":3.9,"agSaturesStearique":1.1,"agMonoInsatures":4,"agPolyInsatures":1.5,"omega3":0.1,"omega6":1.2,"omega9":3.5,"fer":0.6,"magnesium":12,"potassium":90,"calcium":80,"zinc":0.5,"sodium":180,"selenium":8,"iode":10,"vitA":90,"vitC":0,"vitD":0.8,"vitE":0.4,"vitK1":2,"vitK2":1,"vitB1":0.05,"vitB2":0.2,"vitB3":0.4,"vitB5":0.5,"vitB6":0.05,"vitB9":18,"vitB12":0.4,"creatine":0,"collagene":0,"alcool":0}}
 N'utilise "nutriments" QUE lorsque c'est justifié ; en cas de doute, laisse l'application résoudre l'aliment (n'ajoute pas de nutriments).`;
 
 /**

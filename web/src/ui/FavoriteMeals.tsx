@@ -193,6 +193,8 @@ function FavoriteItemRow({
       <NumberField
         min={0}
         step={1}
+        inputStep="any"
+        adaptiveStep
         value={item.quantite}
         onChange={(v) => onUpdate({ quantite: parseFloat(v.replace(',', '.')) || 0 })}
       />
@@ -281,7 +283,7 @@ function AddFavoriteItem({ foods, onAdd }: { foods: Food[]; onAdd: (item: Favori
         <div className="row" style={{ marginTop: 8, alignItems: 'flex-end' }}>
           <label className="field" style={{ flex: '0 0 100px' }}>
             Quantité
-            <NumberField min={0} step={1} value={quantite} onChange={setQuantite} onKeyDown={(e) => e.key === 'Enter' && submit()} />
+            <NumberField min={0} step={1} inputStep="any" adaptiveStep value={quantite} onChange={setQuantite} onKeyDown={(e) => e.key === 'Enter' && submit()} />
           </label>
           <label className="field" style={{ flex: '0 0 130px' }}>
             Unité

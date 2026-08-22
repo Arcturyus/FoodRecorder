@@ -14,6 +14,10 @@
   --radius: 14px;
   --grad: linear-gradient(120deg, #ffb347, #ff6b6b 55%, #d94f8a);
   font-family: system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
+  /* Sans ceci, tout ce que la CSS ne peint pas — liste déroulante des <select>,
+     calendrier des <input type=date>, barres de défilement, anneau de focus par
+     défaut — s'ouvre en thème clair au milieu d'une app sombre. */
+  color-scheme: dark;
 }
 
 * { box-sizing: border-box; }
@@ -23,6 +27,15 @@ body {
   background: var(--bg);
   color: var(--text);
   -webkit-font-smoothing: antialiased;
+}
+
+/* Anneau de focus clavier : l'anneau natif se dessinait en noir sur fond noir,
+   donc invisible. On ne laisse pas le navigateur décider seul d'un point
+   d'accessibilité. Les champs qui gèrent déjà leur focus (input, .number-field,
+   .hovercard, .sun-term) gardent le leur, plus spécifique. */
+:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
 }
 
 /* Lueurs d'ambiance « cuisine au feu » — fixes, discrètes, zéro impact sur la lisibilité. */
@@ -508,14 +521,21 @@ header.app-head .sub { color: var(--muted); font-size: 13px; }
   margin-top: 6px; min-width: 200px; width: max-content; max-width: min(280px, 86vw);
   background: var(--panel); border: 1px solid var(--border); border-radius: 10px;
   padding: 8px 10px; box-shadow: 0 8px 24px rgba(0, 0, 0, 0.45);
-  opacity: 0; visibility: hidden; transform: translate(-50%, -4px);
-  transition: opacity 0.14s ease, transform 0.14s ease, visibility 0.14s;
+  /* Idem `[data-tip]` : `display: none` plutôt que `visibility: hidden`, qui
+     laissait la bulle peser dans la largeur défilable de la page. */
+  opacity: 0; display: none; transform: translate(-50%, -4px);
+  transition: opacity 0.14s ease, transform 0.14s ease, display 0.14s allow-discrete;
   pointer-events: none;
 }
 .has-breakdown:hover .breakdown,
 .has-breakdown:focus-within .breakdown,
 .has-breakdown:focus .breakdown {
-  opacity: 1; visibility: visible; transform: translate(-50%, 0);
+  opacity: 1; display: block; transform: translate(-50%, 0);
+}
+@starting-style {
+  .has-breakdown:hover .breakdown,
+  .has-breakdown:focus-within .breakdown,
+  .has-breakdown:focus .breakdown { opacity: 0; transform: translate(-50%, -4px); }
 }
 .breakdown .bd-title {
   font-size: 10px; text-transform: uppercase; letter-spacing: 0.05em;
@@ -1006,14 +1026,65 @@ button.chip-active:hover { filter: brightness(1.08); }
   width: max-content;
   text-align: center;
   box-shadow: 0 4px 12px rgba(0, 0, 0, 0.35);
+  /* `display: none` et pas seulement `opacity: 0` : une bulle absolue mais cachée
+     compte quand même dans le scrollWidth de la page et la faisait déborder
+     latéralement sur téléphone. `allow-discrete` + `@starting-style` conservent
+     le fondu d'apparition. */
+  display: none;
   opacity: 0;
   pointer-events: none;
-  transition: opacity 0.12s 0.35s;
+  transition: opacity 0.12s 0.35s, display 0.12s 0.35s allow-discrete;
   z-index: 60;
 }
 [data-tip]:hover::after,
 [data-tip]:focus-visible::after {
+  display: block;
   opacity: 1;
+}
+@starting-style {
+  [data-tip]:hover::after,
+  [data-tip]:focus-visible::after { opacity: 0; }
+}
+
+/* ---- Cibles tactiles ----
+   Au doigt, les petites icônes d'action sont trop petites pour être visées :
+   case à cocher 18×18, ↺ de réinitialisation 23×19, « ⟳ Autres » 93×23,
+   🔇 du calendrier 18×18 — la recommandation usuelle est 44×44. On étend la
+   SURFACE d'appui sans toucher au dessin ni à la mise en page, par un
+   pseudo-élément transparent centré sur l'élément.
+
+   Pourquoi 36 px et non 44 : dans les listes denses (40 lignes de curseurs,
+   rangées de chips espacées de 6 px), une zone plus haute que l'interligne
+   ferait recevoir l'appui par la ligne voisine — on aurait échangé un appui
+   manqué contre un appui faux, ce qui est pire. */
+@media (pointer: coarse) {
+  input[type="checkbox"]::before,
+  .importance-reset::before,
+  .advice-more::before {
+    content: '';
+    position: absolute;
+    top: 50%;
+    left: 50%;
+    width: max(100%, 36px);
+    height: 36px;
+    transform: translate(-50%, -50%);
+  }
+  .importance-reset,
+  .advice-more { position: relative; }
+
+  /* Le 🔇 « ne pas compter ce jour » ne se révélait qu'au survol : sur un écran
+     tactile il n'existait tout simplement pas, alors que c'est là qu'on saisit
+     ses repas. Visible en permanence, en retrait. Sa zone d'appui reste dans la
+     case (26×26) : elle déborderait sinon sur le jour voisin. */
+  .cal-mute[data-tip] { opacity: 0.45; }
+  .cal-mute[data-tip]::before {
+    content: '';
+    position: absolute;
+    top: -5px;
+    right: -3px;
+    width: 26px;
+    height: 26px;
+  }
 }
 
 /* ---- Recommandations (Conseils du jour + classement Stats) ---- */
@@ -1109,11 +1180,17 @@ button.chip-active:hover { filter: brightness(1.08); }
   gap: 8px;
   padding: 2px 0;
 }
-.importance-label { flex: 0 0 auto; min-width: 96px; font-size: 13px; }
+/* `0 1 auto` et non `0 0 auto` : les deux libellés longs (« AG saturés à limiter
+   (C16+C14) », « Stéarique C18 ») doivent pouvoir se replier sur deux lignes,
+   sinon la ligne entière déborde de l'écran sur téléphone. Le min-width garde
+   l'alignement des curseurs sur les 38 autres. */
+.importance-label { flex: 0 1 auto; min-width: 96px; font-size: 13px; }
 /* Sous-détail d'un nutriment (C16+C14 ⊂ AG saturés) : décalé sous son parent. */
 .importance-row.is-sub { padding-left: 14px; border-left: 2px solid var(--border); margin-left: 2px; }
 .importance-row.is-sub .importance-label { font-size: 12px; color: var(--muted); }
-.importance-row input[type="range"] { flex: 1; }
+/* `min-width: 0` : sans lui l'input garde sa largeur intrinsèque (~129 px) et
+   refuse de rétrécir, quelle que soit la place disponible. */
+.importance-row input[type="range"] { flex: 1; min-width: 0; }
 .importance-reset { flex: 0 0 auto; padding: 0 6px; }
 
 /* Nom de nutriment cliquable (déplie le rôle + la cible sous la ligne). */

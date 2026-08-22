@@ -23,6 +23,11 @@ import { fmt } from './format';
 /** Toutes les clés de nutriments (moyennes par groupe de dates). */
 const NUT_KEYS = Object.keys(EMPTY_NUTRIENTS) as NutrientKey[];
 
+/** Date en toutes lettres (« 21 juin 2026 »), pour les phrases de légende. */
+function longDate(date: string): string {
+  return new Date(`${date}T12:00:00`).toLocaleDateString('fr-FR', { day: 'numeric', month: 'long', year: 'numeric' });
+}
+
 /** Palette alignée sur les variables CSS du thème. */
 const C = {
   accent: '#5b8cff',
@@ -399,6 +404,8 @@ export function Stats() {
             ? ` Chaque point de la courbe épaisse est la moyenne pondérée des ${decayWindowDays(halfLife)} ${granularityUnit(gran)} qui le précèdent (demi-vie ${halfLife} ${granularityUnit(gran)}) : une carence comblée depuis s'efface, une carence installée reste. La courbe brute reste en trait fin.`
             : maOn && ' La moyenne mobile lisse le bruit ; la courbe brute reste en trait fin.'}
           {logY && ' Axe log : les valeurs à 0 % (aucun apport) ne sont pas représentables et laissent un trou.'}
+          {recorded.length > 0 && recorded[0] > windowDates[0] &&
+            ` La période demandée remonte plus loin que vos données : aucun jour enregistré avant le ${longDate(recorded[0])}, d'où la zone grisée à gauche du graphe.`}
         </p>
         <MultiTrend
           series={series}
@@ -548,6 +555,17 @@ function MultiTrend({
   const xTicks = xs.ticks(Math.min(6, steps.length));
   const fmtDate = (t: number) => new Date(t).toLocaleDateString('fr-FR', { day: 'numeric', month: 'short' });
 
+  /**
+   * Plages de la période demandée que les données ne couvrent pas : sur « 1 an »
+   * avec deux mois d'historique, la courbe se tasse sur un coin du graphe. On
+   * grise le reste et on le nomme, plutôt que de laisser un vide muet qui se lit
+   * comme un trou dans les données.
+   */
+  const gaps = [
+    { key: 'avant', from: xs.domain()[0] as number, to: steps[0].t },
+    { key: 'apres', from: steps[steps.length - 1].t, to: xs.domain()[1] as number },
+  ].filter((g) => xs(g.to) - xs(g.from) > 24);
+
   // En log, une valeur ≤ 0 n'est pas plaçable : on la traite comme absente (trou).
   const plottable = (v: number | null): v is number => v != null && (!logY || v > 0);
   const mkLine = (accessor: (p: TrendSeries['points'][number]) => number | null) =>
@@ -584,6 +602,30 @@ function MultiTrend({
         onMouseMove={onMove}
         onMouseLeave={() => setHover(null)}
       >
+        {gaps.map((g) => (
+          <g key={g.key}>
+            <rect
+              x={xs(g.from)}
+              y={m.top}
+              width={xs(g.to) - xs(g.from)}
+              height={H - m.bottom - m.top}
+              fill={C.muted}
+              opacity={0.08}
+            />
+            {xs(g.to) - xs(g.from) > 96 && (
+              <text
+                x={(xs(g.from) + xs(g.to)) / 2}
+                y={m.top + 14}
+                fill={C.muted}
+                fontSize={10}
+                textAnchor="middle"
+              >
+                aucune donnée
+              </text>
+            )}
+          </g>
+        ))}
+
         {yTicks.map((tk) => (
           <g key={tk}>
             <line x1={m.left} x2={W - m.right} y1={ys(tk)} y2={ys(tk)} stroke={C.border} strokeWidth={1} />
@@ -924,14 +966,28 @@ function FollowTip({ x, y, children }: { x: number; y: number; children: React.R
 // Donut macros (moyenne/jour)
 // ---------------------------------------------------------------------------
 
-function MacroDonut({ totals }: { totals: { proteines: number; glucides: number; lipides: number; kcal: number } }) {
+function MacroDonut({ totals }: { totals: { proteines: number; glucides: number; lipides: number; alcool: number; kcal: number } }) {
   const [hover, setHover] = useState<number | null>(null);
   const parts = [
     { key: 'proteines', label: 'Protéines', kcal: totals.proteines * 4, grams: totals.proteines, color: C.accent },
     { key: 'glucides', label: 'Glucides', kcal: totals.glucides * 4, grams: totals.glucides, color: C.warn },
     { key: 'lipides', label: 'Lipides', kcal: totals.lipides * 9, grams: totals.lipides, color: C.danger },
+    // L'alcool (7 kcal/g) n'apparaît que les jours où il y en a : une part à 0 %
+    // dans la légende de tous les autres jours n'apprendrait rien.
+    ...(totals.alcool > 0
+      ? [{ key: 'alcool', label: 'Alcool', kcal: totals.alcool * 7, grams: totals.alcool, color: '#a58bff' }]
+      : []),
   ];
   const totalKcal = parts.reduce((a, p) => a + p.kcal, 0);
+  /**
+   * Écart avec les kcal de la table (celles qu'affiche la couverture juste
+   * au-dessus). Il est normal — fibres, alcool, arrondis CIQUAL ne se retrouvent
+   * pas dans les trois macros — mais deux chiffres différents sur le même écran
+   * sans un mot d'explication passent pour une erreur de l'app.
+   */
+  const tableKcal = totals.kcal;
+  const withAlcohol = totals.alcool > 0;
+  const delta = totalKcal - tableKcal;
 
   if (totalKcal <= 0) {
     return <div className="empty">Aucune donnée sur la période.</div>;
@@ -948,6 +1004,7 @@ function MacroDonut({ totals }: { totals: { proteines: number; glucides: number;
   const arcHover = d3arc<(typeof arcs)[number]>().innerRadius(60).outerRadius(118).padAngle(0.02).cornerRadius(3);
 
   return (
+    <>
     <div style={{ position: 'relative', display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap', justifyContent: 'center' }}>
       <svg viewBox={`0 0 ${W} ${H}`} style={{ width: '100%', maxWidth: 320, display: 'block' }}>
         <g transform={`translate(${cx},${cy})`}>
@@ -983,6 +1040,14 @@ function MacroDonut({ totals }: { totals: { proteines: number; glucides: number;
         ))}
       </div>
     </div>
+    <p className="small" style={{ marginTop: 8 }}>
+      <strong>{fmt(totalKcal)} kcal/j</strong> reconstitués à partir des macros (protéines et glucides ×4,
+      lipides ×9{withAlcohol && ', alcool ×7'}).{' '}
+      {tableKcal > 0 && Math.abs(delta) >= 1
+        ? `Soit ${fmt(Math.abs(delta))} kcal ${delta < 0 ? 'de moins' : 'de plus'} que les ${fmt(tableKcal)} kcal/j de la table affichés plus haut (${fmt(Math.abs((delta / tableKcal) * 100), 1)} %) : les fibres, les polyols et les arrondis de la table ne se retrouvent pas dans ces parts. L'écart est attendu, pas une erreur de saisie.`
+        : `C'est aussi ce que donne la table des aliments, à moins d'1 kcal près.`}
+    </p>
+    </>
   );
 }
 

@@ -137,6 +137,8 @@ function ItemRow({ entryId, item, canDeleteItem }: { entryId: string; item: Jour
         <NumberField
           min={0}
           step={1}
+          inputStep="any"
+          adaptiveStep
           value={item.quantite}
           onChange={(v) => updateItem(entryId, item.id, { quantite: parseFloat(v.replace(',', '.')) || 0 })}
         />
