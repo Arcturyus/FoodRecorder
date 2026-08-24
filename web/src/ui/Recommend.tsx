@@ -14,6 +14,7 @@ import {
 } from '../nutrition/recommend';
 import type { ScoredFood, ScorePart } from '../nutrition/recommend';
 import { fmt } from './format';
+import { Section } from './Section';
 
 /** Nombre de lignes affichées par défaut, et pas du bouton « voir plus ». */
 const PAGE = 12;
@@ -166,18 +167,23 @@ export function Recommendations({
 
   if (!hasData) {
     return (
-      <div className="panel">
-        <h2>🎯 Recommandations sur la période</h2>
+      <Section id="nutriments-reco" title="🎯 Recommandations sur la période" summary="pas encore de données">
         <div className="empty">Enregistrez des repas sur la période pour obtenir des recommandations.</div>
-      </div>
+      </Section>
     );
   }
 
   const topGaps = analysis.gaps.slice(0, 6);
 
+  // Replié : les trois premiers aliments du classement — c'est la réponse que la
+  // section apporte, et elle tient sur une ligne.
+  const summary =
+    shown.length > 0
+      ? shown.slice(0, 3).map((s) => s.food.nom).join(' · ')
+      : 'vos manques sont couverts';
+
   return (
-    <div className="panel">
-      <h2>🎯 Recommandations sur la période</h2>
+    <Section id="nutriments-reco" title="🎯 Recommandations sur la période" summary={summary}>
       <p className="small" style={{ marginTop: -6 }}>
         Classement de la banque d'aliments selon vos <strong>manques moyens</strong> sur la période : un aliment gagne
         des points sur chaque nutriment manquant qu'il couvre (poids ∝ manque<sup>γ</sup>, cap au manque restant) et en
@@ -288,6 +294,6 @@ export function Recommendations({
           </label>
         </div>
       </details>
-    </div>
+    </Section>
   );
 }

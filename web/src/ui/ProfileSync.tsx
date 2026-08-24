@@ -171,7 +171,7 @@ export function ProfileSyncPanel() {
 
   return (
     <div className="panel">
-      <h2>Profil &amp; synchronisation cloud</h2>
+      <h2>Compte &amp; synchronisation cloud</h2>
 
       {profileId ? (
         <>

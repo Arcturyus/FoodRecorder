@@ -5,33 +5,67 @@ import { WEIGHT_METRICS } from '../weight/types';
 import type { WeightEntry, WeightMetricKey } from '../weight/types';
 import { fmt } from './format';
 import { NumberField } from './NumberField';
+import { Section } from './Section';
+
+/** Pesées montrées d'emblée ; le reste au clic. */
+const ROWS_SHOWN = 10;
 
 /**
  * Historique des pesées : liste chronologique (plus récent en premier), avec
- * édition en place de chaque champ et suppression. Les champs dérivés sont
- * affichés (lecture seule) sous chaque pesée dépliée.
+ * édition en place de chaque champ et suppression.
  *
- * `focusEntry` (venant d'un clic sur un point du graphe) ouvre et scrolle
- * automatiquement vers la ligne correspondante.
+ * Replié par défaut et borné aux dix dernières pesées : à 38 pesées la liste
+ * faisait déjà 3 058 px, et elle grandit d'une ligne par jour. Une ligne ne
+ * porte plus que la date, le poids et la masse grasse ; les valeurs calculées
+ * (IMC, métabolismes) sont dans le dépli, avec les champs modifiables.
+ *
+ * `focusEntry` (venant d'un clic sur un point du graphe) déplie la section,
+ * remonte la limite si la pesée visée est au-delà, puis ouvre et scrolle vers
+ * sa ligne — sinon le clic sur la courbe ne mènerait nulle part.
  */
 export function WeightHistory({ focusEntry }: { focusEntry?: { id: string; nonce: number } | null }) {
   const entries = useStore((s) => s.weightEntries);
+  const [showAll, setShowAll] = useState(false);
   const sorted = useMemo(
     () => [...entries].sort((a, b) => `${b.date} ${b.heure}`.localeCompare(`${a.date} ${a.heure}`)),
     [entries],
   );
 
+  const focusIndex = focusEntry ? sorted.findIndex((e) => e.id === focusEntry.id) : -1;
+  useEffect(() => {
+    if (focusIndex >= ROWS_SHOWN) setShowAll(true);
+  }, [focusIndex, focusEntry?.nonce]);
+
+  const shown = showAll ? sorted : sorted.slice(0, ROWS_SHOWN);
+  const last = sorted[0];
+
   return (
-    <div className="panel">
-      <h2>Historique ({sorted.length})</h2>
+    <Section
+      id="pesees"
+      title={`Historique (${sorted.length})`}
+      defaultOpen={false}
+      openSignal={focusEntry?.nonce}
+      summary={
+        last
+          ? `dernière : ${fmt(last.poids, 1)} kg le ${new Date(`${last.date}T12:00:00`).toLocaleDateString('fr-FR', { day: 'numeric', month: 'short' })}`
+          : 'aucune pesée'
+      }
+    >
       {sorted.length === 0 ? (
         <div className="empty">Aucune pesée enregistrée.</div>
       ) : (
-        sorted.map((e) => (
-          <WeightRow key={e.id} entry={e} focus={focusEntry && focusEntry.id === e.id ? focusEntry.nonce : undefined} />
-        ))
+        <>
+          {shown.map((e) => (
+            <WeightRow key={e.id} entry={e} focus={focusEntry && focusEntry.id === e.id ? focusEntry.nonce : undefined} />
+          ))}
+          {!showAll && sorted.length > ROWS_SHOWN && (
+            <button className="ghost small" style={{ marginTop: 10 }} onClick={() => setShowAll(true)}>
+              Voir les {sorted.length - ROWS_SHOWN} pesée(s) plus anciennes
+            </button>
+          )}
+        </>
       )}
-    </div>
+    </Section>
   );
 }
 
@@ -82,7 +116,7 @@ function WeightRow({ entry, focus }: { entry: WeightEntry; focus?: number }) {
         </span>
         <div className="row">
           <button className="ghost small" onClick={() => setEditing((v) => !v)}>
-            {editing ? 'Terminer' : 'Modifier'}
+            {editing ? 'Masquer' : 'Détails'}
           </button>
           <button
             className="danger small"
@@ -137,15 +171,17 @@ function WeightRow({ entry, focus }: { entry: WeightEntry; focus?: number }) {
               onChange={(e) => updateWeightEntry(entry.id, { remarque: e.target.value || undefined })}
             />
           </label>
+
+          {/* Valeurs calculées à partir de la pesée — dans le dépli : elles
+              doublaient la hauteur de CHAQUE ligne de la liste. */}
+          <div className="hint" style={{ marginTop: 8 }}>
+            IMC {fmt(computed.imc, 2)}
+            {computed.masseMusculaireSquelettique != null && <> · MM squelettique {fmt(computed.masseMusculaireSquelettique, 2)} kg</>}
+            {' '}· BMR HB {fmt(computed.bmrHarrisBenedict)} · MSJ {fmt(computed.bmrMifflinStJeor)} kcal · avec activité HB{' '}
+            {fmt(computed.tmaHB)} / MSJ {fmt(computed.tmaMSJ)} kcal
+          </div>
         </>
       )}
-
-      <div className="hint" style={{ marginTop: 8 }}>
-        IMC {fmt(computed.imc, 2)}
-        {computed.masseMusculaireSquelettique != null && <> · MM squelettique {fmt(computed.masseMusculaireSquelettique, 2)} kg</>}
-        {' '}· BMR HB {fmt(computed.bmrHarrisBenedict)} · MSJ {fmt(computed.bmrMifflinStJeor)} kcal · avec activité HB{' '}
-        {fmt(computed.tmaHB)} / MSJ {fmt(computed.tmaMSJ)} kcal
-      </div>
     </div>
   );
 }

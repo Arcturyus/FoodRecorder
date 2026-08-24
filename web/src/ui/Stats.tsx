@@ -1,4 +1,4 @@
-import { useMemo, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { scaleLinear, scaleLog } from 'd3-scale';
 import { line as d3line, arc as d3arc, pie as d3pie } from 'd3-shape';
 import { max as d3max } from 'd3-array';
@@ -725,35 +725,34 @@ function MultiTrend({
  */
 const PICKER_GROUPS = NUTRIENT_GROUPS;
 
-function Chip({
-  id,
-  label,
-  title,
-  selected,
-  color,
-  onToggle,
-}: {
-  id: string;
-  label: string;
-  title?: string;
-  selected: boolean;
-  color?: string;
-  onToggle: (id: string) => void;
-}) {
-  return (
-    <button
-      type="button"
-      className={`series-chip${selected ? ' on' : ''}`}
-      data-tip={title}
-      onClick={() => onToggle(id)}
-      style={selected && color ? { borderColor: color } : undefined}
-    >
-      <i style={{ background: selected && color ? color : undefined }} />
-      <span>{label}</span>
-    </button>
-  );
+/**
+ * Comparaison de recherche : insensible à la casse ET aux accents — « selenium »
+ * doit trouver « Sélénium », sinon la frappe rapide ne ramène rien. Hors composant :
+ * recréée à chaque rendu, elle invaliderait le mémo de la liste à chaque frappe.
+ */
+function norm(v: string): string {
+  return v.normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase();
 }
 
+/** Un élément sélectionnable de la tendance : nutriment ou rapport. */
+interface PickerItem {
+  id: string;
+  label: string;
+  /** Famille affichée dans la liste de recherche (« Vitamines », « Rapports »…). */
+  group: string;
+  title?: string;
+}
+
+/**
+ * Sélecteur des éléments tracés. Il occupait 490 px sur ordinateur et 974 px sur
+ * téléphone — 41 pastilles dépliées en permanence pour, le plus souvent, une
+ * seule série active — et faisait doublon avec « Couverture moyenne », dont
+ * chaque ligne est déjà cliquable.
+ *
+ * Il tient maintenant sur une ligne : ce qui est tracé, et un champ pour ajouter.
+ * La recherche remplace le parcours visuel : à 41 éléments, taper « magn » est
+ * plus rapide que balayer six familles.
+ */
 function SeriesPicker({
   targets,
   selected,
@@ -765,52 +764,127 @@ function SeriesPicker({
   colorById: Map<string, string>;
   onToggle: (id: string) => void;
 }) {
-  const targetByKey = new Map(targets.map((t) => [t.key, t]));
+  const [query, setQuery] = useState('');
+  const [open, setOpen] = useState(false);
+  const boxRef = useRef<HTMLDivElement>(null);
+
+  const items = useMemo<PickerItem[]>(() => {
+    const targetByKey = new Map(targets.map((t) => [t.key, t]));
+    const out: PickerItem[] = RATIOS.map((def) => ({
+      id: def.key,
+      label: def.label,
+      group: 'Rapports',
+      title: def.note,
+    }));
+    for (const g of PICKER_GROUPS) {
+      for (const k of g.keys) {
+        const t = targetByKey.get(k);
+        if (t) out.push({ id: k, label: t.label, group: g.title, title: t.role });
+      }
+    }
+    return out;
+  }, [targets]);
+
+  const byId = useMemo(() => new Map(items.map((i) => [i.id, i])), [items]);
+
+  const q = norm(query.trim());
+  const matches = useMemo(() => {
+    const free = items.filter((i) => !selected.includes(i.id));
+    if (q === '') return free;
+    // Classement par pertinence : ce qui COMMENCE par la requête d'abord. Sans
+    // lui, « magn » proposait « Calcium / Magnésium » avant « Magnésium », et la
+    // validation au clavier ajoutait donc la mauvaise série.
+    const rank = (label: string) => {
+      const l = norm(label);
+      if (l.startsWith(q)) return 0;
+      if (l.split(/[^a-z0-9]+/).some((w) => w.startsWith(q))) return 1;
+      return l.includes(q) ? 2 : 3;
+    };
+    return free
+      .map((i) => ({ i, r: rank(i.label) }))
+      .filter((x) => x.r < 3)
+      .sort((a, b) => a.r - b.r)
+      .map((x) => x.i);
+  }, [items, selected, q]);
+
+  // Un clic hors du panneau le ferme : sans ça, la liste ouverte recouvre le
+  // graphe qu'on vient justement de vouloir regarder.
+  useEffect(() => {
+    if (!open) return;
+    function onDown(e: MouseEvent) {
+      if (!boxRef.current?.contains(e.target as Node)) setOpen(false);
+    }
+    document.addEventListener('mousedown', onDown);
+    return () => document.removeEventListener('mousedown', onDown);
+  }, [open]);
+
+  function add(id: string) {
+    onToggle(id);
+    setQuery('');
+    setOpen(false);
+  }
+
   return (
-    <div className="series-picker">
-      <div className="hint" style={{ marginTop: 0, marginBottom: 4 }}>
-        Cliquez un élément pour l'ajouter/retirer de la tendance ({selected.length} sélectionné{selected.length > 1 ? 's' : ''}).
-      </div>
+    <div className="series-bar" ref={boxRef}>
+      {selected.map((id) => {
+        const item = byId.get(id);
+        return (
+          <button
+            key={id}
+            type="button"
+            className="series-chip on"
+            data-tip={`${item?.title ?? ''} — cliquez pour retirer de la tendance`}
+            style={{ borderColor: colorById.get(id) }}
+            onClick={() => onToggle(id)}
+          >
+            <i style={{ background: colorById.get(id) }} />
+            <span>{item?.label ?? id}</span>
+            <span className="series-x" aria-hidden="true">
+              ✕
+            </span>
+          </button>
+        );
+      })}
 
-      <div className="series-group">
-        <div className="gh">Rapports</div>
-        <div className="series-grid">
-          {RATIOS.map((def) => (
-            <Chip
-              key={def.key}
-              id={def.key}
-              label={def.label}
-              title={def.note}
-              selected={selected.includes(def.key)}
-              color={colorById.get(def.key)}
-              onToggle={onToggle}
-            />
-          ))}
-        </div>
-      </div>
-
-      {PICKER_GROUPS.map((g) => (
-        <div className="series-group" key={g.title}>
-          <div className="gh">{g.title}</div>
-          <div className="series-grid">
-            {g.keys.map((k) => {
-              const t = targetByKey.get(k);
-              if (!t) return null;
-              return (
-                <Chip
-                  key={k}
-                  id={k}
-                  label={t.label}
-                  title={t.role}
-                  selected={selected.includes(k)}
-                  color={colorById.get(k)}
-                  onToggle={onToggle}
-                />
-              );
-            })}
+      <div className="series-add">
+        <input
+          type="search"
+          value={query}
+          placeholder="+ ajouter un nutriment ou un rapport"
+          onFocus={() => setOpen(true)}
+          onChange={(e) => {
+            setQuery(e.target.value);
+            setOpen(true);
+          }}
+          onKeyDown={(e) => {
+            // Entrée valide la première proposition : la recherche se termine au
+            // clavier, sans repasser à la souris.
+            if (e.key === 'Enter' && matches[0]) add(matches[0].id);
+            if (e.key === 'Escape') setOpen(false);
+          }}
+          aria-label="Ajouter un élément à la tendance"
+        />
+        {open && (
+          <div className="series-menu">
+            {matches.length === 0 ? (
+              <div className="series-empty small">
+                {selected.length === items.length ? 'Tout est déjà tracé.' : 'Aucun élément ne correspond.'}
+              </div>
+            ) : (
+              matches.slice(0, 40).map((i) => (
+                <button key={i.id} type="button" className="series-opt" onClick={() => add(i.id)}>
+                  <span className="series-opt-label">{i.label}</span>
+                  <span className="series-opt-group small">{i.group}</span>
+                </button>
+              ))
+            )}
           </div>
-        </div>
-      ))}
+        )}
+      </div>
+
+      <span className="small series-note">
+        ou cliquez une ligne de <strong>Couverture moyenne</strong>, ci-dessous.
+      </span>
     </div>
   );
 }

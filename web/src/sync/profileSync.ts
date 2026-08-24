@@ -122,6 +122,7 @@ function kvUpdates(rows: DbRow[]): Partial<StoreState> {
     if (r.key === 'mutedDays') out.mutedDays = r.payload;
     if (r.key === 'dayNotes') out.dayNotes = r.payload;
     if (r.key === 'nutrientImportance') out.nutrientImportance = r.payload;
+    if (r.key === 'nutrientTargets') out.nutrientTargets = r.payload;
   }
   return out as Partial<StoreState>;
 }

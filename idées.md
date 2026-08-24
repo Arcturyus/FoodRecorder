@@ -13,30 +13,36 @@ Chaque entrée : **Constaté** (le fait mesuré) → **Cause / Où** → **Piste
 Les entrées terminées sont **supprimées**, pas cochées : l'historique est dans git.
 
 > Session d'audit du 22/08/2026 : app pilotée dans Chrome (1440×950 et 390×844), jeu de test de
-> 226 repas sur 70 jours + 38 pesées, plus un passage à état vide. Sections 1 et 2 issues de cette
-> session. Les bugs (section 1) ont depuis été corrigés ; les frictions restent à trancher.
+> 226 repas sur 70 jours + 38 pesées, plus un passage à état vide — d'où viennent les frictions
+> ci-dessous.
 
 ---
 
 ## 1. Bugs
 
-*Vide.* Les onze bugs relevés lors de la session d'audit du 22/08/2026 ont été corrigés
-(B-04 — dates inversées — a été écarté sans correction : le comportement actuel, qui ramène
-silencieusement la période à un jour, a été jugé suffisant). Le détail est dans git.
+*Aucun bug ouvert.*
 
 ## 2. Frictions d'usage
 
-### U-01 · L'écran d'accueil est un mur de 37 cartes à zéro
+### U-01 · L'écran d'accueil est un mur de 38 cartes à zéro
 
-**Constaté.** Onglet « Aujourd'hui » : **37 cartes de nutriments sur 1 437 px de haut**, sous le champ
-de saisie. À l'installation ce sont 37 cartes affichant `0 g · 0 %`. C'est la toute première chose que
-voit quelqu'un qui ouvre l'app — et à 8 h du matin, c'est aussi ce que voit l'utilisateur quotidien.
+**Constaté.** Onglet « Aujourd'hui » : **38 cartes de nutriments** sous le champ de saisie — 1 908 px
+de haut à 390 px de large, 949 px à 1 440. À l'installation ce sont 38 cartes affichant `0 g · 0 %`.
+C'est la toute première chose que voit quelqu'un qui ouvre l'app — et à 8 h du matin, c'est aussi ce
+que voit l'utilisateur quotidien.
 
 **Piste.** Le mur reste utile, mais pas **par défaut** ni **en entier**. Trois options :
-- **Replier** : macros + les 4 à 6 nutriments qui posent problème aujourd'hui, « voir les 37 » dessous.
+- **Replier** : macros + les 4 à 6 nutriments qui posent problème aujourd'hui, « voir les 38 » dessous.
 - **Trier par urgence** plutôt que par famille : ce qui est en carence en haut, ce qui est réglé en bas.
-- **Piloter par les importances** déjà réglées dans l'onglet Nutriments (×0 = masqué d'office).
-  Elles existent, et ne servent aujourd'hui qu'au classement des recommandations.
+
+
+---> OUI pouvoir trier, de base replier pouvoir deplier (tout ou juste macros peut etre ?) 
+---> pareil les repas pouvoir déplier ou non, le mode replier pourrait montrer en très court les repas mais sans le details de ce qu'il y a dedans et dans un vue plus collés sérré 
+
+### U 01 b
+similaires dans stats, testons plusieurs UI mais je pense que les valeur cliquables nutriments qui se mettent sur le graph devraient prendre moins de place (surtout que y a 2 fois) : Mon idée c'est les nutriment en petit sur les cotés du graph pas en dessous : attention sur telephone jsp comment faire 
+et pour la liste avec echelle jsp exactement comment reduire l longueur car on veut voir l'echelle (peut être pouvoir déplier ou non jsp genre un voir plus il te mets que les 3 que tu manques le plus et tu cliques si tu veux tout voird)
+
 
 ### U-02 · L'onglet « Profil » fait 5 857 px et mélange sept sujets
 
@@ -52,19 +58,25 @@ dense (IMC, MB Harris-Benedict, MB Mifflin, TMA…). À deux ans de pesées, c'e
 - Question de fond : « Profil » (le corps, les objectifs) et « Poids » (les mesures) sont deux choses.
   Elles ont été fusionnées ; il n'est pas sûr que ça tienne à l'usage.
 
-### U-03 · Nutriments : 2 000 px de curseurs avant d'atteindre les panneaux utiles
+--> proposition : synchro cloud en haut de reglages, et on renomme tout en poids (sachant que nouvelle pesée mesure faut le mettre plus haut)
 
-**Constaté.** « Comprendre & régler chaque nutriment » aligne **40 curseurs identiques**, presque tous
-à ×1. Ils sont posés entre les recommandations (en haut) et les deux panneaux les plus lus —
-« Vitamine D : carence ? » et « Rapports optimaux » — qu'il faut aller chercher tout en bas.
+### U-03 · Nutriments : 1 800 px de curseurs avant d'atteindre les panneaux utiles
+
+**Constaté.** « Comprendre & régler chaque nutriment » aligne **37 curseurs identiques** (plus 5
+curseurs de groupe), presque tous à ×1. Ils sont posés entre les recommandations (en haut) et les
+deux panneaux les plus lus — « Vitamine D : carence ? » et « Rapports optimaux » — qu'il faut aller
+chercher tout en bas.
 
 **Piste.** Replier le bloc derrière un « Régler l'importance des nutriments (3 modifiés) », et remonter
 la vitamine D et les rapports. Le compteur de modifications suffit à signaler que le réglage existe.
 
+- [ ] pouvoir changer dans nutriments tout les ajr où optimalité (mettre une option revenir au conseillé) : comme protéines dans profil 
+et d'ailleurs mettre en valeur brut ou en fonction du pdc selon le nutriment pour ce qui est mesure comme ca souvent (prot, lipides, peut etre des micronutriment jsp)
+
 ### U-04 · Le nuage de points n'étiquette aucun aliment — pas même la frontière de Pareto
 
 **Constaté.** 39 aliments, aucun nom affiché ; il faut survoler chaque point. Or **la frontière de
-Pareto ne compte que 8 points**, bien espacés, et c'est la raison d'être de la vue : elle est présentée
+Pareto ne compte que peu de points**, bien espacés, et c'est la raison d'être de la vue : elle est présentée
 comme la réponse à « qu'est-ce qui maximise X en minimisant Y ? », et la réponse est huit ronds anonymes.
 
 **Piste.** Étiqueter **les seuls points de la frontière** (avec évitement des collisions, cf. B-11).
@@ -96,7 +108,7 @@ Une icône de haut-parleur, dans un journal alimentaire, pour dire « ce jour es
 pas dans les moyennes ». La métaphore vient du code (`mutedDays`) et n'a pas de sens pour qui lit
 l'écran — la légende doit d'ailleurs l'expliquer en toutes lettres.
 
-**Piste.** Un œil barré (« exclu »), un `∅`, ou une case décochée. Le mot compte plus que l'icône ici :
+**Piste.** Le mot compte plus que l'icône ici :
 « ne pas compter ce jour ».
 
 ### U-08 · 786 px de contenu utile sur 1 440 px d'écran
@@ -108,31 +120,8 @@ battent aujourd'hui pour de la place (cf. B-11).
 
 **Piste.** Une largeur par onglet plutôt qu'une largeur globale : 786 px partout, ~1 200 px sur
 Stats / Banque / Nutriments. **Alternative** : un bouton « élargir » sur les panneaux graphiques.
+ATTENTION telephone
 
-### U-09 · Une fiche d'aliment tient sur une ligne de 11 px
-
-**Constaté.** Exemple réel : `57 kcal · P 0,7 · G 1,2 · L 0,3 · Fibres 2,4 /100 g · 1 pièce ≈ 2 g ·
-1 bol(s) ≈ 125 g · 1 poignée(s) ≈ 50 g · 20 j · hier`. Douze informations de trois natures différentes
-(nutriments / équivalences d'unités / fréquence) sur une ligne grise, en 11 px.
-
-**Piste.** Séparer les trois natures : les macros sur la ligne, les équivalences au survol, et la
-fréquence (« 20 jours · dernière fois hier ») dans sa propre colonne à droite — c'est la donnée la plus
-utile pour décider quoi manger, et elle est aujourd'hui en fin de ligne.
-
-### U-10 · « Ma banque (40) » puis « 39 aliments » deux lignes plus bas
-
-Dans « Explorer visuel », l'en-tête annonce 40 aliments et le panneau du dessous 39. L'écart vient sans
-doute de l'exclusion des compléments (documentée dans `foods.ts`, invisible à l'écran). Ça coûte peu de
-l'écrire : « 39 aliments · 1 complément exclu ».
-
-### U-11 · On ne distingue pas un bouton d'état d'un bouton d'action
-
-**Constaté.** Dans « Explorer visuel », `X log`, `Y log` et `Frontière de Pareto` sont orange
-(= actifs), tandis que `X : minimiser ▼` et `Y : maximiser ▲` sont gris — mais ces deux-là sont des
-**bascules**, pas des actions désactivées. Même vocabulaire visuel, deux sens.
-
-**Piste.** Réserver le fond plein aux états actifs, et donner aux bascules une forme différente
-(interrupteur, ou libellé qui porte l'état : « X : on minimise »).
 
 ### U-12 · Un panneau vide de 120 px pour dire « choisissez deux aliments »
 
@@ -151,7 +140,7 @@ Rien ici n'est un défaut : ce sont des angles différents, à garder ou à jete
 
 L'app sait déjà, aujourd'hui, quels nutriments sont en carence, lesquels sont en excès, et quels aliments
 les corrigeraient (`recommend.ts`, `guide.ts`). Ce savoir est rangé dans deux onglets qu'il faut aller
-ouvrir. L'écran d'accueil, lui, affiche 37 cartes neutres.
+ouvrir. L'écran d'accueil, lui, affiche 38 cartes neutres.
 
 Un accueil qui dirait « il te manque surtout de l'oméga 3 et de la vitamine D ; du saumon ce soir règle
 les deux » utiliserait ce qui existe déjà. Le mur reste dessous pour qui veut vérifier.
@@ -174,8 +163,8 @@ et dates sont déjà tous indexables.
 
 Pour K1 c'est sans conséquence. Le principe ne l'est pas : une app qui affiche l'écart aux objectifs
 devrait distinguer « atteint » de « largement dépassé », ne serait-ce que pour les nutriments à plafond
-(fer, zinc, sélénium, vitamine A). Il existe déjà une section « À limiter » — mais elle ne couvre que
-les lipides et le sodium.
+(fer, zinc, sélénium, vitamine A). Il existe déjà des nutriments « à limiter », avec plafond et barre
+d'excès — AG saturés, AG trans, sodium, alcool — mais aucun de ceux-là.
 
 ### P-04 · Un mode « analyse » plein écran
 
@@ -254,6 +243,7 @@ droite ?) — l'UX reste à trouver.
 
 Ajouter d'autres clés API : modèles open source, OpenAI, voire Codex CLI si c'est faisable sur le modèle
 du pont Claude Code.
+- gemeini, mistral aussi avec version free tier (pourquoi pas open router)
 
 ### C-05 · Fusion de doublons : rapprocher aussi par le contenu ?
 
@@ -270,3 +260,10 @@ aliment. À reconsidérer si la relecture une par une devient fastidieuse.
 **À éclaircir avant de lancer quoi que ce soit** : ce qu'on en attend concrètement — une note comparative
 écrite, fonctionnalité par fonctionnalité ? un focus sur un aspect précis (saisie, graphes, base de
 données) ?
+
+
+- renommer banque d'aliments : et memem reflechir à reoragnieser les comparer explorateur visuel (a renommé ?) sortir des des element et ce que LES acp doivent etre avec comparer ? est ce qu'on ne supprimerait pas matrice de correlation ?
+est ce que dans stats ? mieux vaut des panels long ou faire beaucoup plus de panle courrts reflexion dans telphone et ordi (attetion dans le futur le nb de features peut encore augmenter)
+
+
+- [ ] CLique sur un jours dans le graph dans stats mettre un petit emnu voulez vous voir ce jour dans histoirique (ou texte similaire) et tu peux confirmer ca t'envoie dans histoirique sur ce jour

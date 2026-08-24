@@ -10,16 +10,19 @@ import { categorizeNames } from '../extraction/categorize';
 import type { Food, FoodCategory } from '../nutrition/types';
 import { DayView } from './DayView';
 import { DayPickerButton, dayLabel, daysAgo, relativeDayLabel } from './DayPicker';
+import { HistoryHeatmap } from './HistoryHeatmap';
 import { UncertaintyBadge } from './UncertaintyBadge';
 import { fmt, CATEGORY_LABELS } from './format';
 
 const WEEKDAYS = ['L', 'M', 'M', 'J', 'V', 'S', 'D'];
 
 /**
- * Onglet Historique : calendrier mensuel navigable. Chaque jour rempli montre ses
- * calories et un repère de couverture vs objectif. Clic sur un jour (rempli ou vide)
- * = éditer ce jour (corriger, ajouter un oubli, saisir un jour passé). Les analyses
- * poussées (tendances, moyennes) sont dans l'onglet Stats.
+ * Onglet Historique : une heatmap continue (plusieurs mois d'un coup, pour voir
+ * la régularité) puis le calendrier mensuel navigable, pour le détail. Chaque
+ * jour rempli montre ses calories et un repère de couverture vs objectif. Clic
+ * sur un jour (rempli ou vide) = éditer ce jour (corriger, ajouter un oubli,
+ * saisir un jour passé). Les analyses poussées (tendances, moyennes) sont dans
+ * l'onglet Stats.
  */
 export function History() {
   const entries = useStore((s) => s.entries);
@@ -75,6 +78,16 @@ export function History() {
   return (
     <>
       <FoodSearch onDatesChange={setFoundDates} onPickDate={goToDate} />
+
+      <HistoryHeatmap
+        kcalByDate={kcalByDate}
+        mutedDays={mutedDays}
+        kcalTarget={kcalTarget}
+        today={today}
+        foundDates={foundDates}
+        selected={editDate}
+        onPickDate={goToDate}
+      />
 
       <div className="panel">
         <div className="row" style={{ justifyContent: 'space-between', alignItems: 'center' }}>

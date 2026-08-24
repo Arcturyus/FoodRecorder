@@ -318,6 +318,7 @@ describe('jonction et création', () => {
       'dayNotes',
       'mutedDays',
       'nutrientImportance',
+      'nutrientTargets',
       'profile',
       'weightConfig',
     ]);

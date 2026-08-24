@@ -1,5 +1,6 @@
 import { vitaminDFlux, VITD_LOW, VITD_OK } from '../sun/vitaminDStatus';
 import { HoverCard } from './HoverCard';
+import { Section } from './Section';
 import { fmt } from './format';
 
 /**
@@ -9,15 +10,19 @@ import { fmt } from './format';
  * alimente la décision « supplément D ou pas ».
  */
 export function VitaminDPanel({ status }: { status: ReturnType<typeof vitaminDFlux> }) {
+  // Replié, le panneau doit répondre à la question de son titre : « carence ? ».
+  // Un titre seul obligerait à déplier pour l'apprendre.
+  const summary = status
+    ? `${fmt(status.weightedAvg, 1)} µg/j · ${status.zone === 'ok' ? 'suffisant' : status.zone === 'low' ? 'carence' : 'limite'}`
+    : 'pas encore de données';
   return (
-    <div className="panel">
-      <h2>☀️ Vitamine D : carence ?</h2>
+    <Section id="nutriments-vitd" title="☀️ Vitamine D : carence ?" summary={summary}>
       <p className="small" style={{ marginTop: -6 }}>
         Flux moyen d'entrée (alimentation + soleil), lissé sur ~4 semaines et pondéré par la récence — cohérent avec
         la demi-vie de la 25(OH)D (~2–3 semaines).
       </p>
       <VitaminDCard status={status} />
-    </div>
+    </Section>
   );
 }
 

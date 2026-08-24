@@ -7,11 +7,17 @@ import { CLOUD_MODELS } from '../extraction/anthropic';
 import { checkClaudeCode } from '../extraction/claudeCode';
 import { STT_MODELS } from '../stt/whisper';
 import { isNativeSttSupported } from '../stt/webspeech';
+import { ProfileSyncPanel } from './ProfileSync';
 
 /**
- * Réglages : sauvegarde des données, choix du moteur d'extraction (règles / IA
- * locale / API Claude), clé API, et modèles STT/LLM selon la machine. Le profil
- * et la connexion au compte vivent dans l'onglet « Profil ».
+ * Réglages : connexion au compte de synchro, sauvegarde des données, choix du
+ * moteur d'extraction (règles / IA locale / API Claude), clé API, et modèles
+ * STT/LLM selon la machine.
+ *
+ * La synchro est EN TÊTE : c'est ce qu'on vient chercher en premier sur un
+ * nouvel appareil, et sans elle les sauvegardes en dessous n'ont pas le même
+ * sens. Elle vivait dans l'onglet du profil, où elle n'était pas une donnée
+ * corporelle mais un réglage. Le profil (corps, objectif) reste dans « Poids ».
  */
 export function Settings() {
   const sttEngine = useStore((s) => s.sttEngine);
@@ -86,6 +92,7 @@ export function Settings() {
 
   return (
     <>
+      <ProfileSyncPanel />
       <BackupPanel />
 
       <div className="panel">

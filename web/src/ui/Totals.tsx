@@ -12,6 +12,7 @@ import { UncertaintyBadge } from './UncertaintyBadge';
 import { shiftDays } from './PeriodSelector';
 import { sunVitDForDate } from '../sun/vitaminD';
 import { fmt } from './format';
+import { UI_STORE, useUiPref } from './uiPrefs';
 
 /**
  * Sous-détail d'un nutriment composite : les acides gras qui se cachent derrière
@@ -334,6 +335,29 @@ function LowThresholdNote({
   );
 }
 
+/** Ordre d'affichage de la grille de nutriments. */
+type GridSort = 'famille' | 'urgence';
+
+/**
+ * Rang d'urgence d'un nutriment : plus le score est bas, plus il demande une
+ * action aujourd'hui. Trois zones se suivent, dans cet ordre :
+ *
+ *  1. les limites DÉPASSÉES (score négatif, le plus dépassé en tête) — c'est la
+ *     seule situation où l'on a déjà fait quelque chose de contraire à la cible ;
+ *  2. les nutriments à couvrir, par part de la cible atteinte (0 % d'abord) ;
+ *  3. les limites respectées (≥ 2) — rien à faire, elles ferment la grille.
+ *
+ * Un nutriment sans cible chiffrée ne peut pas être classé : il vaut 1, soit la
+ * position d'un nutriment tout juste à sa cible, plutôt qu'une fausse urgence.
+ */
+export function urgencyScore(t: Target, value: number): number {
+  if (t.goal === 'limit') {
+    const ratio = t.ajr > 0 ? value / t.ajr : 0;
+    return ratio > 1 ? -ratio : 2 + (1 - ratio);
+  }
+  return t.optimal > 0 ? value / t.optimal : 1;
+}
+
 /**
  * Bilan du jour : kcal + macros en tête, puis grille de tous les nutriments avec
  * une barre de progression vers la cible « optimale » et un repère sur l'AJR.
@@ -362,8 +386,25 @@ export function Totals({
   );
   // Les sous-détails (C16+C14, stéarique) n'ont pas de tuile : ils s'affichent
   // sous celle de leur parent, sinon la grille doublerait la même information.
-  const grid = targets.filter((t) => t.key !== 'kcal' && !t.parent);
+  const gridAll = targets.filter((t) => t.key !== 'kcal' && !t.parent);
   const ratios = useMemo(() => computeRatios(totals), [totals]);
+
+  /**
+   * Le mur de nutriments est REPLIÉ par défaut : c'est la première chose que
+   * voit quelqu'un qui ouvre l'app le matin, et à ce moment-là ce sont 38 cartes
+   * à `0 g · 0 %` sur 1 908 px de haut au téléphone. Ce qui se lit d'un coup
+   * d'œil — calories et macros — reste au-dessus ; le détail se demande.
+   */
+  const [open, setOpen] = useUiPref(UI_STORE, 'day-nutrients-open', false);
+  const [sort, setSort] = useUiPref<GridSort>(UI_STORE, 'day-nutrients-sort', 'famille');
+
+  // Tri « par urgence » : on ne réordonne QUE l'affichage, jamais les cibles.
+  // L'ordre par famille reste celui de `rda.ts` (vitamines ensemble, minéraux
+  // ensemble), qui est le bon quand on cherche un nutriment précis.
+  const grid =
+    sort === 'famille'
+      ? gridAll
+      : [...gridAll].sort((a, b) => urgencyScore(a, totals[a.key]) - urgencyScore(b, totals[b.key]));
 
   return (
     <div className="panel">
@@ -387,6 +428,35 @@ export function Totals({
 
       <KcalBar consumed={totals.kcal} target={kcalT.optimal} incertitude={incertitude} />
 
+      <div className="fold-head">
+        <button type="button" className="sec-toggle fold-toggle" aria-expanded={open} onClick={() => setOpen(!open)}>
+          <span className={`sec-chevron${open ? ' open' : ''}`} aria-hidden="true">
+            ▸
+          </span>
+          {open ? 'Masquer le détail' : `Voir les ${gridAll.length} nutriments`}
+        </button>
+        {open && (
+          <span className="row" style={{ gap: 4, alignItems: 'center' }}>
+            <span className="small" style={{ color: 'var(--muted)' }}>Trier</span>
+            {(['famille', 'urgence'] as GridSort[]).map((opt) => (
+              <button
+                key={opt}
+                className={`small ${sort === opt ? 'chip-active' : 'ghost'}`}
+                onClick={() => setSort(opt)}
+                data-tip={
+                  opt === 'famille'
+                    ? 'Ordre de référence : vitamines, minéraux, acides gras… — pour retrouver un nutriment précis'
+                    : "Ce qui manque le plus en tête, ce qui est réglé en bas ; un plafond dépassé passe avant tout"
+                }
+              >
+                {opt === 'famille' ? 'par famille' : 'par urgence'}
+              </button>
+            ))}
+          </span>
+        )}
+      </div>
+
+      {open && (
       <div className="totals-grid" style={{ marginTop: 14 }}>
         {grid.map((t) => {
           const value = totals[t.key];
@@ -462,8 +532,9 @@ export function Totals({
           );
         })}
       </div>
+      )}
 
-      <RatioRow ratios={ratios} />
+      {open && <RatioRow ratios={ratios} />}
     </div>
   );
 }

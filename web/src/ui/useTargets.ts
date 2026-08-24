@@ -39,8 +39,20 @@ export function useBody(): BodyContext {
   );
 }
 
-/** Objectifs nutritionnels du profil courant. */
+/** Objectifs nutritionnels du profil courant, réglages personnels compris. */
 export function useTargets(): Target[] {
+  const profile = useStore((s) => s.profile);
+  const overrides = useStore((s) => s.nutrientTargets);
+  const body = useBody();
+  return useMemo(() => computeTargets(profile, body, overrides), [profile, body, overrides]);
+}
+
+/**
+ * Les mêmes objectifs SANS les réglages personnels : c'est la valeur « conseillée »
+ * affichée à côté de chaque champ, et celle vers laquelle le ↺ ramène. Sans elle,
+ * régler une cible serait irréversible de fait — on ne saurait plus d'où l'on part.
+ */
+export function useDefaultTargets(): Target[] {
   const profile = useStore((s) => s.profile);
   const body = useBody();
   return useMemo(() => computeTargets(profile, body), [profile, body]);
