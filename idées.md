@@ -13,8 +13,8 @@ Chaque entrée : **Constaté** (le fait mesuré) → **Cause / Où** → **Piste
 Les entrées terminées sont **supprimées**, pas cochées : l'historique est dans git.
 
 > Session d'audit du 22/08/2026 : app pilotée dans Chrome (1440×950 et 390×844), jeu de test de
-> 226 repas sur 70 jours + 38 pesées, plus un passage à état vide — d'où viennent les frictions
-> ci-dessous.
+> 226 repas sur 70 jours + 38 pesées, plus un passage à état vide. Les onze bugs et les dix frictions
+> qui en sont sortis sont traités (sections 1 et 2 vides) ; restent les perspectives et les chantiers.
 
 ---
 
@@ -24,111 +24,10 @@ Les entrées terminées sont **supprimées**, pas cochées : l'historique est da
 
 ## 2. Frictions d'usage
 
-### U-01 · L'écran d'accueil est un mur de 38 cartes à zéro
-
-**Constaté.** Onglet « Aujourd'hui » : **38 cartes de nutriments** sous le champ de saisie — 1 908 px
-de haut à 390 px de large, 949 px à 1 440. À l'installation ce sont 38 cartes affichant `0 g · 0 %`.
-C'est la toute première chose que voit quelqu'un qui ouvre l'app — et à 8 h du matin, c'est aussi ce
-que voit l'utilisateur quotidien.
-
-**Piste.** Le mur reste utile, mais pas **par défaut** ni **en entier**. Trois options :
-- **Replier** : macros + les 4 à 6 nutriments qui posent problème aujourd'hui, « voir les 38 » dessous.
-- **Trier par urgence** plutôt que par famille : ce qui est en carence en haut, ce qui est réglé en bas.
-
-
----> OUI pouvoir trier, de base replier pouvoir deplier (tout ou juste macros peut etre ?) 
----> pareil les repas pouvoir déplier ou non, le mode replier pourrait montrer en très court les repas mais sans le details de ce qu'il y a dedans et dans un vue plus collés sérré 
-
-### U 01 b
-similaires dans stats, testons plusieurs UI mais je pense que les valeur cliquables nutriments qui se mettent sur le graph devraient prendre moins de place (surtout que y a 2 fois) : Mon idée c'est les nutriment en petit sur les cotés du graph pas en dessous : attention sur telephone jsp comment faire 
-et pour la liste avec echelle jsp exactement comment reduire l longueur car on veut voir l'echelle (peut être pouvoir déplier ou non jsp genre un voir plus il te mets que les 3 que tu manques le plus et tu cliques si tu veux tout voird)
-
-
-### U-02 · L'onglet « Profil » fait 5 857 px et mélange sept sujets
-
-**Constaté.** Dans l'ordre : profil & objectif → dépense énergétique → **profil & synchro cloud** →
-dicter une pesée → nouvelle pesée → évolution → historique. L'historique des pesées à lui seul fait
-**3 058 px pour 38 lignes**, sans pagination ni repli, et chaque ligne tient sur deux lignes de texte
-dense (IMC, MB Harris-Benedict, MB Mifflin, TMA…). À deux ans de pesées, c'est ingérable.
-
-**Pistes.**
-- L'historique replié par défaut, ou paginé, ou limité aux 10 dernières avec « tout voir ».
-- Alléger la ligne : la date, le poids, la masse grasse ; le reste au dépli.
-- **La synchro cloud n'a rien à faire ici** — c'est un réglage, pas une donnée corporelle.
-- Question de fond : « Profil » (le corps, les objectifs) et « Poids » (les mesures) sont deux choses.
-  Elles ont été fusionnées ; il n'est pas sûr que ça tienne à l'usage.
-
---> proposition : synchro cloud en haut de reglages, et on renomme tout en poids (sachant que nouvelle pesée mesure faut le mettre plus haut)
-
-### U-03 · Nutriments : 1 800 px de curseurs avant d'atteindre les panneaux utiles
-
-**Constaté.** « Comprendre & régler chaque nutriment » aligne **37 curseurs identiques** (plus 5
-curseurs de groupe), presque tous à ×1. Ils sont posés entre les recommandations (en haut) et les
-deux panneaux les plus lus — « Vitamine D : carence ? » et « Rapports optimaux » — qu'il faut aller
-chercher tout en bas.
-
-**Piste.** Replier le bloc derrière un « Régler l'importance des nutriments (3 modifiés) », et remonter
-la vitamine D et les rapports. Le compteur de modifications suffit à signaler que le réglage existe.
-
-- [ ] pouvoir changer dans nutriments tout les ajr où optimalité (mettre une option revenir au conseillé) : comme protéines dans profil 
-et d'ailleurs mettre en valeur brut ou en fonction du pdc selon le nutriment pour ce qui est mesure comme ca souvent (prot, lipides, peut etre des micronutriment jsp)
-
-### U-04 · Le nuage de points n'étiquette aucun aliment — pas même la frontière de Pareto
-
-**Constaté.** 39 aliments, aucun nom affiché ; il faut survoler chaque point. Or **la frontière de
-Pareto ne compte que peu de points**, bien espacés, et c'est la raison d'être de la vue : elle est présentée
-comme la réponse à « qu'est-ce qui maximise X en minimisant Y ? », et la réponse est huit ronds anonymes.
-
-**Piste.** Étiqueter **les seuls points de la frontière** (avec évitement des collisions, cf. B-11).
-**Alternative** : une petite liste ordonnée sous le graphe — « la frontière, dans l'ordre : Épinards →
-Brocoli → Cabillaud → … » — qui a l'avantage d'être lisible au téléphone, là où le nuage ne l'est pas.
-
-### U-05 · La légende des catégories est loin du graphe, et 11 couleurs se ressemblent
-
-**Constaté.** Dans « Explorer visuel », la légende est dans un **panneau séparé, sous le graphe**
-(~150 px plus bas) : l'œil fait l'aller-retour à chaque point. Et onze catégories se partagent une
-palette où Fruits, Viandes et Sucré/snacks sont trois rouges/roses voisins.
-
-**Piste.** Légende collée au graphe (en surimpression dans un coin, ou juste au-dessus) ; et distinguer
-par la **forme** autant que par la couleur (rond / carré / triangle), ce qui règle aussi le daltonisme.
-
-### U-06 · L'historique n'existe qu'un mois à la fois
-
-**Constaté.** L'onglet annonce « 64 jour(s) enregistré(s) au total » mais n'en montre que 31 : il faut
-cliquer `‹` pour remonter. La page fait **865 px** sur un écran de 950 — le tiers inférieur est vide.
-
-**Piste.** Une **heatmap continue façon contributions GitHub** (une case = un jour, 12 mois d'un coup,
-couleur = écart à l'objectif). Elle tient dans la place déjà vide, elle donne les régularités qu'un mois
-isolé ne montre pas (les week-ends, les vacances, l'arrêt de trois semaines), et le calendrier mensuel
-reste en dessous pour le détail.
-
-### U-07 · 🔇 / 🔊 pour « compter ou non ce jour »
-
-Une icône de haut-parleur, dans un journal alimentaire, pour dire « ce jour est mal rempli, ne le compte
-pas dans les moyennes ». La métaphore vient du code (`mutedDays`) et n'a pas de sens pour qui lit
-l'écran — la légende doit d'ailleurs l'expliquer en toutes lettres.
-
-**Piste.** Le mot compte plus que l'icône ici :
-« ne pas compter ce jour ».
-
-### U-08 · 786 px de contenu utile sur 1 440 px d'écran
-
-**Constaté.** `.app` est plafonné à ~786 px : sur un écran d'ordinateur, 654 px sont perdus. C'est le
-bon choix pour la saisie et les formulaires. Ça l'est beaucoup moins pour le nuage de points, la carte
-ACP, le comparateur et la tendance — précisément les vues qui font l'intérêt du projet, et qui se
-battent aujourd'hui pour de la place (cf. B-11).
-
-**Piste.** Une largeur par onglet plutôt qu'une largeur globale : 786 px partout, ~1 200 px sur
-Stats / Banque / Nutriments. **Alternative** : un bouton « élargir » sur les panneaux graphiques.
-ATTENTION telephone
-
-
-### U-12 · Un panneau vide de 120 px pour dire « choisissez deux aliments »
-
-Dans « Comparer », tant que rien n'est sélectionné, un panneau pleine largeur affiche une phrase
-centrée. La place serait mieux employée par deux ou trois **comparaisons suggérées** tirées des aliments
-réellement mangés (« Saumon vs Cabillaud », « Tofu vs Steak haché ») : ça montre à quoi sert l'écran,
-ce qu'une phrase ne fait pas.
+*Aucune friction ouverte.* Les dix frictions relevées le 22/08/2026 ont été traitées — le détail est
+dans git. Une seule a été **écartée sans correction** : U-07 (l'icône 🔇 / 🔊 pour « ne pas compter ce
+jour »). Sur une case de calendrier de 40 px, aucun libellé en toutes lettres ne tient, et le geste à
+un clic vaut mieux que la métaphore parfaite ; le panneau du jour, lui, le dit déjà en clair.
 
 ---
 
@@ -140,7 +39,8 @@ Rien ici n'est un défaut : ce sont des angles différents, à garder ou à jete
 
 L'app sait déjà, aujourd'hui, quels nutriments sont en carence, lesquels sont en excès, et quels aliments
 les corrigeraient (`recommend.ts`, `guide.ts`). Ce savoir est rangé dans deux onglets qu'il faut aller
-ouvrir. L'écran d'accueil, lui, affiche 38 cartes neutres.
+ouvrir. L'écran d'accueil, lui, ouvre sur les calories et les macros, les 38 cartes neutres repliées
+dessous (et triables par urgence) — mais il ne dit toujours pas ce qui cloche, il attend qu'on regarde.
 
 Un accueil qui dirait « il te manque surtout de l'oméga 3 et de la vitamine D ; du saumon ce soir règle
 les deux » utiliserait ce qui existe déjà. Le mur reste dessous pour qui veut vérifier.
@@ -168,9 +68,10 @@ d'excès — AG saturés, AG trans, sodium, alcool — mais aucun de ceux-là.
 
 ### P-04 · Un mode « analyse » plein écran
 
-Le nuage, l'ACP et la tendance sont serrés dans 786 px (U-08) et bardés de contrôles au-dessus. Un
-bouton « ⤢ » qui ouvre le graphe seul, sur toute la fenêtre, contrôles en surimpression, résoudrait
-B-11 et U-04 d'un coup — et donnerait une image exportable pour le README.
+Le nuage, l'ACP et la tendance ont gagné la largeur étendue (1 200 px sur les onglets concernés) et la
+frontière de Pareto porte désormais des noms, mais ils restent bardés de contrôles au-dessus, et le
+téléphone n'a rien gagné. Un bouton « ⤢ » qui ouvre le graphe seul, sur toute la fenêtre, contrôles en
+surimpression, donnerait la place qui manque encore — et une image exportable pour le README.
 
 ### P-05 · La preuve du calcul, en un clic
 

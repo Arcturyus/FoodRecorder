@@ -686,6 +686,54 @@ button.chip-active:hover { filter: brightness(1.08); }
   .cov-row .cov-label { font-size: 12px; }
 }
 
+/*
+ * Couverture moyenne sur deux colonnes, seulement là où la place existe
+ * (onglet large, ≥ 1100 px) : les 41 nutriments tenaient sur une colonne de
+ * 560 px pendant que l'autre moitié restait vide. « columns » plutôt qu'une
+ * grille : le texte coule colonne par colonne, donc le tri du moins couvert au
+ * mieux couvert se lit toujours de haut en bas.
+ */
+@media (min-width: 1100px) {
+  .app.wide .cov-cols { columns: 2; column-gap: 22px; }
+  .app.wide .cov-cols .cov-row { break-inside: avoid; }
+}
+
+/*
+ * Noms des aliments de la frontière de Pareto. Le nuage est dessiné dans un
+ * viewBox de 680 de large : sur un écran de 390 px, ces 10 px de police n'en
+ * font plus que 6 — illisibles, et posés sur un nuage déjà serré. Le nom reste
+ * accessible au toucher, via l'info-bulle du point.
+ */
+@media (max-width: 700px) {
+  .pareto-labels { display: none; }
+}
+
+/*
+ * Filtre-légende des catégories : le bouton porte la marque exacte du nuage
+ * (forme + couleur), il faut donc que la pastille s'aligne sur le texte.
+ */
+.cat-btn { display: inline-flex; align-items: center; gap: 5px; }
+
+/* Comparaisons suggérées, à la place du panneau vide de « Comparer ». */
+.suggest-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(230px, 1fr)); gap: 8px; }
+.suggest-pair {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 3px;
+  text-align: left;
+  padding: 9px 11px;
+  background: var(--panel-2);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  cursor: pointer;
+}
+.suggest-pair:hover { border-color: var(--accent); background: var(--border); }
+.suggest-names { font-size: 13px; color: var(--text); }
+.suggest-names em { color: var(--muted); font-style: normal; padding: 0 2px; }
+.suggest-why { color: var(--muted); }
+.suggest-tag { color: var(--accent-2); }
+
 .empty { color: var(--muted); text-align: center; padding: 30px 0; }
 .small { font-size: 12px; color: var(--muted); }
 .mono { font-variant-numeric: tabular-nums; }

@@ -9,8 +9,11 @@ import { tsne, mds } from '../nutrition/embed';
 import { normalize } from '../nutrition/normalize';
 import { useStore } from '../store/store';
 import type { Food, FoodCategory, NutrientKey } from '../nutrition/types';
-import { CATS, COLOR_BY_CAT, rescaleAxis } from './FoodExplorer';
+import { CATS, COLOR_BY_CAT, CatIcon, catSymbolPath, rescaleAxis } from './FoodExplorer';
 import { fmt } from './format';
+import { useBankUsage } from './useBankUsage';
+import type { BankUsage } from './useBankUsage';
+import { UI_STORE, useUiPref } from './uiPrefs';
 
 /**
  * Mode « Comparer » : met deux aliments face à face (barres divergentes, radar,
@@ -200,6 +203,18 @@ export function FoodCompare({
     setIds(next);
   };
 
+  /**
+   * Dernière paire comparée, pour la reproposer à l'ouverture suivante. C'est
+   * une préférence d'AFFICHAGE de ce navigateur (cf. uiPrefs.ts) : reprendre une
+   * comparaison est un confort local, pas une donnée de profil à synchroniser.
+   */
+  const [lastPair, setLastPair] = useUiPref<[string, string] | null>(UI_STORE, LAST_PAIR_PREF, null);
+  useEffect(() => {
+    if (foodA && foodB && (lastPair?.[0] !== foodA.id || lastPair?.[1] !== foodB.id)) {
+      setLastPair([foodA.id, foodB.id]);
+    }
+  }, [foodA, foodB, lastPair, setLastPair]);
+
   return (
     <>
       <div className="panel">
@@ -228,9 +243,13 @@ export function FoodCompare({
       </div>
 
       {!foodA || !foodB ? (
-        <div className="panel">
-          <div className="empty">Choisissez deux aliments à comparer.</div>
-        </div>
+        <SuggestedPairs
+          foods={foods}
+          mode={mode}
+          weightFor={weightFor}
+          lastPair={lastPair}
+          onPick={(pair) => setIds(pair)}
+        />
       ) : (
         <>
           <DivergentBars a={foodA} b={foodB} mode={mode} />
@@ -254,6 +273,153 @@ export function FoodCompare({
         onPick={setSlot}
       />
     </>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Comparaisons suggérées (écran vide)
+// ---------------------------------------------------------------------------
+
+/** Clé de mémorisation de la dernière paire comparée (par navigateur). */
+const LAST_PAIR_PREF = 'compare-last-pair';
+
+/** Une comparaison proposée : deux aliments et la raison de les rapprocher. */
+export interface PairSuggestion {
+  a: Food;
+  b: Food;
+  /** Ce qui justifie la paire (« poissons · 24 j / 11 j »). */
+  why: string;
+}
+
+/**
+ * Paires de même catégorie tirées de ce qui est RÉELLEMENT mangé : dans chaque
+ * catégorie, les deux aliments vus le plus de jours distincts. C'est la
+ * comparaison qui se pose vraiment (« saumon ou cabillaud ce soir ? »), là où
+ * deux aliments de familles différentes ne se substituent pas.
+ *
+ * Le classement se fait sur les JOURS et non les occurrences : trois cafés dans
+ * la même journée disent moins qu'un aliment repris trente jours de suite.
+ * Fonction pure, hors composant, pour être testable.
+ */
+export function categoryPairs(foods: Food[], usage: Map<string, BankUsage>, limit = 3): PairSuggestion[] {
+  const byCat = new Map<FoodCategory, { f: Food; u: BankUsage }[]>();
+  for (const f of foods) {
+    const u = usage.get(f.id);
+    // Compléments écartés : « whey vs créatine » n'est pas une comparaison de repas.
+    if (!u || f.categorie === 'supplement') continue;
+    const list = byCat.get(f.categorie) ?? [];
+    list.push({ f, u });
+    byCat.set(f.categorie, list);
+  }
+  const pairs: (PairSuggestion & { score: number })[] = [];
+  for (const [cat, list] of byCat) {
+    if (list.length < 2) continue;
+    const [x, y] = [...list].sort((p, q) => q.u.jours - p.u.jours || q.u.occurrences - p.u.occurrences);
+    const label = CATS.find((c) => c.key === cat)?.label.toLowerCase() ?? 'même famille';
+    pairs.push({
+      a: x.f,
+      b: y.f,
+      why: `${label} · ${x.u.jours} j / ${y.u.jours} j`,
+      score: x.u.jours + y.u.jours,
+    });
+  }
+  return pairs
+    .sort((p, q) => q.score - p.score)
+    .slice(0, limit)
+    .map(({ score: _score, ...s }) => s);
+}
+
+/**
+ * Ce qu'affiche « Comparer » tant qu'aucun aliment n'est choisi. Une phrase
+ * centrée occupait 120 px pour dire « choisissez deux aliments » : trois paires
+ * cliquables tirées de ce qu'on mange vraiment montrent à quoi sert l'écran, ce
+ * qu'une phrase ne fait pas.
+ *
+ * Trois sources, de la plus attendue à la plus surprenante : les paires de même
+ * catégorie, l'aliment le plus mangé face à son plus proche voisin
+ * nutritionnel, et la reprise de la dernière comparaison.
+ */
+function SuggestedPairs({
+  foods,
+  mode,
+  weightFor,
+  lastPair,
+  onPick,
+}: {
+  foods: Food[];
+  mode: NormMode;
+  weightFor: (k: NutrientKey) => number;
+  /** Dernière paire comparée sur ce navigateur (ids), ou null. */
+  lastPair: [string, string] | null;
+  onPick: (ids: [string, string]) => void;
+}) {
+  const usage = useBankUsage();
+  const byId = useMemo(() => new Map(foods.map((f) => [f.id, f])), [foods]);
+  const data = useNeighborData(foods, ANALYSIS_KEYS, mode, weightFor);
+
+  const cats = useMemo(() => categoryPairs(foods, usage), [foods, usage]);
+
+  /** L'aliment le plus mangé face à son profil le plus proche. */
+  const neighbor = useMemo<PairSuggestion | null>(() => {
+    let top: { f: Food; u: BankUsage } | null = null;
+    for (const f of foods) {
+      const u = usage.get(f.id);
+      if (!u || f.categorie === 'supplement') continue;
+      if (!top || u.jours > top.u.jours) top = { f, u };
+    }
+    if (!top) return null;
+    const i = data.index.get(top.f.id);
+    if (i == null) return null;
+    let best: { f: Food; sim: number } | null = null;
+    for (let k = 0; k < foods.length; k++) {
+      if (k === i || foods[k].categorie === 'supplement') continue;
+      const sim = weightedSim(data, i, k);
+      if (best === null || sim > best.sim) best = { f: foods[k], sim };
+    }
+    // Un voisin quasi orthogonal ne dit rien : mieux vaut ne rien proposer.
+    if (best === null || best.sim < 0.5) return null;
+    return { a: top.f, b: best.f, why: `profil le plus proche · ${fmt(best.sim * 100)} % de similarité` };
+  }, [foods, usage, data]);
+
+  const resume = useMemo<PairSuggestion | null>(() => {
+    if (!lastPair) return null;
+    const a = byId.get(lastPair[0]);
+    const b = byId.get(lastPair[1]);
+    return a && b ? { a, b, why: 'la dernière que vous avez ouverte' } : null;
+  }, [lastPair, byId]);
+
+  const suggestions = [
+    ...(resume ? [{ ...resume, tag: 'Reprendre' }] : []),
+    ...cats.map((s) => ({ ...s, tag: 'Même famille' })),
+    ...(neighbor ? [{ ...neighbor, tag: 'Voisin' }] : []),
+  ].filter((s, i, all) => all.findIndex((o) => o.a.id === s.a.id && o.b.id === s.b.id) === i);
+
+  if (suggestions.length === 0) {
+    return (
+      <div className="panel">
+        <div className="empty">Choisissez deux aliments à comparer.</div>
+      </div>
+    );
+  }
+
+  return (
+    <div className="panel">
+      <div className="small" style={{ marginBottom: 8 }}>
+        Choisissez deux aliments ci-dessus, ou partez d'une comparaison tirée de ce que vous mangez :
+      </div>
+      <div className="suggest-grid">
+        {suggestions.map((s) => (
+          <button key={`${s.a.id}|${s.b.id}`} type="button" className="suggest-pair" onClick={() => onPick([s.a.id, s.b.id])}>
+            <span className="suggest-names">
+              {s.a.nom} <em>vs</em> {s.b.nom}
+            </span>
+            <span className="small suggest-why">
+              <span className="suggest-tag">{s.tag}</span> {s.why}
+            </span>
+          </button>
+        ))}
+      </div>
+    </div>
   );
 }
 
@@ -573,6 +739,25 @@ function useNeighborData(foods: Food[], keys: NutrientKey[], mode: NormMode, wei
   }, [foods, keys, mode, weightFor]);
 }
 
+/** Jeu de données de voisinage (sortie de `useNeighborData`). */
+type NeighborData = ReturnType<typeof useNeighborData>;
+
+/**
+ * Similarité cosinus pondérée entre deux aliments (∈ [0,1]) : l'angle entre
+ * leurs profils de richesse relative, donc indépendante de la concentration
+ * globale — deux aliments de même « forme » valent 1, même si l'un est trois
+ * fois plus dense. C'est la mesure des « substituts », partagée par le panneau
+ * des voisins et par les comparaisons suggérées.
+ */
+function weightedSim(data: NeighborData, i: number, k: number): number {
+  const relI = data.rel[i];
+  const relK = data.rel[k];
+  if (data.wnorm[i] <= 1e-12 || data.wnorm[k] <= 1e-12) return 0;
+  let dot = 0;
+  for (let j = 0; j < relI.length; j++) dot += data.weights[j] * relI[j] * relK[j];
+  return dot / (data.wnorm[i] * data.wnorm[k]);
+}
+
 function NeighborsPanel({
   foods,
   a,
@@ -597,7 +782,6 @@ function NeighborsPanel({
     const i = data.index.get(food.id);
     if (i == null || activeKeys.length === 0) return null;
     const relI = data.rel[i];
-    const normI = data.wnorm[i];
     // Vecteur de manques de l'aliment de référence : 1 = à zéro, 0 = déjà au plafond (p95).
     const gap = relI.map((v) => 1 - v);
     const gapNorm = Math.sqrt(gap.reduce((a, v, j) => a + data.weights[j] * v * v, 0));
@@ -605,18 +789,15 @@ function NeighborsPanel({
     const scored = foods.map((f, k) => {
       if (k === i) return null;
       const relK = data.rel[k];
-      let dot = 0; // similarité : richesse commune
-      let cdot = 0; // complément : richesse du candidat alignée sur les manques de la référence
-      for (let j = 0; j < relI.length; j++) {
-        dot += data.weights[j] * relI[j] * relK[j];
-        cdot += data.weights[j] * gap[j] * relK[j];
-      }
+      // Complément : richesse du candidat alignée sur les manques de la référence.
+      let cdot = 0;
+      for (let j = 0; j < relI.length; j++) cdot += data.weights[j] * gap[j] * relK[j];
       // Deux cosinus pondérés ∈ [0,1], indépendants de la concentration globale :
-      //  - sim   = angle entre les deux profils de richesse (même « forme » → 1) ;
+      //  - sim   = angle entre les deux profils de richesse (cf. weightedSim) ;
       //  - compl = angle entre les MANQUES de la référence et la richesse du candidat
       //            (comble précisément les carences → 1 ; un aliment « riche partout »
       //            ne gagne plus par sa seule densité).
-      const sim = normI > 1e-12 && data.wnorm[k] > 1e-12 ? dot / (normI * data.wnorm[k]) : 0;
+      const sim = weightedSim(data, i, k);
       const compl = gapNorm > 1e-12 && data.wnorm[k] > 1e-12 ? cdot / (gapNorm * data.wnorm[k]) : 0;
       return { f, sim, compl };
     }).filter((x): x is { f: Food; sim: number; compl: number } => x !== null);
@@ -1227,10 +1408,9 @@ function PcaBiplot({
                       const cyp = vys(s.y);
                       return (
                         <g key={s.id}>
-                          <circle
-                            cx={cxp}
-                            cy={cyp}
-                            r={r}
+                          <path
+                            transform={`translate(${cxp} ${cyp})`}
+                            d={catSymbolPath(f.categorie, r)}
                             fill={slot != null ? SLOT_COLOR[slot] : COLOR_BY_CAT.get(f.categorie) ?? C.muted}
                             stroke={isSel ? C.text : isMatch || isMenu ? C.accent2 : 'none'}
                             strokeWidth={isSel ? 2 : isMatch || isMenu ? 2 : 0}
@@ -1330,10 +1510,12 @@ function PcaBiplot({
                 {CATS.map((c) => (
                   <button
                     key={c.key}
-                    className="ghost small"
+                    className="ghost small cat-btn"
                     style={{ opacity: hideCats.has(c.key) ? 0.4 : 1, borderColor: hideCats.has(c.key) ? C.border : c.color }}
+                    data-tip={hideCats.has(c.key) ? 'Afficher cette catégorie' : 'Masquer cette catégorie'}
                     onClick={() => toggleCat(c.key)}
                   >
+                    <CatIcon cat={c.key} />
                     {c.label}
                   </button>
                 ))}
