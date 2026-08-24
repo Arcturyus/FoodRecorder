@@ -515,6 +515,25 @@ header.app-head .sub { color: var(--muted); font-size: 13px; }
   white-space: nowrap;
 }
 .entry-compact-kcal { flex: 0 0 auto; font-size: 12px; color: var(--muted); }
+
+/*
+ * En-tête d'un repas ouvert depuis la vue compacte : discret (il chapeaute des
+ * cartes qui portent déjà leur heure) mais cliquable pour tout refermer.
+ */
+.meal-head {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  width: 100%;
+  padding: 2px 4px;
+  margin-top: 10px;
+  border: none;
+  background: none;
+  color: var(--muted);
+  text-align: left;
+}
+.meal-head:hover { background: none; color: var(--accent); }
+.meal-head:hover .sec-chevron { color: var(--accent); }
 /* Le chevron de repli d'une carte ouverte : pas de titre à côté, on lui rend
    sa largeur naturelle pour qu'il ne pousse pas la ligne de méta. */
 .entry-fold { flex: 0 0 auto; }

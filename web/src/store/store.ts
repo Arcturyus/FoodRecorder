@@ -80,6 +80,17 @@ export interface JournalEntry {
   transcript: string;
   source: 'llm' | 'anthropic' | 'claudecode' | 'rules' | 'manuel';
   items: JournalItem[];
+  /**
+   * Correction du regroupement en repas (cf. ui/meals.ts), quand la règle
+   * automatique — deux saisies à moins de 30 min sont le même repas — se
+   * trompe : 'join' rattache cette entrée au repas précédent malgré l'écart,
+   * 'break' en ouvre un nouveau ici. Absent = automatique.
+   *
+   * C'est une annotation, pas une fusion : les entrées restent séparées, et
+   * effacer le champ fait revenir au calcul. Posée SUR l'entrée, elle suit la
+   * synchro et les sauvegardes sans qu'il y ait rien à câbler.
+   */
+  mealLink?: 'join' | 'break';
 }
 
 // Ré-export : le reste de l'app importe historiquement `normalizeNutrients`
@@ -361,6 +372,11 @@ interface AppState {
   removeEntry: (entryId: string) => void;
   /** Déplace une entrée vers un autre jour (saisie faite le lendemain, erreur de date…). */
   moveEntry: (entryId: string, date: string) => void;
+  /**
+   * Force ou libère le rattachement d'une entrée au repas précédent.
+   * `null` revient au regroupement automatique (cf. `JournalEntry.mealLink`).
+   */
+  setEntryMealLink: (entryId: string, link: 'join' | 'break' | null) => void;
   /** Duplique une entrée (repas passé) vers un autre jour — défaut : aujourd'hui. */
   duplicateEntry: (entryId: string, date?: string) => void;
   /** Duplique toutes les entrées d'un jour vers un autre — défaut : aujourd'hui. */
@@ -672,6 +688,18 @@ export const useStore = create<AppState>()(
 
       moveEntry: (entryId, date) =>
         set((s) => ({ entries: s.entries.map((e) => (e.id === entryId ? { ...e, date } : e)) })),
+
+      setEntryMealLink: (entryId, link) =>
+        set((s) => ({
+          entries: s.entries.map((e) => {
+            if (e.id !== entryId) return e;
+            // Retour à l'automatique : on RETIRE le champ au lieu de le mettre à
+            // undefined, pour qu'une entrée jamais corrigée et une entrée remise
+            // en automatique soient rigoureusement le même objet (JSON, synchro).
+            const { mealLink: _drop, ...rest } = e;
+            return link ? { ...rest, mealLink: link } : rest;
+          }),
+        })),
 
       duplicateEntry: (entryId, date) =>
         set((s) => {

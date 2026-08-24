@@ -1,4 +1,4 @@
-import { useMemo } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { useStore, dayTotals, todayStr } from '../store/store';
 import type { JournalItem } from '../store/store';
 import { EMPTY_NUTRIENTS } from '../nutrition/types';
@@ -9,6 +9,8 @@ import { FavoriteMeals } from './FavoriteMeals';
 import { ManualAdd } from './ManualAdd';
 import { Totals } from './Totals';
 import { EntryCard } from './EntryCard';
+import { MealCompactLine, MealHeader } from './MealCard';
+import { groupIntoMeals, mealPositions } from './meals';
 import { Sun } from './Sun';
 import { DayNote } from './DayNote';
 import { DayAdviceCard } from './DayAdvice';
@@ -69,6 +71,32 @@ export function DayView({ date }: { date: string }) {
    */
   const [compact, setCompact] = useUiPref(UI_STORE, 'day-entries-compact', true);
 
+  /**
+   * Les saisies rapprochées sont présentées comme un seul repas : trois cartes
+   * (« steak », « ketchup », « brocolis ») décrivent une assiette, pas trois
+   * (cf. meals.ts). Les entrées elles-mêmes ne sont pas fusionnées.
+   */
+  const meals = useMemo(() => groupIntoMeals(dayEntries), [dayEntries]);
+  const positions = useMemo(() => mealPositions(meals), [meals]);
+
+  /**
+   * Repas ouverts un par un depuis la vue compacte. L'état vit ICI et non dans
+   * la carte du repas : les cartes d'entrée restent ainsi des enfants directs de
+   * la journée, avec une clé stable, et gardent leur état (« Options » ouvert,
+   * édition en cours) quand rattacher une saisie réorganise les groupes.
+   */
+  const [openMeals, setOpenMeals] = useState<ReadonlySet<string>>(new Set());
+  // « Tout replier » / « tout déplier » reprend la main sur ces ouvertures.
+  useEffect(() => {
+    setOpenMeals(new Set());
+  }, [compact]);
+  const toggleMeal = (id: string) =>
+    setOpenMeals((prev) => {
+      const next = new Set(prev);
+      next.has(id) ? next.delete(id) : next.add(id);
+      return next;
+    });
+
   return (
     <>
       {/* En tête : ce que la file a encore à traiter — une dictée envoyée du téléphone
@@ -94,15 +122,30 @@ export function DayView({ date }: { date: string }) {
         <>
           <div className="fold-head entries-head">
             <span className="small" style={{ color: 'var(--muted)' }}>
-              {dayEntries.length} repas · {fmt(dayEntries.reduce((a, e) => a + e.items.length, 0))} aliments
+              {meals.length} repas · {fmt(dayEntries.reduce((a, e) => a + e.items.length, 0))} aliments
             </span>
             <button className="ghost small" onClick={() => setCompact(!compact)}>
               {compact ? 'Tout déplier' : 'Tout replier'}
             </button>
           </div>
-          {dayEntries.map((e) => (
-            <EntryCard key={e.id} entry={e} collapsed={compact} />
-          ))}
+          {/* Du plus récent au plus ancien, comme les entrées avant le regroupement. */}
+          {[...meals].reverse().flatMap((meal) => {
+            // Repas d'une seule saisie : la carte d'entrée fait déjà tout, avec
+            // sa dictée en résumé compact.
+            if (meal.entries.length === 1) {
+              const only = meal.entries[0];
+              return [<EntryCard key={only.id} entry={only} collapsed={compact} mealPos={positions.get(only.id)} />];
+            }
+            if (compact && !openMeals.has(meal.id)) {
+              return [<MealCompactLine key={meal.id} meal={meal} onOpen={() => toggleMeal(meal.id)} />];
+            }
+            const cards = [...meal.entries]
+              .reverse()
+              .map((e) => <EntryCard key={e.id} entry={e} mealPos={positions.get(e.id)} />);
+            return compact
+              ? [<MealHeader key={`head-${meal.id}`} meal={meal} onClose={() => toggleMeal(meal.id)} />, ...cards]
+              : cards;
+          })}
         </>
       )}
       <Sun key={`sun-${date}`} date={isToday ? undefined : date} />
