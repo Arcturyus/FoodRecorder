@@ -9,7 +9,7 @@ import { useStore, todayStr, resyncEntries, effectiveFoods, normalizeNutrients, 
 import type { JournalEntry, FavoriteMeal, FoodOverrides, SttEngine, ExtractionMode } from './store';
 import { migrateToPersonalBank } from '../nutrition/bank';
 import type { Food } from '../nutrition/types';
-import type { Profile } from '../nutrition/targets';
+import type { Profile, TargetOverrides } from '../nutrition/targets';
 import type { WeightEntry, WeightConfig } from '../weight/types';
 import { WEIGHT_METRICS } from '../weight/types';
 import type { SunExposure } from '../sun/vitaminD';
@@ -51,6 +51,8 @@ export interface BackupData {
   dayNotes?: Record<string, string>;
   /** Overrides d'importance des nutriments. Absent des vieilles sauvegardes. */
   nutrientImportance?: Partial<Record<NutrientKey, number>>;
+  /** Cibles (AJR / optimal) réglées à la main. Absent des vieilles sauvegardes. */
+  nutrientTargets?: TargetOverrides;
   /** Réglages d'extraction / dictée (hors clé API). Absent des vieilles sauvegardes. */
   settings?: BackupSettings;
 }
@@ -72,6 +74,7 @@ export function buildBackup(): BackupData {
     mutedDays: s.mutedDays,
     dayNotes: s.dayNotes,
     nutrientImportance: s.nutrientImportance,
+    nutrientTargets: s.nutrientTargets,
     settings: {
       sttEngine: s.sttEngine,
       sttModel: s.sttModel,
@@ -130,6 +133,7 @@ export function importBackup(text: string): string {
     mutedDays: b.mutedDays ?? {},
     dayNotes: b.dayNotes ?? {},
     nutrientImportance: b.nutrientImportance ?? {},
+    nutrientTargets: b.nutrientTargets ?? {},
     // Champ par champ (et non `...b.settings`) : un fichier bricolé ne doit pas
     // pouvoir injecter n'importe quelle clé dans le store.
     ...(b.settings

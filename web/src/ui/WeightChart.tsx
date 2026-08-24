@@ -16,6 +16,7 @@ import {
 import type { PeriodState, Granularity } from './PeriodSelector';
 import { fmt } from './format';
 import { NumberField } from './NumberField';
+import { Section } from './Section';
 
 const C = {
   accent: '#5b8cff',
@@ -60,6 +61,14 @@ function fmtDateTime(e: WeightEntry): string {
 function isComparable(e: WeightEntry): boolean {
   return e.aJeun && e.nu;
 }
+
+/**
+ * Tolérance horizontale du clic « éditer cette pesée », en unités du viewBox.
+ * Assez large pour qu'un clic à côté d'un point très petit atteigne quand même
+ * sa mesure, assez étroite pour qu'un clic dans une zone vide ne réveille pas
+ * une pesée lointaine.
+ */
+const CLICK_TOLERANCE_PX = 14;
 
 interface SeriesPoint {
   t: number;
@@ -454,12 +463,12 @@ export function WeightChart({ onEditEntry }: { onEditEntry?: (id: string) => voi
   const hasHollow = series.some((s) => s.points.some((p) => p.hollow));
 
   return (
-    <div className="panel">
-      <div className="row" style={{ justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: 8 }}>
-        <h2 style={{ margin: 0 }}>Évolution</h2>
-        <PeriodSelector value={period} onChange={setPeriod} />
-      </div>
-
+    <Section
+      id="evolution"
+      title="Évolution"
+      summary={chartSummary(entries)}
+      head={<PeriodSelector value={period} onChange={setPeriod} />}
+    >
       <div className="row" style={{ gap: 6, flexWrap: 'wrap', margin: '10px 0' }}>
         {MODE_CHIPS.map((m) => (
           <button
@@ -659,7 +668,7 @@ export function WeightChart({ onEditEntry }: { onEditEntry?: (id: string) => voi
           </span>
         )}
       </div>
-    </div>
+    </Section>
   );
 }
 
@@ -758,6 +767,33 @@ function MultiLineChart({
     return best ? { si: (best as { si: number; pi: number }).si, pi: (best as { si: number; pi: number }).pi, dxPx: bestDx } : null;
   }
 
+  /**
+   * Pesée la plus proche horizontalement de `x`, pour le clic « éditer cette
+   * mesure ». Distincte de `nearestPoint`, qui sert au SURVOL et doit atterrir
+   * sur la valeur dessinée (celle de la courbe lisse quand elle est active).
+   *
+   * Elle balaie aussi les `rawPoints` : moyenne mobile cochée — le réglage par
+   * défaut — la série affichée est la moyenne, dont les points ne portent aucune
+   * pesée. Le clic ne faisait donc rien, alors que la légende sous le graphe
+   * l'annonçait ; les vraies mesures sont dans `rawPoints`, dessinées en trait
+   * fin sous la courbe.
+   */
+  function nearestEntry(x: number): WeightEntry | null {
+    let best: WeightEntry | null = null;
+    let bestDx = Infinity;
+    for (const s of series) {
+      for (const p of [...s.points, ...(s.rawPoints ?? [])]) {
+        if (!p.e) continue; // point agrégé ou lissé : aucune mesure derrière
+        const dx = Math.abs(xs(p.t) - x);
+        if (dx < bestDx) {
+          bestDx = dx;
+          best = p.e;
+        }
+      }
+    }
+    return bestDx < CLICK_TOLERANCE_PX ? best : null;
+  }
+
   function svgCoords(ev: React.MouseEvent) {
     const rect = svgRef.current!.getBoundingClientRect();
     return {
@@ -791,10 +827,9 @@ function MultiLineChart({
     const { x } = svgCoords(ev);
     const moved = Math.abs(x - drag.x0);
     if (moved < 6) {
-      // Glissement négligeable : traité comme un clic sur le point le plus proche.
-      const nearest = nearestPoint(x, ((ev.clientY - svgRef.current.getBoundingClientRect().top) / svgRef.current.getBoundingClientRect().height) * H);
-      const p = nearest && nearest.dxPx < 14 ? series[nearest.si]?.points[nearest.pi] : null;
-      if (p?.e && onPointClick) onPointClick(p.e.id);
+      // Glissement négligeable : traité comme un clic sur la pesée la plus proche.
+      const e = nearestEntry(x);
+      if (e && onPointClick) onPointClick(e.id);
     } else if (onZoom) {
       const [xa, xb] = [Math.min(drag.x0, x), Math.max(drag.x0, x)];
       const ta = xs.invert(xa);
@@ -992,4 +1027,22 @@ function MultiLineChart({
       )}
     </div>
   );
+}
+
+/**
+ * Résumé de la section repliée : le dernier poids et sa variation sur un mois.
+ * C'est la question à laquelle la courbe répond ; si la réponse tient en une
+ * ligne, il n'y a pas besoin de déplier pour l'avoir.
+ */
+function chartSummary(entries: WeightEntry[]): string {
+  if (entries.length === 0) return 'aucune pesée';
+  const sorted = [...entries].sort((a, b) => `${a.date} ${a.heure}`.localeCompare(`${b.date} ${b.heure}`));
+  const last = sorted[sorted.length - 1];
+  const cutoff = new Date(`${last.date}T12:00:00`);
+  cutoff.setDate(cutoff.getDate() - 30);
+  const ref = sorted.filter((e) => e.date <= todayStr(cutoff)).pop();
+  const base = `${fmt(last.poids, 1)} kg le ${new Date(`${last.date}T12:00:00`).toLocaleDateString('fr-FR', { day: 'numeric', month: 'short' })}`;
+  if (!ref) return base;
+  const d = last.poids - ref.poids;
+  return `${base} · ${d < 0 ? '−' : '+'}${fmt(Math.abs(d), 1)} kg en 30 j`;
 }

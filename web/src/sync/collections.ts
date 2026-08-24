@@ -19,7 +19,13 @@ export type EntityTable =
   | 'sun_exposures';
 
 /** Singletons stockés dans `profile_kv` (clé = nom du champ). */
-export type KvKey = 'profile' | 'weightConfig' | 'mutedDays' | 'dayNotes' | 'nutrientImportance';
+export type KvKey =
+  | 'profile'
+  | 'weightConfig'
+  | 'mutedDays'
+  | 'dayNotes'
+  | 'nutrientImportance'
+  | 'nutrientTargets';
 
 /** Une entité : d'où lire ses lignes `[id, payload]` et sa référence brute (fast-path diff). */
 interface EntitySpec {
@@ -64,6 +70,7 @@ export const KV_SELECTORS: Record<KvKey, (s: StoreState) => unknown> = {
   mutedDays: (s) => s.mutedDays,
   dayNotes: (s) => s.dayNotes,
   nutrientImportance: (s) => s.nutrientImportance,
+  nutrientTargets: (s) => s.nutrientTargets,
 };
 
 export const KV_KEYS = Object.keys(KV_SELECTORS) as KvKey[];

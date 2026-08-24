@@ -243,7 +243,87 @@ export interface Target {
   parent?: NutrientKey;
 }
 
-export function computeTargets(profile: Profile, body: BodyContext = DEFAULT_BODY): Target[] {
+/**
+ * Réglage PERSONNEL des cibles d'un nutriment. L'app calcule un AJR (référence
+ * ANSES / valeurs européennes) et un optimal « santé/sport » ; l'un et l'autre
+ * restent des moyennes de population, et quelqu'un qui se connaît (analyse de
+ * sang, avis médical, protocole d'entraînement) doit pouvoir les remplacer.
+ *
+ * Un champ absent = la valeur calculée par l'app. On ne stocke donc QUE ce qui
+ * a été explicitement changé : le jour où une référence évolue (nouvelle version
+ * de `rda.ts`, changement de poids), tout ce qui n'a pas été touché suit.
+ */
+export interface TargetOverride {
+  /** atLeast : plancher voulu. limit : plafond voulu. */
+  ajr?: number;
+  /** atLeast : cible haute voulue. limit : cible basse voulue. */
+  optimal?: number;
+  /**
+   * Les deux valeurs ci-dessus sont exprimées PAR KILO de poids corporel.
+   * Stocker le g/kg plutôt que le gramme absolu est ce qui fait qu'une cible
+   * suit le poids : « 1,8 g/kg » reste vrai après trois kilos de perdus, « 126 g »
+   * non.
+   */
+  perKg?: boolean;
+}
+
+export type TargetOverrides = Partial<Record<NutrientKey, TargetOverride>>;
+
+/**
+ * Nutriments dont la littérature exprime couramment la cible au poids corporel :
+ * protéines (g/kg, le cas d'école), glucides et lipides (planification sportive),
+ * créatine (~0,03 g/kg en entretien) et magnésium (~5 mg/kg).
+ *
+ * Les autres en sont volontairement absents : une vitamine B12 « par kilo » n'a
+ * aucun sens physiologique (le besoin ne suit pas la masse), et proposer la
+ * bascule laisserait poser une question fausse sans le dire.
+ */
+export const PER_KG_KEYS = new Set<NutrientKey>(['proteines', 'glucides', 'lipides', 'creatine', 'magnesium']);
+
+/**
+ * Arrondi d'une cible calculée. L'arrondi à l'entier convenait aux milligrammes
+ * de potassium, pas aux vitamines du groupe B : la B1 (AJR 1,1 mg × 1,2) tombait
+ * à 1 mg, soit un « optimal » PLUS BAS que l'AJR qu'il est censé dépasser.
+ */
+function roundTarget(v: number): number {
+  return v < 10 ? Math.round(v * 10) / 10 : Math.round(v);
+}
+
+/**
+ * Valeur absolue d'une cible réglée. `undefined` si rien n'a été saisi de valable.
+ * Zéro est accepté : c'est la cible légitime de l'alcool et des AG trans, dont
+ * l'idéal EST zéro. Seuls le négatif et le non-numérique sont refusés.
+ */
+function overrideValue(v: number | undefined, perKg: boolean | undefined, poids: number): number | undefined {
+  if (v == null || !Number.isFinite(v) || v < 0) return undefined;
+  const abs = perKg ? v * poids : v;
+  return Math.round(abs * 100) / 100;
+}
+
+/** Applique le réglage personnel d'un nutriment à sa cible calculée. */
+function applyTargetOverride(t: Target, o: TargetOverride | undefined, poids: number): Target {
+  if (!o) return t;
+  const ajr = overrideValue(o.ajr, o.perKg, poids);
+  const optimal = overrideValue(o.optimal, o.perKg, poids);
+  if (ajr == null && optimal == null) return t;
+  return { ...t, ...(ajr != null ? { ajr } : {}), ...(optimal != null ? { optimal } : {}) };
+}
+
+/** Vrai si ce nutriment porte au moins une cible réglée à la main. */
+export function hasTargetOverride(o: TargetOverride | undefined): boolean {
+  return o != null && (o.ajr != null || o.optimal != null);
+}
+
+/** Nombre de nutriments dont une cible a été réglée à la main. */
+export function countTargetOverrides(overrides: TargetOverrides): number {
+  return Object.values(overrides).filter(hasTargetOverride).length;
+}
+
+export function computeTargets(
+  profile: Profile,
+  body: BodyContext = DEFAULT_BODY,
+  overrides: TargetOverrides = {},
+): Target[] {
   const { poids, sexe } = profile;
 
   // Calories : métabolisme de base réel + NEAT + sport + digestion, puis déficit ou
@@ -254,7 +334,7 @@ export function computeTargets(profile: Profile, body: BodyContext = DEFAULT_BOD
   const kcalMaintien = energy.tdee;
   const protOptimal = Math.round(poids * protParKgEffectif(profile));
 
-  return RDA.map((r): Target => {
+  const computed = RDA.map((r): Target => {
     const base = {
       key: r.key,
       label: r.label,
@@ -309,6 +389,11 @@ export function computeTargets(profile: Profile, body: BodyContext = DEFAULT_BOD
       return { ...base, ajr: 15, optimal: 18, lowThreshold: 10 };
     }
     const factor = r.optimalFactor ?? 1;
-    return { ...base, ajr: r.rda, optimal: Math.round(r.rda * factor) };
+    return { ...base, ajr: r.rda, optimal: roundTarget(r.rda * factor) };
   });
+
+  // Le réglage personnel s'applique EN DERNIER, sur la cible calculée : il
+  // remplace un chiffre, il ne rejoue pas les formules. C'est ce qui permet de
+  // toujours afficher à côté la valeur conseillée — et d'y revenir.
+  return computed.map((t) => applyTargetOverride(t, overrides[t.key], poids));
 }

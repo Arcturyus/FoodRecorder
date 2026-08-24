@@ -38,7 +38,7 @@ interface TabMeta {
 /** Onglets principaux : accessibles directement dans la barre du bas (mobile). */
 const PRIMARY_TABS: TabMeta[] = [
   { id: 'jour', label: "Aujourd'hui", short: 'Jour', icon: '🍽' },
-  { id: 'poids', label: 'Profil', short: 'Profil', icon: '⚖️' },
+  { id: 'poids', label: 'Poids', short: 'Poids', icon: '⚖️' },
   { id: 'historique', label: 'Historique', short: 'Historique', icon: '📅' },
   { id: 'stats', label: 'Stats', short: 'Stats', icon: '📊' },
 ];
@@ -51,6 +51,17 @@ const SECONDARY_TABS: TabMeta[] = [
 ];
 
 const ALL_TABS: TabMeta[] = [...PRIMARY_TABS, ...SECONDARY_TABS];
+
+/**
+ * Onglets qui reçoivent la largeur étendue (~1200 px au lieu de 820).
+ * La largeur étroite reste le bon choix pour la saisie et les formulaires — une
+ * ligne de 1 200 px se lit mal. Elle l'était beaucoup moins pour les vues qui
+ * font l'intérêt du projet (nuage de points, carte ACP, tendance, comparateur,
+ * heatmap), serrées dans 820 px pendant que 620 px d'écran restaient vides.
+ * Le CSS n'applique cette classe qu'au-dessus de 1100 px de fenêtre : téléphone
+ * et tablette ne voient aucune différence.
+ */
+const WIDE_TABS = new Set<Tab>(['stats', 'aliments', 'nutriments', 'historique']);
 
 export function App() {
   const [tab, setTab] = useState<Tab>('jour');
@@ -129,7 +140,7 @@ export function App() {
   }, []);
 
   return (
-    <div className="app">
+    <div className={`app${WIDE_TABS.has(tab) ? ' wide' : ''}`}>
       <header className="app-head">
         <h1>🍽️ FoodRecorder</h1>
       </header>

@@ -31,6 +31,7 @@ export function backupCounts(b: Record<string, unknown>): Record<string, number>
     'jours réglés': size(b.mutedDays),
     notes: size(b.dayNotes),
     importances: size(b.nutrientImportance),
+    'cibles réglées': size(b.nutrientTargets),
   };
 }
 

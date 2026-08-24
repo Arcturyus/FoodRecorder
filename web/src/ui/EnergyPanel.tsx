@@ -14,6 +14,7 @@ import {
 import { BMR_KEYS, bmrNeedsFfm, resolveBmrKey } from '../nutrition/energy';
 import type { BmrEstimate, BmrFormula } from '../nutrition/energy';
 import { fmt } from './format';
+import { Section } from './Section';
 
 /** Libellés courts du sélecteur — le tableau au-dessus porte déjà les noms complets. */
 const BMR_OPTION_LABELS: Record<BmrEstimate['key'], string> = {
@@ -69,9 +70,12 @@ export function EnergyPanel() {
       : null;
 
   return (
-    <div className="panel">
-      <h2>Dépense énergétique estimée</h2>
-
+    <Section
+      id="energie"
+      title="Dépense énergétique estimée"
+      defaultOpen={false}
+      summary={`${fmt(e.tdee)} kcal/j dépensés · ${fmt(e.cible)} kcal/j visés`}
+    >
       <div className="energy-headline">
         <div>
           <span className="energy-big mono">{fmt(e.tdee)}</span> <span className="small">kcal/jour dépensés</span>
@@ -265,6 +269,6 @@ export function EnergyPanel() {
           les prendre comme point de départ, puis de les corriger d'après ce que fait votre poids.
         </div>
       </details>
-    </div>
+    </Section>
   );
 }

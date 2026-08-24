@@ -11,8 +11,32 @@ import { DETAIL_GROUPS, SHORT_LABELS, draftToContribution, nutrientsToDraft } fr
 import { DayPickerButton, relativeDayLabel } from './DayPicker';
 import { NumberField } from './NumberField';
 
-/** Carte récap d'une entrée enregistrée, avec édition en place (plan §Phase 4). */
-export function EntryCard({ entry }: { entry: JournalEntry }) {
+/**
+ * Résumé d'un repas en une ligne, pour l'affichage compact : la dictée si elle
+ * existe (c'est ce que l'utilisateur a dit, donc ce qu'il reconnaîtra), sinon
+ * les aliments. Tronqué par le CSS, pas ici : couper à N caractères couperait
+ * au milieu d'un mot différent selon la largeur de l'écran.
+ */
+function entrySummary(entry: JournalEntry): string {
+  const dictee = entry.transcript.replace(/^⭐/, '').trim();
+  if (dictee) return dictee;
+  return entry.items.map((it) => it.nomAffiche).join(' · ');
+}
+
+/**
+ * Carte récap d'une entrée enregistrée, avec édition en place (plan §Phase 4).
+ * `collapsed` donne l'état d'ouverture VOULU par la page (mode compact du jour) ;
+ * la carte garde ensuite son propre état, pour qu'ouvrir un repas n'ouvre pas
+ * les autres.
+ */
+export function EntryCard({ entry, collapsed = false }: { entry: JournalEntry; collapsed?: boolean }) {
+  const [open, setOpen] = useState(!collapsed);
+  // Basculer le mode compact de la journée reprend la main sur les cartes
+  // ouvertes une à une : sinon « tout replier » laisserait ouvert ce qu'on
+  // venait de déplier, et le bouton paraîtrait cassé.
+  useEffect(() => {
+    setOpen(!collapsed);
+  }, [collapsed]);
   const [editing, setEditing] = useState(false);
   const removeEntry = useStore((s) => s.removeEntry);
   const moveEntry = useStore((s) => s.moveEntry);
@@ -48,10 +72,39 @@ export function EntryCard({ entry }: { entry: JournalEntry }) {
     setSaved(`⭐ Enregistré comme favori : « ${nom.trim()} » (visible sur l'onglet Aujourd'hui).`);
   }
 
+  if (!open) {
+    const n = entry.items.length;
+    return (
+      <div className="panel entry-card entry-compact">
+        <button type="button" className="entry-compact-btn" aria-expanded={false} onClick={() => setOpen(true)}>
+          <span className="sec-chevron" aria-hidden="true">
+            ▸
+          </span>
+          <span className="mono entry-compact-time">{time}</span>
+          <span className="entry-compact-title">{entrySummary(entry)}</span>
+          <span className="mono entry-compact-kcal">
+            {fmt(kcal)} kcal · {n} aliment{n > 1 ? 's' : ''}
+          </span>
+        </button>
+      </div>
+    );
+  }
+
   return (
     <div className="panel entry-card">
       <div className="entry-meta">
-        <span>
+        <span className="row" style={{ gap: 6, alignItems: 'center' }}>
+          <button
+            type="button"
+            className="sec-toggle entry-fold"
+            aria-expanded={true}
+            data-tip="Replier ce repas"
+            onClick={() => setOpen(false)}
+          >
+            <span className="sec-chevron open" aria-hidden="true">
+              ▸
+            </span>
+          </button>
           {time} · {fmt(kcal)} kcal ·{' '}
           {entry.source === 'llm'
             ? 'IA'

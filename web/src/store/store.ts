@@ -26,7 +26,7 @@ import { isNativeSttSupported } from '../stt/webspeech';
 import { normalizeForMatch } from '../nutrition/normalize';
 import { isPhotoEntry } from '../nutrition/uncertainty';
 import { DEFAULT_PROFILE } from '../nutrition/targets';
-import type { Profile } from '../nutrition/targets';
+import type { Profile, TargetOverride, TargetOverrides } from '../nutrition/targets';
 import type { WeightEntry, WeightConfig } from '../weight/types';
 import { SEED_WEIGHT_ENTRIES, SEED_WEIGHT_CONFIG } from '../weight/seed';
 import type { SunExposure } from '../sun/vitaminD';
@@ -284,6 +284,13 @@ interface AppState {
    */
   nutrientImportance: Partial<Record<NutrientKey, number>>;
 
+  /**
+   * Cibles (AJR / optimal) réglées à la main, par nutriment. Sparse comme
+   * `nutrientImportance` : un nutriment absent suit intégralement le calcul de
+   * `computeTargets`, et suivra ses évolutions futures.
+   */
+  nutrientTargets: TargetOverrides;
+
   setSttEngine: (e: SttEngine) => void;
   setSttModel: (id: string) => void;
   setLlmModel: (id: string) => void;
@@ -312,6 +319,17 @@ interface AppState {
   resetNutrientImportance: (key: NutrientKey) => void;
   /** Efface tous les overrides d'importance (retour aux défauts RDA). */
   resetAllNutrientImportance: () => void;
+
+  /**
+   * Règle une cible d'un nutriment. Le patch est FUSIONNÉ avec l'existant, et
+   * un champ mis à `undefined` est retiré — c'est ainsi qu'on revient à la
+   * valeur conseillée pour l'AJR sans perdre l'optimal réglé juste à côté.
+   */
+  setNutrientTarget: (key: NutrientKey, patch: TargetOverride) => void;
+  /** Efface le réglage de cible d'un nutriment (retour aux valeurs conseillées). */
+  resetNutrientTarget: (key: NutrientKey) => void;
+  /** Efface tous les réglages de cibles. */
+  resetAllNutrientTargets: () => void;
 
   /** Enregistre automatiquement une entrée (auto-validation, plan §Phase 4). */
   /**
@@ -442,6 +460,7 @@ export const useStore = create<AppState>()(
       mutedDays: {},
       dayNotes: {},
       nutrientImportance: {},
+      nutrientTargets: {},
 
       setSttEngine: (e) => set({ sttEngine: e }),
       setSttModel: (id) => set({ sttModel: id }),
@@ -489,6 +508,32 @@ export const useStore = create<AppState>()(
         }),
 
       resetAllNutrientImportance: () => set({ nutrientImportance: {} }),
+
+      setNutrientTarget: (key, patch) =>
+        set((s) => {
+          const merged = { ...(s.nutrientTargets[key] ?? {}), ...patch };
+          for (const k of Object.keys(merged) as (keyof typeof merged)[]) {
+            if (merged[k] === undefined) delete merged[k];
+          }
+          // Une entrée qui ne garde plus QUE son unité (`perKg`) est conservée :
+          // choisir « g/kg » avant de saisir quoi que ce soit est le geste
+          // normal, et l'oublier ferait retomber le champ en grammes sous les
+          // doigts de l'utilisateur. Elle ne compte pas pour autant comme une
+          // cible modifiée (cf. `hasTargetOverride`).
+          if (Object.keys(merged).length === 0) {
+            const { [key]: _drop, ...rest } = s.nutrientTargets;
+            return { nutrientTargets: rest };
+          }
+          return { nutrientTargets: { ...s.nutrientTargets, [key]: merged } };
+        }),
+
+      resetNutrientTarget: (key) =>
+        set((s) => {
+          const { [key]: _drop, ...rest } = s.nutrientTargets;
+          return { nutrientTargets: rest };
+        }),
+
+      resetAllNutrientTargets: () => set({ nutrientTargets: {} }),
 
       addEntry: (transcript, items, source, date, createdAt) => {
         const jour = date ?? todayStr();
@@ -979,6 +1024,7 @@ function mergePersisted(persisted: unknown, current: AppState): AppState {
     mutedDays: p.mutedDays ?? {},
     dayNotes: p.dayNotes ?? {},
     nutrientImportance: p.nutrientImportance ?? {},
+    nutrientTargets: p.nutrientTargets ?? {},
   };
 }
 

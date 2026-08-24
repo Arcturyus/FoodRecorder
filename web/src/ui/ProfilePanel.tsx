@@ -23,6 +23,7 @@ import type { SportType, WorkPosture } from '../nutrition/energy';
 import { NumberField } from './NumberField';
 import { useTargets } from './useTargets';
 import { fmt } from './format';
+import { Section } from './Section';
 
 /**
  * Réglages qui déterminent toutes les cibles quotidiennes. L'activité y est
@@ -43,8 +44,12 @@ export function ProfilePanel() {
   const settings = energySettings(profile);
 
   return (
-    <div className="panel">
-      <h2>Profil &amp; objectif</h2>
+    <Section
+      id="profil"
+      title="Profil & objectif"
+      defaultOpen={false}
+      summary={`${fmt(profile.poids, 1)} kg · ${OBJECTIVE_LABELS[profile.objectif ?? 'maintien'].toLowerCase()} · ${fmt(protT.optimal)} g de protéines/j`}
+    >
       <p className="small" style={{ marginTop: -6 }}>
         Le corps, la façon de bouger, l'objectif. Tout ce qui suit alimente les cibles quotidiennes de l'app.
       </p>
@@ -225,7 +230,7 @@ export function ProfilePanel() {
           saisir ici, sauf pour corriger ponctuellement.
         </div>
       )}
-    </div>
+    </Section>
   );
 }
 

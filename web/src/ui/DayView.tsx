@@ -14,6 +14,8 @@ import { DayNote } from './DayNote';
 import { DayAdviceCard } from './DayAdvice';
 import { QueueStatus } from './QueueStatus';
 import { dayLabel } from './DayPicker';
+import { fmt } from './format';
+import { UI_STORE, useUiPref } from './uiPrefs';
 
 /**
  * Tout ce qui compose une journée : saisie (dictée, favoris, ajout manuel),
@@ -59,6 +61,14 @@ export function DayView({ date }: { date: string }) {
   }, [entries, date, sunVitD]);
   const kcalUnc = useMemo(() => dayKcalUncertainty(dayEntries), [dayEntries]);
 
+  /**
+   * Repas repliés par défaut : une journée bien remplie empilait cinq cartes
+   * détaillées sous le bilan, alors que la question courante — « qu'est-ce que
+   * j'ai mangé, pour combien de calories ? » — se répond en une ligne. Le
+   * détail (quantités, correction, suppression) reste à un clic.
+   */
+  const [compact, setCompact] = useUiPref(UI_STORE, 'day-entries-compact', true);
+
   return (
     <>
       {/* En tête : ce que la file a encore à traiter — une dictée envoyée du téléphone
@@ -81,7 +91,19 @@ export function DayView({ date }: { date: string }) {
           </div>
         </div>
       ) : (
-        dayEntries.map((e) => <EntryCard key={e.id} entry={e} />)
+        <>
+          <div className="fold-head entries-head">
+            <span className="small" style={{ color: 'var(--muted)' }}>
+              {dayEntries.length} repas · {fmt(dayEntries.reduce((a, e) => a + e.items.length, 0))} aliments
+            </span>
+            <button className="ghost small" onClick={() => setCompact(!compact)}>
+              {compact ? 'Tout déplier' : 'Tout replier'}
+            </button>
+          </div>
+          {dayEntries.map((e) => (
+            <EntryCard key={e.id} entry={e} collapsed={compact} />
+          ))}
+        </>
       )}
       <Sun key={`sun-${date}`} date={isToday ? undefined : date} />
       <DayNote key={`note-${date}`} date={date} />
