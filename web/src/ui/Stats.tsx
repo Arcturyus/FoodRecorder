@@ -1006,13 +1006,21 @@ function CoverageList({
     );
   }
 
+  /*
+   * Deux colonnes sur ordinateur (cf. .cov-cols) : l'onglet Stats est déjà en
+   * largeur étendue, et ces 41 lignes n'en occupaient qu'une moitié. Colonnes
+   * CSS et non grille : le remplissage se fait colonne par colonne, donc la
+   * lecture verticale du tri « du moins couvert au mieux » est préservée. Les
+   * deux groupes ont leur propre conteneur, sinon le titre « À limiter » se
+   * retrouverait au milieu d'une colonne.
+   */
   return (
     <>
-      {atLeast.map((x) => row(x))}
+      <div className="cov-cols">{atLeast.map((x) => row(x))}</div>
       <div className="small" style={{ margin: '12px 0 4px', textTransform: 'uppercase', letterSpacing: '0.04em', fontSize: 11 }}>
         À limiter (plus bas = mieux)
       </div>
-      {limits.map((x) => row(x))}
+      <div className="cov-cols">{limits.map((x) => row(x))}</div>
       {tip && (
         <FollowTip x={tip.x} y={tip.y}>
           <CoverageCard {...tip.row} />

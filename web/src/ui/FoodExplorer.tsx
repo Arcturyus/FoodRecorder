@@ -1,6 +1,8 @@
 import { createContext, useContext, useEffect, useMemo, useRef, useState } from 'react';
 import { scaleLinear, scaleLog, scaleSqrt } from 'd3-scale';
 import { extent, max as d3max, mean as d3mean, quantile } from 'd3-array';
+import { symbol, symbolCircle, symbolSquare, symbolTriangle } from 'd3-shape';
+import type { SymbolType } from 'd3-shape';
 import { RDA } from '../nutrition/rda';
 import { useTargets } from './useTargets';
 import { portionGrams } from '../nutrition/recommend';
@@ -49,6 +51,51 @@ export const CATS: { key: FoodCategory; label: string; color: string }[] = [
   { key: 'autre', label: 'Autres', color: '#9aa2b1' },
 ];
 export const COLOR_BY_CAT = new Map(CATS.map((c) => [c.key, c.color]));
+
+/**
+ * Forme par catégorie, en plus de la couleur. Onze catégories ne tiennent pas
+ * dans une palette où chacune se distingue au premier coup d'œil : Fruits
+ * (#ef6f6f), Viandes (#c8603f) et Sucré/snacks (#d16ba5) sont trois rouges
+ * voisins, Légumes et Matières grasses deux verts. La répartition ci-dessous
+ * n'a qu'une règle — deux couleurs proches n'ont jamais la même forme —, ce qui
+ * règle du même coup le daltonisme, où la couleur seule ne dit rien.
+ */
+const SHAPE_BY_CAT = new Map<FoodCategory, SymbolType>([
+  ['legume', symbolCircle],
+  ['fruit', symbolCircle],
+  ['poisson', symbolCircle],
+  ['feculent', symbolCircle],
+  ['viande', symbolSquare],
+  ['matiere-grasse', symbolSquare],
+  ['boisson', symbolSquare],
+  ['oeuf-laitier', symbolSquare],
+  ['sucre-snack', symbolTriangle],
+  ['plat', symbolTriangle],
+  ['autre', symbolTriangle],
+]);
+
+/**
+ * Chemin SVG de la marque d'une catégorie, centré sur (0, 0). `r` est le rayon
+ * du cercle ÉQUIVALENT : d3 dimensionne ses symboles par l'aire, donc passer
+ * π·r² laisse un carré et un triangle peser visuellement autant que le cercle
+ * qu'ils remplacent — l'encodage de la taille des bulles est inchangé.
+ */
+export function catSymbolPath(cat: FoodCategory, r: number): string {
+  return symbol(SHAPE_BY_CAT.get(cat) ?? symbolCircle, Math.PI * r * r)() ?? '';
+}
+
+/** Pastille « forme + couleur » d'une catégorie, pour les légendes et les filtres. */
+export function CatIcon({ cat, size = 13 }: { cat: FoodCategory; size?: number }) {
+  return (
+    <svg width={size} height={size} viewBox={`0 0 ${size} ${size}`} aria-hidden style={{ flex: '0 0 auto' }}>
+      <path
+        transform={`translate(${size / 2} ${size / 2})`}
+        d={catSymbolPath(cat, size * 0.34)}
+        fill={COLOR_BY_CAT.get(cat)}
+      />
+    </svg>
+  );
+}
 
 /**
  * Aliments explorables : on retire les compléments (produits purs très concentrés,
@@ -112,6 +159,81 @@ export function paretoFrontier<P extends ParetoPoint>(points: P[], xGoal: 'min' 
   return Array.from(merged.values()).sort((a, b) => a.x - b.x || a.y - b.y);
 }
 
+/** Un point de la frontière à nommer : sa position à l'écran et son rayon dessiné. */
+export interface LabelInput {
+  text: string;
+  /** Coordonnées dans le repère du viewBox, pas en pixels d'écran. */
+  x: number;
+  y: number;
+  r: number;
+}
+
+/** Étiquette posée : position de la ligne de base et côté d'ancrage. */
+export interface PlacedLabel {
+  text: string;
+  x: number;
+  y: number;
+  anchor: 'start' | 'end';
+}
+
+/** Cadre utile du graphique (hors marges d'axes). */
+export interface LabelFrame {
+  left: number;
+  right: number;
+  top: number;
+  bottom: number;
+}
+
+/** Au-delà, un nom mange le graphe : on le coupe plutôt que de renoncer à l'afficher. */
+const LABEL_MAX_CHARS = 18;
+/** Largeur moyenne d'un caractère à fontSize 10 dans la police de l'app. */
+const LABEL_CHAR_W = 5.5;
+const LABEL_H = 11;
+
+/**
+ * Place les étiquettes des aliments de la frontière de Pareto en évitant les
+ * collisions. Le nuage n'affichait aucun nom : la frontière est pourtant la
+ * raison d'être de la vue (« qu'est-ce qui maximise X en minimisant Y ? ») et la
+ * réponse était huit ronds anonymes qu'il fallait survoler un par un.
+ *
+ * Quatre positions sont essayées autour du point (haut-droite d'abord, la plus
+ * lisible), et l'étiquette est ABANDONNÉE si aucune ne tient : huit noms lisibles
+ * valent mieux que douze superposés. Les boîtes sont estimées, pas mesurées —
+ * mesurer chaque texte imposerait un rendu en deux passes pour un gain nul à
+ * cette taille.
+ *
+ * Fonction pure (coordonnées du viewBox en entrée, positions en sortie) : elle
+ * se teste sans DOM.
+ */
+export function placeParetoLabels(points: LabelInput[], frame: LabelFrame): PlacedLabel[] {
+  const placed: PlacedLabel[] = [];
+  const boxes: { x0: number; x1: number; y0: number; y1: number }[] = [];
+
+  for (const p of points) {
+    const text = p.text.length > LABEL_MAX_CHARS ? `${p.text.slice(0, LABEL_MAX_CHARS - 1)}…` : p.text;
+    const w = text.length * LABEL_CHAR_W;
+    const off = p.r + 4;
+    const candidates: PlacedLabel[] = [
+      { text, x: p.x + off, y: p.y - off, anchor: 'start' },
+      { text, x: p.x + off, y: p.y + off + LABEL_H, anchor: 'start' },
+      { text, x: p.x - off, y: p.y - off, anchor: 'end' },
+      { text, x: p.x - off, y: p.y + off + LABEL_H, anchor: 'end' },
+    ];
+    for (const c of candidates) {
+      const x0 = c.anchor === 'start' ? c.x : c.x - w;
+      const box = { x0, x1: x0 + w, y0: c.y - LABEL_H, y1: c.y };
+      const inside = box.x0 >= frame.left && box.x1 <= frame.right && box.y0 >= frame.top && box.y1 <= frame.bottom;
+      if (!inside) continue;
+      const hits = boxes.some((b) => box.x0 < b.x1 && box.x1 > b.x0 && box.y0 < b.y1 && box.y1 > b.y0);
+      if (hits) continue;
+      placed.push(c);
+      boxes.push(box);
+      break;
+    }
+  }
+  return placed;
+}
+
 type View = 'nuage' | 'correlation';
 
 export function FoodExplorer({ foods, jamaisManges }: { foods: Food[]; jamaisManges?: ReadonlySet<string> }) {
@@ -155,38 +277,8 @@ export function FoodExplorer({ foods, jamaisManges }: { foods: Food[]; jamaisMan
 
       {view === 'nuage' && <ScatterView />}
       {view === 'correlation' && <CorrelationView />}
-
-      <CategoryLegend showNeverEaten={nbNonManges > 0} />
       </NeverEatenCtx.Provider>
     </ExplorableCtx.Provider>
-  );
-}
-
-// ---------------------------------------------------------------------------
-// Légende catégories (partagée)
-// ---------------------------------------------------------------------------
-
-function CategoryLegend({ showNeverEaten = false }: { showNeverEaten?: boolean }) {
-  return (
-    <div className="panel">
-      <div className="small" style={{ marginBottom: 8 }}>Catégories</div>
-      <div className="row" style={{ gap: 12, flexWrap: 'wrap' }}>
-        {CATS.map((c) => (
-          <span key={c.key} className="row" style={{ gap: 5, alignItems: 'center' }}>
-            <span style={{ width: 10, height: 10, borderRadius: 3, background: c.color, display: 'inline-block' }} />
-            <span className="small" style={{ color: C.text }}>{c.label}</span>
-          </span>
-        ))}
-        {showNeverEaten && (
-          <span className="row" style={{ gap: 5, alignItems: 'center' }}>
-            <svg width={14} height={14} aria-hidden>
-              <circle cx={7} cy={7} r={5} fill={C.muted} fillOpacity={0.35} stroke={C.muted} strokeWidth={1.5} strokeDasharray="3 2" />
-            </svg>
-            <span className="small" style={{ color: C.muted }}>Jamais mangé (catalogue)</span>
-          </span>
-        )}
-      </div>
-    </div>
   );
 }
 
@@ -479,6 +571,15 @@ function ScatterView() {
 
   const frontierPath = frontier.map((p, i) => `${i === 0 ? 'M' : 'L'} ${cx(p.x)} ${cy(p.y)}`).join(' ');
 
+  // Noms des aliments de la frontière. Recalculés à chaque rendu parce qu'ils
+  // suivent le zoom et le déplacement du nuage.
+  const frontierLabels = pareto
+    ? placeParetoLabels(
+        frontier.map((p) => ({ text: p.f.nom, x: cx(p.x), y: cy(p.y), r: radius(p.s) })),
+        { left: m.left, right: W - m.right, top: m.top, bottom: H - m.bottom },
+      )
+    : [];
+
   return (
     <>
       <div className="panel">
@@ -523,12 +624,22 @@ function ScatterView() {
           </button>
           {zoomed && <span className="small mono">×{fmt(Math.max(zoomX.k, zoomY.k), 1)}</span>}
         </div>
-        <div className="row" style={{ gap: 6, marginTop: 8, flexWrap: 'wrap' }}>
+      </div>
+
+      <div className="panel">
+        {/*
+          Légende ET filtre, collés au graphe : la légende vivait dans un panneau
+          séparé ~150 px plus bas, ce qui obligeait l'œil à faire l'aller-retour à
+          chaque point. Le bouton porte la marque exacte du nuage (forme +
+          couleur), donc il légende ce qu'il filtre.
+        */}
+        <div className="row cat-legend" style={{ gap: 6, marginBottom: 10, flexWrap: 'wrap', alignItems: 'center' }}>
           {CATS.map((c) => (
             <button
               key={c.key}
-              className="ghost small"
+              className="ghost small cat-btn"
               style={{ opacity: hideCats.has(c.key) ? 0.4 : 1, borderColor: hideCats.has(c.key) ? C.border : c.color }}
+              data-tip={hideCats.has(c.key) ? 'Afficher cette catégorie' : 'Masquer cette catégorie'}
               onClick={() =>
                 setHideCats((s) => {
                   const n = new Set(s);
@@ -537,13 +648,19 @@ function ScatterView() {
                 })
               }
             >
+              <CatIcon cat={c.key} />
               {c.label}
             </button>
           ))}
+          {points.some((p) => neverEaten.has(p.f.id)) && (
+            <span className="row small" style={{ gap: 5, alignItems: 'center', color: C.muted }}>
+              <svg width={14} height={14} aria-hidden>
+                <circle cx={7} cy={7} r={5} fill={C.muted} fillOpacity={0.35} stroke={C.muted} strokeWidth={1.5} strokeDasharray="3 2" />
+              </svg>
+              Jamais mangé (catalogue)
+            </span>
+          )}
         </div>
-      </div>
-
-      <div className="panel">
         <div style={{ position: 'relative' }}>
           <svg
             ref={svgRef}
@@ -644,10 +761,9 @@ function ScatterView() {
                 const hitR = Math.max(r + 10, 16);
                 return (
                   <g key={p.f.id}>
-                    <circle
-                      cx={cx(p.x)}
-                      cy={cy(p.y)}
-                      r={r * (isHover ? 1.35 : 1)}
+                    <path
+                      transform={`translate(${cx(p.x)} ${cy(p.y)})`}
+                      d={catSymbolPath(p.f.categorie, r * (isHover ? 1.35 : 1))}
                       fill={COLOR_BY_CAT.get(p.f.categorie)}
                       // Jamais mangé : rempli plus clair et cerclé de pointillés. Le
                       // contour reste celui de Pareto quand le point est sur la
@@ -682,6 +798,31 @@ function ScatterView() {
                   </g>
                 );
               })}
+
+              {/*
+                Halo de fond (paint-order) : sans lui, un nom posé sur une zone
+                dense de points devient illisible. Masqué au téléphone par CSS —
+                le SVG est en viewBox, donc à 390 px de large ces 10 px de police
+                n'en font plus que 6 à l'écran.
+              */}
+              <g className="pareto-labels" pointerEvents="none">
+                {frontierLabels.map((l) => (
+                  <text
+                    key={`${l.text}-${Math.round(l.x)}-${Math.round(l.y)}`}
+                    x={l.x}
+                    y={l.y}
+                    textAnchor={l.anchor}
+                    fontSize={10}
+                    fill={C.text}
+                    stroke={C.panel}
+                    strokeWidth={3}
+                    strokeLinejoin="round"
+                    paintOrder="stroke"
+                  >
+                    {l.text}
+                  </text>
+                ))}
+              </g>
             </g>
           </svg>
 
@@ -756,7 +897,11 @@ function ScatterView() {
             Ligne verte = <strong>frontière de Pareto</strong> : les {frontier.length} aliments qu'aucun autre ne
             surpasse à la fois en {NUT_LABEL.get(yk)} ({yGoal === 'max' ? 'plus' : 'moins'}) et en{' '}
             {NUT_LABEL.get(xk)} ({xGoal === 'max' ? 'plus' : 'moins'}), plus tous ceux déjà à la valeur limite
-            (ex. 0 g) sur un axe minimisé/maximisé — indépassables sur cet axe, quel que soit l'autre. Pointillés
+            (ex. 0 g) sur un axe minimisé/maximisé — indépassables sur cet axe, quel que soit l'autre. Ce sont eux
+            qui portent un nom sur le graphe
+            {frontierLabels.length < frontier.length &&
+              ` (${frontier.length - frontierLabels.length} sur ${frontier.length} restent anonymes, faute de place : zoomez pour les lire)`}
+            {' '}— au téléphone, l'écran est trop étroit pour les afficher, le nom reste au toucher. Pointillés
             gris = médianes, clairs = AJR, verts = optimal (100 g qui couvrent le besoin du jour, selon votre profil).
           </p>
         )}
