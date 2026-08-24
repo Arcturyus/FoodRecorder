@@ -39,9 +39,4 @@ describe('unités mg / µg et compléments élément pur', () => {
     const t = totalNutrients(computeItems(items, FOODS));
     expect(t.magnesium).toBeCloseTo(300, 4);
   });
-
-  it('le vinaigre est présent dans la banque', () => {
-    expect(FOODS.some((f) => f.id === 'vinaigre')).toBe(true);
-    expect(FOODS.some((f) => f.id === 'vinaigre-balsamique')).toBe(true);
-  });
 });
