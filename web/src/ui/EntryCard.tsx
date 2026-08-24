@@ -10,6 +10,12 @@ import { fmt, UNIT_LABELS } from './format';
 import { DETAIL_GROUPS, SHORT_LABELS, draftToContribution, nutrientsToDraft } from './itemDetail';
 import { DayPickerButton, relativeDayLabel } from './DayPicker';
 import { NumberField } from './NumberField';
+import { MEAL_GAP_MIN, type MealPosition } from './meals';
+
+/** Heure courte d'un horodatage (« 12:30 »). */
+export function hhmm(ts: number): string {
+  return new Date(ts).toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' });
+}
 
 /**
  * Résumé d'un repas en une ligne, pour l'affichage compact : la dictée si elle
@@ -29,7 +35,16 @@ function entrySummary(entry: JournalEntry): string {
  * la carte garde ensuite son propre état, pour qu'ouvrir un repas n'ouvre pas
  * les autres.
  */
-export function EntryCard({ entry, collapsed = false }: { entry: JournalEntry; collapsed?: boolean }) {
+export function EntryCard({
+  entry,
+  collapsed = false,
+  mealPos,
+}: {
+  entry: JournalEntry;
+  collapsed?: boolean;
+  /** Place de l'entrée dans son repas — absente si la page ne groupe pas. */
+  mealPos?: MealPosition;
+}) {
   const [open, setOpen] = useState(!collapsed);
   // Basculer le mode compact de la journée reprend la main sur les cartes
   // ouvertes une à une : sinon « tout replier » laisserait ouvert ce qu'on
@@ -40,12 +55,13 @@ export function EntryCard({ entry, collapsed = false }: { entry: JournalEntry; c
   const [editing, setEditing] = useState(false);
   const removeEntry = useStore((s) => s.removeEntry);
   const moveEntry = useStore((s) => s.moveEntry);
+  const setEntryMealLink = useStore((s) => s.setEntryMealLink);
   const duplicateEntry = useStore((s) => s.duplicateEntry);
   const saveFavoriteMeal = useStore((s) => s.saveFavoriteMeal);
   const [saved, setSaved] = useState('');
 
   const kcal = entry.items.reduce((a, it) => a + it.nutrients.kcal, 0);
-  const time = new Date(entry.createdAt).toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' });
+  const time = hhmm(entry.createdAt);
   const isPast = entry.date !== todayStr();
 
   function copyTo(date: string) {
@@ -160,7 +176,59 @@ export function EntryCard({ entry, collapsed = false }: { entry: JournalEntry; c
           </span>
         </div>
       )}
+      {editing && mealPos && <MealLinkSetting entry={entry} pos={mealPos} onSet={setEntryMealLink} />}
       {editing && <AddItemInline entryId={entry.id} />}
+    </div>
+  );
+}
+
+/**
+ * Correction du découpage en repas, dans les options d'une entrée. L'app suppose
+ * que deux saisies à moins de 30 min sont le même repas ; c'est faux dès qu'on
+ * rattrape une journée le soir (tout arrive dans la même minute) ou qu'on grignote
+ * une heure après le plat. Les deux boutons portent une HEURE, jamais « au-dessus »
+ * ou « en dessous » : la liste s'affiche du plus récent au plus ancien, l'inverse
+ * de l'ordre où les repas se sont enchaînés.
+ */
+function MealLinkSetting({
+  entry,
+  pos,
+  onSet,
+}: {
+  entry: JournalEntry;
+  pos: MealPosition;
+  onSet: (id: string, link: 'join' | 'break' | null) => void;
+}) {
+  const force = entry.mealLink;
+  return (
+    <div className="row" style={{ marginTop: 10, gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
+      <span className="small">Repas :</span>
+      {pos.isFirst && pos.previousStart != null && (
+        <button
+          className={`small ${force === 'join' ? 'chip-active' : 'ghost'}`}
+          data-tip={`Compter cette saisie avec le repas de ${hhmm(pos.previousStart)}, malgré l'écart de temps`}
+          onClick={() => onSet(entry.id, force === 'join' ? null : 'join')}
+        >
+          ⊞ Rattacher au repas de {hhmm(pos.previousStart)}
+        </button>
+      )}
+      {!pos.isFirst && (
+        <button
+          className={`small ${force === 'break' ? 'chip-active' : 'ghost'}`}
+          data-tip="Détacher cette saisie du repas en cours : elle en commence un nouveau"
+          onClick={() => onSet(entry.id, force === 'break' ? null : 'break')}
+        >
+          ⊟ Nouveau repas à {hhmm(entry.createdAt)}
+        </button>
+      )}
+      {force && (
+        <button className="ghost small" data-tip="Revenir au regroupement automatique" onClick={() => onSet(entry.id, null)}>
+          ↺ automatique
+        </button>
+      )}
+      <span className="small" style={{ flex: 1, color: 'var(--muted)' }}>
+        Les saisies faites à moins de {MEAL_GAP_MIN} min d'intervalle sont comptées comme un seul repas.
+      </span>
     </div>
   );
 }
