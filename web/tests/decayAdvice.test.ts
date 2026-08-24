@@ -171,6 +171,8 @@ describe('lissage dégressif des courbes (Stats)', () => {
     const out = decayAverage([80, null, 80], 3) as number[];
     expect(out[2]).toBeCloseTo(80, 6);
     expect(decayAverage([null, null], 3)).toEqual([null, null]);
+    // Même règle pour la moyenne mobile simple : la fenêtre ne compte que les jours remplis.
+    expect(movingAverage([2, null, 4], 3)).toEqual([2, 2, 3]);
   });
 
   it('un plateau constant reste à sa valeur (pas de biais)', () => {
