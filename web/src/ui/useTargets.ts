@@ -55,7 +55,14 @@ export function useTargets(): Target[] {
 export function useDefaultTargets(): Target[] {
   const profile = useStore((s) => s.profile);
   const body = useBody();
-  return useMemo(() => computeTargets(profile, body), [profile, body]);
+  /**
+   * `protParKg` est un réglage PERSONNEL au même titre qu'un override de cible :
+   * le laisser ici faisait afficher la valeur réglée comme « conseillée », et
+   * surtout rendait le curseur des protéines auto-référentiel — son échelle
+   * (2 × le conseil) suivait la poignée qu'on déplaçait, si bien que celle-ci ne
+   * quittait jamais le milieu du rail.
+   */
+  return useMemo(() => computeTargets({ ...profile, protParKg: undefined }, body), [profile, body]);
 }
 
 /** Décomposition de la dépense énergétique du profil courant. */

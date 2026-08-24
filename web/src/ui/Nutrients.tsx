@@ -200,6 +200,13 @@ function useNutrientTarget(t: Target) {
   const highField: TargetField = t.goal === 'limit' ? 'ajr' : 'optimal';
   const lowLabel = t.goal === 'limit' ? 'Idéal (bas)' : 'AJR';
   const highLabel = t.goal === 'limit' ? 'Plafond' : 'Optimal';
+  /**
+   * Les mêmes deux repères, en version courte, pour la lecture posée à droite du
+   * rail. Sans eux la ligne affichait « 0 · 10 g » : deux nombres dont rien ne
+   * disait lequel était quoi — et pour l'alcool, ni l'un ni l'autre n'est un AJR.
+   */
+  const lowShort = t.goal === 'limit' ? 'idéal' : 'AJR';
+  const highShort = t.goal === 'limit' ? 'plafond' : 'optimal';
 
   /** Convertit une valeur absolue (mg, µg, g) dans l'unité affichée. */
   const toDisplay = (v: number) => round2(perKg ? v / poids : v);
@@ -255,6 +262,8 @@ function useNutrientTarget(t: Target) {
     highField,
     lowLabel,
     highLabel,
+    lowShort,
+    highShort,
     toDisplay,
     saved,
     setValue,
@@ -290,25 +299,102 @@ function tv(v: number): string {
  * Deux poignées sur un même rail, parce que les deux repères ne se lisent que
  * l'un par rapport à l'autre : « AJR 375 → optimal 500 » est une information,
  * « optimal 500 » seul n'en est pas une. L'échelle va de 0 à deux fois la valeur
- * conseillée, avec un repère sur celle-ci : on voit d'un coup d'œil de combien
- * on s'écarte de la référence.
+ * CONSEILLÉE (jamais la valeur réglée : elle bougerait sous la poignée qu'on
+ * déplace), avec un repère sur celle-ci : on voit d'un coup d'œil de combien on
+ * s'écarte de la référence.
  */
 function TargetSlider({ t, def, ctl }: { t: Target; def: Target; ctl: TargetControl }) {
-  const { lowField, highField, lowLabel, highLabel, unit, toDisplay, setValue } = ctl;
-  const max = round2(2 * toDisplay(def.goal === 'limit' ? def.ajr : def.optimal));
+  const { lowField, highField, lowLabel, highLabel, lowShort, highShort, unit, toDisplay, setValue } = ctl;
+  const max = round2(2 * toDisplay(def.goal === 'limit' ? def.ajr : def.optimal)) || 1;
   const step = niceStep(max);
   const low = toDisplay(t[lowField]);
   const high = toDisplay(t[highField]);
   const pct = (v: number) => `${Math.min(100, Math.max(0, (v / max) * 100))}%`;
 
+  // Seuil de CARENCE réelle (`lowThreshold`), quand le guide en fixe un : c'est
+  // le repère qu'on cherche quand on baisse une cible (« à partir d'où est-ce
+  // que ça devient un problème ? »), et il ne figurait nulle part sur le rail.
+  const carence = t.goal === 'atLeast' && t.lowThreshold ? toDisplay(t.lowThreshold) : null;
+
+  const railRef = useRef<HTMLDivElement>(null);
+  const lowRef = useRef<HTMLInputElement>(null);
+  const highRef = useRef<HTMLInputElement>(null);
+  const dragging = useRef<TargetField | null>(null);
+
+  /** Valeur pointée par une abscisse écran, ramenée au pas du curseur. */
+  function valueAt(clientX: number): number {
+    const el = railRef.current;
+    if (!el) return 0;
+    const r = el.getBoundingClientRect();
+    const f = r.width > 0 ? Math.min(1, Math.max(0, (clientX - r.left) / r.width)) : 0;
+    // Le pas peut valoir 0,02 : sans cet arrondi on stockerait 1,7000000000000002.
+    const dec = Math.max(0, Math.min(6, -Math.floor(Math.log10(step))));
+    return Number((Math.round((f * max) / step) * step).toFixed(dec));
+  }
+
+  /** Pose une valeur sur un repère sans lui faire croiser l'autre. */
+  function apply(field: TargetField, v: number): void {
+    setValue(field, field === lowField ? Math.min(v, high) : Math.max(v, low));
+  }
+
+  /**
+   * Le geste est arbitré ICI, pas par les deux `<input>` superposés. Dès que les
+   * deux repères sont égaux — glucides 260/260, fer 9/9, calcium… — leurs poignées
+   * tombent au même pixel, et celle du dessus avalait le clic : le curseur était
+   * mort dans les deux sens. On choisit donc la poignée la plus proche du doigt,
+   * et quand elles sont confondues c'est le CÔTÉ du geste qui tranche. Les
+   * `<input>` restent en place pour le clavier et les lecteurs d'écran.
+   */
+  function fieldAt(clientX: number): TargetField {
+    const v = valueAt(clientX);
+    if (low === high) return v < low ? lowField : highField;
+    return Math.abs(v - low) <= Math.abs(v - high) ? lowField : highField;
+  }
+
+  function onPointerDown(e: React.PointerEvent<HTMLDivElement>): void {
+    if (e.button !== 0 && e.pointerType === 'mouse') return;
+    const field = fieldAt(e.clientX);
+    dragging.current = field;
+    e.currentTarget.setPointerCapture(e.pointerId);
+    // Le clic donne aussi le focus au bon `<input>` : les flèches du clavier
+    // continuent ensuite le réglage là où le doigt l'a laissé.
+    (field === lowField ? lowRef : highRef).current?.focus({ preventScroll: true });
+    apply(field, valueAt(e.clientX));
+    e.preventDefault();
+  }
+
+  function onPointerMove(e: React.PointerEvent<HTMLDivElement>): void {
+    if (!dragging.current) return;
+    apply(dragging.current, valueAt(e.clientX));
+  }
+
+  function endDrag(e: React.PointerEvent<HTMLDivElement>): void {
+    dragging.current = null;
+    if (e.currentTarget.hasPointerCapture(e.pointerId)) e.currentTarget.releasePointerCapture(e.pointerId);
+  }
+
   return (
     <div className="tgt">
-      <div className="tgt-rail">
+      <div
+        className="tgt-rail"
+        ref={railRef}
+        onPointerDown={onPointerDown}
+        onPointerMove={onPointerMove}
+        onPointerUp={endDrag}
+        onPointerCancel={endDrag}
+      >
         <span className="tgt-track" />
         {/* La zone entre les deux poignées : pour un nutriment à couvrir, « de quoi
             ne pas être carencé, jusqu'à la cible » ; pour une limite, la marge
             encore acceptable. */}
         <span className="tgt-fill" style={{ left: pct(low), right: `calc(100% - ${pct(high)})` }} />
+        {carence != null && carence <= max && (
+          <i
+            className="tgt-mark is-low"
+            style={{ left: pct(carence) }}
+            data-tip={`Carence à partir de ${tv(carence)} ${unit} — ${t.lowNote ?? 'seuil de déficit documenté'}`}
+          />
+        )}
         <i
           className="tgt-mark"
           style={{ left: pct(toDisplay(def[lowField])) }}
@@ -320,32 +406,37 @@ function TargetSlider({ t, def, ctl }: { t: Target; def: Target; ctl: TargetCont
           data-tip={`${highLabel} conseillé : ${tv(toDisplay(def[highField]))} ${unit}`}
         />
         <input
+          ref={lowRef}
           type="range"
           className="tgt-h low"
           min={0}
           max={max}
           step={step}
-          value={low}
+          value={Math.min(low, max)}
           // Les poignées ne se croisent pas : la basse pousserait la haute sans
           // qu'on comprenne pourquoi la cible a bougé toute seule.
-          onChange={(e) => setValue(lowField, Math.min(Number(e.target.value), high))}
+          onChange={(e) => apply(lowField, Number(e.target.value))}
           aria-label={`${lowLabel} : ${t.label}`}
         />
         <input
+          ref={highRef}
           type="range"
           className="tgt-h high"
           min={0}
           max={max}
           step={step}
-          value={high}
-          onChange={(e) => setValue(highField, Math.max(Number(e.target.value), low))}
+          value={Math.min(high, max)}
+          onChange={(e) => apply(highField, Number(e.target.value))}
           aria-label={`${highLabel} : ${t.label}`}
         />
       </div>
-      <span className="tgt-val mono small" data-tip={`${lowLabel} ${tv(low)} · ${highLabel} ${tv(high)} ${unit}`}>
-        {tv(low)}
-        <span className="tgt-arrow">{t.goal === 'limit' ? '·' : '→'}</span>
-        {tv(high)} {unit}
+      {/* Chaque nombre porte son nom, et le vocabulaire suit l'objectif : « AJR /
+          optimal » pour un nutriment à couvrir, « idéal / plafond » pour un
+          nutriment à limiter — l'alcool n'a pas d'AJR, son 0 est un idéal. */}
+      <span className="tgt-val small" data-tip={`${lowLabel} ${tv(low)} · ${highLabel} ${tv(high)} ${unit}`}>
+        <i className="tgt-k">{lowShort}</i> <span className="mono">{tv(low)}</span>
+        <span className="tgt-arrow">·</span>
+        <i className="tgt-k">{highShort}</i> <span className="mono">{tv(high)} {unit}</span>
       </span>
     </div>
   );
@@ -682,7 +773,7 @@ function NutrientSettingsPanel({ targets }: { targets: Target[] }) {
         )
       }
     >
-      <details className="reco-settings" style={{ marginTop: 8 }}>
+      <details className="reco-settings" style={{ marginTop: 8 }} open>
         <summary className="small">Comprendre AJR &amp; optimal</summary>
         <div className="hint" style={{ marginTop: 6 }}>
           Deux repères accompagnent chaque nutriment. L'<strong>AJR</strong> (apport journalier de référence,
