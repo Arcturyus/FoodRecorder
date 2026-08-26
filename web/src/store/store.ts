@@ -20,7 +20,13 @@ import {
   migrateToPersonalBank,
 } from '../nutrition/bank';
 import { DEFAULT_LLM_MODEL } from '../extraction/llm';
-import { DEFAULT_CLOUD_MODEL } from '../extraction/anthropic';
+import {
+  DEFAULT_CLOUD_PROVIDER,
+  defaultModelFor,
+  type CloudConfig,
+  type CloudProvider,
+  type ExtractionSource,
+} from '../extraction/providers';
 import { DEFAULT_STT_MODEL } from '../stt/whisper';
 import { isNativeSttSupported } from '../stt/webspeech';
 import { normalizeForMatch } from '../nutrition/normalize';
@@ -78,7 +84,14 @@ export interface JournalEntry {
   date: string; // YYYY-MM-DD
   createdAt: number;
   transcript: string;
-  source: 'llm' | 'anthropic' | 'claudecode' | 'rules' | 'manuel';
+  /**
+   * Qui a produit cette entrée. Les valeurs historiques ('anthropic' pour la
+   * clé API Claude, 'claudecode' pour le pont) sont conservées : elles existent
+   * déjà dans l'historique synchronisé de tous les appareils. Les nouvelles
+   * nomment le fournisseur réellement utilisé. Un appareil pas encore à jour
+   * qui reçoit une source qu'il ne connaît pas l'affiche simplement « IA ».
+   */
+  source: ExtractionSource;
   items: JournalItem[];
   /**
    * Correction du regroupement en repas (cf. ui/meals.ts), quand la règle
@@ -97,8 +110,18 @@ export interface JournalEntry {
 // depuis le store, alors qu'elle vit désormais avec les autres calculs.
 export { normalizeNutrients };
 
-/** Choix du moteur d'extraction. */
+/**
+ * Choix du moteur d'extraction. Les deux dernières valeurs datent de l'époque
+ * où l'app ne connaissait que Claude ; elles sont CONSERVÉES telles quelles
+ * (elles sont persistées sur tous les appareils) mais désignent désormais la
+ * FAMILLE de moteur, le fournisseur exact vivant à côté :
+ *  - 'cloud'      → une clé API, chez `cloudProvider` ;
+ *  - 'claudecode' → un pont vers un CLI local, celui de `cliBridge`.
+ */
 export type ExtractionMode = 'rules' | 'local' | 'cloud' | 'claudecode';
+
+/** CLI local utilisé par le pont (mode 'claudecode'). */
+export type CliBridge = 'claude' | 'codex';
 
 /** Choix du moteur de transcription vocale. */
 export type SttEngine = 'whisper' | 'native';
@@ -164,6 +187,27 @@ function latestWeight(entries: WeightEntry[]): number | null {
   let latest = entries[0];
   for (const e of entries) if (weightOrder(e) > weightOrder(latest)) latest = e;
   return latest.poids;
+}
+
+/**
+ * Réglages effectifs du mode « clé API » : fournisseur actif + sa clé + son
+ * modèle. Un fournisseur sans modèle retenu prend le premier de sa liste, ce
+ * qui évite d'écrire un défaut dans le storage tant que rien n'a été choisi.
+ */
+export function cloudConfigOf(s: Pick<AppState, 'cloudProvider' | 'cloudApiKeys' | 'cloudModels'>): CloudConfig {
+  return {
+    provider: s.cloudProvider,
+    apiKey: s.cloudApiKeys[s.cloudProvider] ?? '',
+    model: s.cloudModels[s.cloudProvider] ?? defaultModelFor(s.cloudProvider),
+  };
+}
+
+/** Hook : réglages du fournisseur actif (cf. cloudConfigOf). */
+export function useCloudConfig(): CloudConfig {
+  const cloudProvider = useStore((s) => s.cloudProvider);
+  const cloudApiKeys = useStore((s) => s.cloudApiKeys);
+  const cloudModels = useStore((s) => s.cloudModels);
+  return cloudConfigOf({ cloudProvider, cloudApiKeys, cloudModels });
 }
 
 /**
@@ -262,6 +306,20 @@ interface AppState {
   sttModel: string;
   llmModel: string;
   extractionMode: ExtractionMode;
+  /** Fournisseur actif du mode « clé API ». */
+  cloudProvider: CloudProvider;
+  /** Une clé par fournisseur : on n'en perd pas une en changeant d'avis. */
+  cloudApiKeys: Partial<Record<CloudProvider, string>>;
+  /** Un modèle retenu par fournisseur (absent = le premier de sa liste). */
+  cloudModels: Partial<Record<CloudProvider, string>>;
+  /** CLI visé par le pont local. */
+  cliBridge: CliBridge;
+  /**
+   * ANCIENS champs mono-fournisseur (Anthropic). Plus lus par l'app : ils ont
+   * été recopiés dans `cloudApiKeys`/`cloudModels` à l'hydratation. On les
+   * laisse en place — et donc persistés — pour qu'un retour à une version
+   * antérieure retrouve la clé de l'utilisateur au lieu d'un champ vide.
+   */
   cloudApiKey: string;
   cloudModel: string;
   profile: Profile;
@@ -306,8 +364,10 @@ interface AppState {
   setSttModel: (id: string) => void;
   setLlmModel: (id: string) => void;
   setExtractionMode: (m: ExtractionMode) => void;
+  setCloudProvider: (p: CloudProvider) => void;
   setCloudApiKey: (k: string) => void;
   setCloudModel: (id: string) => void;
+  setCliBridge: (c: CliBridge) => void;
   setProfile: (patch: Partial<Profile>) => void;
   setSyncCursor: (cursor: string) => void;
   setLastAutoSave: (day: string) => void;
@@ -463,8 +523,12 @@ export const useStore = create<AppState>()(
       sttModel: DEFAULT_STT_MODEL,
       llmModel: DEFAULT_LLM_MODEL,
       extractionMode: 'rules',
+      cloudProvider: DEFAULT_CLOUD_PROVIDER,
+      cloudApiKeys: {},
+      cloudModels: {},
+      cliBridge: 'claude',
       cloudApiKey: '',
-      cloudModel: DEFAULT_CLOUD_MODEL,
+      cloudModel: defaultModelFor(DEFAULT_CLOUD_PROVIDER),
       profile: DEFAULT_PROFILE,
       weightEntries: SEED_WEIGHT_ENTRIES,
       weightConfig: SEED_WEIGHT_CONFIG,
@@ -482,8 +546,12 @@ export const useStore = create<AppState>()(
       setSttModel: (id) => set({ sttModel: id }),
       setLlmModel: (id) => set({ llmModel: id }),
       setExtractionMode: (m) => set({ extractionMode: m }),
-      setCloudApiKey: (k) => set({ cloudApiKey: k }),
-      setCloudModel: (id) => set({ cloudModel: id }),
+      setCloudProvider: (p) => set({ cloudProvider: p }),
+      setCloudApiKey: (k) =>
+        set((s) => ({ cloudApiKeys: { ...s.cloudApiKeys, [s.cloudProvider]: k } })),
+      setCloudModel: (id) =>
+        set((s) => ({ cloudModels: { ...s.cloudModels, [s.cloudProvider]: id } })),
+      setCliBridge: (c) => set({ cliBridge: c }),
       setProfile: (patch) => set((s) => ({ profile: { ...s.profile, ...patch } })),
       setSyncCursor: (cursor) => set({ syncCursor: cursor }),
       setLastAutoSave: (day) => set({ lastAutoSave: day }),
@@ -1049,6 +1117,11 @@ function mergePersisted(persisted: unknown, current: AppState): AppState {
     // Le seed de pesées ne s'applique qu'à la 1re utilisation (clé absente du persisté).
     weightEntries: p.weightEntries ?? current.weightEntries,
     weightConfig: { ...current.weightConfig, ...(p.weightConfig ?? {}) },
+    // Reprise de l'ancien réglage mono-fournisseur : la clé et le modèle
+    // Anthropic déjà saisis deviennent le casier « anthropic ». Recopie, pas
+    // déplacement — `cloudApiKey`/`cloudModel` restent en place (cf. AppState).
+    cloudApiKeys: p.cloudApiKeys ?? (p.cloudApiKey ? { anthropic: p.cloudApiKey } : {}),
+    cloudModels: p.cloudModels ?? (p.cloudModel ? { anthropic: p.cloudModel } : {}),
     mutedDays: p.mutedDays ?? {},
     dayNotes: p.dayNotes ?? {},
     nutrientImportance: p.nutrientImportance ?? {},

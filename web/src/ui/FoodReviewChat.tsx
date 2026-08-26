@@ -9,7 +9,7 @@
  */
 
 import { useState } from 'react';
-import { useStore } from '../store/store';
+import { useStore, useCloudConfig } from '../store/store';
 import type { Food } from '../nutrition/types';
 import { reviewFood, ficheDiff } from '../extraction/foodReview';
 import type { ReviewFiche, ReviewTurn, ReviewUsage } from '../extraction/foodReview';
@@ -26,8 +26,7 @@ function val(v: number): string {
 
 export function FoodReviewChat({ food, onApply }: { food: Food; onApply: (fiche: ReviewFiche) => void }) {
   const extractionMode = useStore((s) => s.extractionMode);
-  const cloudApiKey = useStore((s) => s.cloudApiKey);
-  const cloudModel = useStore((s) => s.cloudModel);
+  const cloud = useCloudConfig();
   const entries = useStore((s) => s.entries);
   const usage = useBankUsage().get(food.id);
 
@@ -53,7 +52,7 @@ export function FoodReviewChat({ food, onApply }: { food: Food; onApply: (fiche:
     const history = message ? [...turns, { role: 'user' as const, text: message }] : turns;
     if (message) setTurns(history);
     try {
-      const reply = await reviewFood(food, reviewUsage, history, extractionMode, cloudApiKey, cloudModel);
+      const reply = await reviewFood(food, reviewUsage, history, extractionMode, cloud);
       setTurns([...history, reply]);
       setDraft('');
     } catch (e) {
@@ -68,7 +67,7 @@ export function FoodReviewChat({ food, onApply }: { food: Food; onApply: (fiche:
   if (!strongAi) {
     return (
       <div className="hint" style={{ marginTop: 10 }}>
-        La relecture par IA demande le mode « API Claude » ou « Claude Code » — voir Réglages.
+        La relecture par IA demande le mode « clé API » ou « pont CLI » — voir Réglages.
       </div>
     );
   }

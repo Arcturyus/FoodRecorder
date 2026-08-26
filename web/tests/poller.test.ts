@@ -45,14 +45,21 @@ vi.mock('../src/sync/supabase', () => ({
   markImageProcessed: async (id: string) => void pushed.processed.push(id),
 }));
 
-vi.mock('../src/extraction/claudeCode', () => ({
-  checkClaudeCode: async () => ({ available: true }),
-  extractWithClaudeCode: async (t: string) => ({
+vi.mock('../src/extraction/bridge', () => ({
+  checkBridge: async () => ({ available: true }),
+  callBridge: async () => '',
+  currentCli: () => 'claude',
+  currentCliLabel: () => 'Claude Code',
+  CLI_LABELS: { claude: 'Claude Code', codex: 'Codex' },
+}));
+
+vi.mock('../src/extraction/cliExtract', () => ({
+  extractWithCli: async (t: string) => ({
     items: [{ aliment: 'banane', quantite: 1, unite: 'piece', estimation: false }],
     source: 'claudecode',
     transcript: t,
   }),
-  extractImageWithClaudeCode: async () => ({
+  extractImageWithCli: async () => ({
     items: [{ aliment: 'pizza', quantite: 1, unite: 'portion', estimation: true }],
     source: 'claudecode',
   }),
@@ -176,8 +183,8 @@ describe('runSyncTick — état publié pour le bandeau', () => {
   });
 
   it('compte à part une ligne traitée sans résultat, avec son motif', async () => {
-    const claude = await import('../src/extraction/claudeCode');
-    vi.spyOn(claude, 'extractWithClaudeCode').mockResolvedValueOnce({ items: [], source: 'claudecode' });
+    const cli = await import('../src/extraction/cliExtract');
+    vi.spyOn(cli, 'extractWithCli').mockResolvedValueOnce({ items: [], source: 'claudecode' });
     rows.transcripts = [{ id: 't1', payload: { transcript: 'euh…' } }];
 
     await runSyncTick();

@@ -4,10 +4,12 @@
  * choisi selon `extractionMode`, avec repli sur un parseur à règles.
  */
 
-import Anthropic from '@anthropic-ai/sdk';
 import { z } from 'zod';
 import type { SunExposure } from '../sun/vitaminD';
 import type { ExtractionMode } from '../store/store';
+import { askCloud } from './cloud';
+import type { CloudConfig, ExtractionSource } from './providers';
+import { callBridge } from './bridge';
 import { chatWithLlm } from './llm';
 
 /** Sous-ensemble de SunExposure que l'extraction peut renseigner. */
@@ -15,7 +17,7 @@ export type SunPatch = Partial<
   Pick<SunExposure, 'date' | 'heure' | 'dureeMin' | 'ciel' | 'peau' | 'phenotype' | 'creme'>
 >;
 
-export type SunSource = 'anthropic' | 'claudecode' | 'llm' | 'rules';
+export type SunSource = ExtractionSource;
 
 function localDate(d = new Date()): string {
   const y = d.getFullYear();
@@ -274,30 +276,14 @@ export function parseSunRules(transcript: string, now = new Date()): SunPatch {
 // Moteurs LLM
 // ---------------------------------------------------------------------------
 
-async function extractCloud(transcript: string, apiKey: string, model: string): Promise<SunPatch[] | null> {
-  const client = new Anthropic({ apiKey, dangerouslyAllowBrowser: true });
-  const resp = await client.messages.create({
-    model,
-    max_tokens: 400,
-    system: systemPrompt(),
-    messages: [{ role: 'user', content: transcript }],
-  });
-  const text = resp.content
-    .filter((b): b is Anthropic.TextBlock => b.type === 'text')
-    .map((b) => b.text)
-    .join('');
+async function extractCloud(transcript: string, cloud: CloudConfig): Promise<SunPatch[] | null> {
+  const text = await askCloud(systemPrompt(), transcript, cloud, { maxTokens: 400 });
   return validate(extractJson(text));
 }
 
 async function extractBridge(transcript: string): Promise<SunPatch[] | null> {
-  const res = await fetch('/api/claude-code', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ prompt: `${systemPrompt()}\n\nPhrase : "${transcript}"\nJSON :`, label: 'soleil' }),
-  });
-  const data = (await res.json().catch(() => ({}))) as { text?: string; error?: string };
-  if (!res.ok || data.error) throw new Error(data.error || `HTTP ${res.status}`);
-  return validate(extractJson(data.text ?? ''));
+  const text = await callBridge({ prompt: `${systemPrompt()}\n\nPhrase : "${transcript}"\nJSON :`, label: 'soleil' });
+  return validate(extractJson(text));
 }
 
 async function extractLocal(transcript: string): Promise<SunPatch[] | null> {
@@ -314,8 +300,7 @@ async function extractLocal(transcript: string): Promise<SunPatch[] | null> {
 export async function extractSun(
   transcript: string,
   mode: ExtractionMode,
-  apiKey: string,
-  cloudModel: string,
+  cloud: CloudConfig,
 ): Promise<{ sorties: SunPatch[]; source: SunSource }> {
   const clean = transcript.trim();
   if (!clean) return { sorties: [], source: 'rules' };
@@ -339,9 +324,9 @@ export async function extractSun(
   };
 
   try {
-    if (mode === 'cloud' && apiKey) {
-      const sorties = await extractCloud(clean, apiKey, cloudModel);
-      if (sorties) return { sorties: withRules(sorties), source: 'anthropic' };
+    if (mode === 'cloud' && cloud.apiKey) {
+      const sorties = await extractCloud(clean, cloud);
+      if (sorties) return { sorties: withRules(sorties), source: cloud.provider };
     } else if (mode === 'claudecode') {
       const sorties = await extractBridge(clean);
       if (sorties) return { sorties: withRules(sorties), source: 'claudecode' };
@@ -350,8 +335,9 @@ export async function extractSun(
       if (sorties) return { sorties: withRules(sorties), source: 'llm' };
     }
   } catch (e) {
-    if (e instanceof Anthropic.APIError) throw new Error(`API Claude : ${e.message}`);
-    if (mode === 'claudecode') throw e instanceof Error ? new Error(`Pont Claude Code : ${e.message}`) : e;
+    // Les erreurs d'API arrivent déjà nommées et lisibles (cf. cloud.ts).
+    if (mode === 'cloud') throw e;
+    if (mode === 'claudecode') throw e instanceof Error ? new Error(`Pont CLI : ${e.message}`) : e;
   }
 
   return { sorties: Object.keys(rules).length > 0 ? [rules] : [], source: 'rules' };

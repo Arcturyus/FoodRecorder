@@ -5,6 +5,7 @@
  */
 
 import type { Sex } from '../nutrition/targets';
+import type { ExtractionSource } from '../extraction/providers';
 
 export interface WeightEntry {
   id: string;
@@ -22,7 +23,7 @@ export interface WeightEntry {
   metabolismeBasalMachine?: number; // kcal (donné par la balance)
   remarque?: string; // note libre (cas particulier)
   createdAt: number;
-  source: 'manuel' | 'llm' | 'anthropic' | 'claudecode' | 'rules';
+  source: ExtractionSource;
 }
 
 /** Constantes personnelles servant aux formules dérivées (éditables dans l'UI). */

@@ -1,5 +1,6 @@
 import { useRef, useState } from 'react';
-import { useStore, todayStr } from '../store/store';
+import { currentCliLabel } from '../extraction/bridge';
+import { useStore, todayStr, useCloudConfig } from '../store/store';
 import { MicRecorder } from '../stt/recorder';
 import { isSttLoaded, loadStt, transcribe } from '../stt/whisper';
 import { NativeRecognizer } from '../stt/webspeech';
@@ -32,7 +33,7 @@ function summarize(patch: WeightPatch): string {
  * (zone de saisie pleine largeur, boutons tactiles) — l'ancienne rangée serrée
  * était inutilisable au téléphone. Le résultat pré-remplit le formulaire de
  * pesée (via `onExtract`) plutôt que d'enregistrer directement ; si le pont
- * Claude Code n'est pas joignable ici, la dictée part en file d'attente
+ * le pont CLI n'est pas joignable ici, la dictée part en file d'attente
  * Supabase et l'ordinateur l'enregistrera.
  */
 export function WeightCapture({ onExtract }: { onExtract: (patch: WeightPatch) => void }) {
@@ -44,8 +45,7 @@ export function WeightCapture({ onExtract }: { onExtract: (patch: WeightPatch) =
   const nativeRef = useRef<NativeRecognizer | null>(null);
 
   const extractionMode = useStore((s) => s.extractionMode);
-  const cloudApiKey = useStore((s) => s.cloudApiKey);
-  const cloudModel = useStore((s) => s.cloudModel);
+  const cloud = useCloudConfig();
   const sttEngine = useStore((s) => s.sttEngine);
   const sttModel = useStore((s) => s.sttModel);
   const deviceId = useStore((s) => s.deviceId);
@@ -129,7 +129,7 @@ export function WeightCapture({ onExtract }: { onExtract: (patch: WeightPatch) =
     setBusy(true);
     setStatus('Extraction…');
     try {
-      const { patch, source } = await extractWeight(clean, extractionMode, cloudApiKey, cloudModel);
+      const { patch, source } = await extractWeight(clean, extractionMode, cloud);
       if (Object.keys(patch).length === 0) {
         setStatus('Aucune mesure détectée. Reformulez ou saisissez à la main ci-dessous.');
         return;
@@ -139,7 +139,7 @@ export function WeightCapture({ onExtract }: { onExtract: (patch: WeightPatch) =
       setStatus(`✓ Compris${via} : ${summarize(patch)}`);
       setText('');
     } catch (e) {
-      // Pont Claude Code indisponible ici (typiquement sur téléphone) : la dictée
+      // Pont CLI indisponible ici (typiquement sur téléphone) : la dictée
       // part en file d'attente Supabase pour que l'ordinateur l'analyse et
       // enregistre la pesée, plutôt que d'être perdue. Même repli que Capture.
       if (extractionMode === 'claudecode' && isSyncConfigured() && profileId) {
@@ -149,7 +149,7 @@ export function WeightCapture({ onExtract }: { onExtract: (patch: WeightPatch) =
           await pushWeightTranscript(deviceId, profileId, clean, todayStr(), Date.now());
           setText('');
           setStatus(
-            '✓ Envoyée sur Supabase (en attente) : le pont Claude Code n’est pas joignable ici, la pesée sera enregistrée dès que l’ordinateur sera disponible.',
+            `✓ Envoyée sur Supabase (en attente) : le pont ${currentCliLabel()} n’est pas joignable ici, la pesée sera enregistrée dès que l’ordinateur sera disponible.`,
           );
           return;
         } catch (syncErr) {
@@ -193,7 +193,7 @@ export function WeightCapture({ onExtract }: { onExtract: (patch: WeightPatch) =
         Utilise le même moteur d'extraction que l'alimentation (réglable dans « Réglages »).
         {extractionMode === 'claudecode' &&
           isSyncConfigured() &&
-          ' Sans le pont Claude Code sur cet appareil, la dictée est mise en attente sur Supabase et enregistrée par l’ordinateur.'}
+          ` Sans le pont ${currentCliLabel()} sur cet appareil, la dictée est mise en attente sur Supabase et enregistrée par l’ordinateur.`}
       </div>
     </div>
   );

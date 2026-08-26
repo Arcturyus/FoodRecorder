@@ -5,10 +5,12 @@
  * (regex) si le LLM échoue ou n'est pas disponible.
  */
 
-import Anthropic from '@anthropic-ai/sdk';
 import { z } from 'zod';
 import type { WeightEntry } from '../weight/types';
 import type { ExtractionMode } from '../store/store';
+import { askCloud } from './cloud';
+import type { CloudConfig, ExtractionSource } from './providers';
+import { callBridge } from './bridge';
 import { chatWithLlm } from './llm';
 
 /** Sous-ensemble de WeightEntry que l'extraction peut renseigner. */
@@ -30,7 +32,7 @@ export type WeightPatch = Partial<
   >
 >;
 
-export type WeightSource = 'anthropic' | 'claudecode' | 'llm' | 'rules';
+export type WeightSource = ExtractionSource;
 
 /** Pesée complète, prête à enregistrer (l'id et l'horodatage restent locaux). */
 export type WeightDraft = Omit<WeightEntry, 'id' | 'createdAt'>;
@@ -247,30 +249,14 @@ export function parseWeightRules(transcript: string): WeightPatch {
 // Moteurs LLM
 // ---------------------------------------------------------------------------
 
-async function extractCloud(transcript: string, apiKey: string, model: string): Promise<WeightPatch | null> {
-  const client = new Anthropic({ apiKey, dangerouslyAllowBrowser: true });
-  const resp = await client.messages.create({
-    model,
-    max_tokens: 512,
-    system: systemPrompt(),
-    messages: [{ role: 'user', content: transcript }],
-  });
-  const text = resp.content
-    .filter((b): b is Anthropic.TextBlock => b.type === 'text')
-    .map((b) => b.text)
-    .join('');
+async function extractCloud(transcript: string, cloud: CloudConfig): Promise<WeightPatch | null> {
+  const text = await askCloud(systemPrompt(), transcript, cloud, { maxTokens: 512 });
   return validate(extractJson(text));
 }
 
 async function extractBridge(transcript: string): Promise<WeightPatch | null> {
-  const res = await fetch('/api/claude-code', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ prompt: `${systemPrompt()}\n\nPhrase : "${transcript}"\nJSON :` }),
-  });
-  const data = (await res.json().catch(() => ({}))) as { text?: string; error?: string };
-  if (!res.ok || data.error) throw new Error(data.error || `HTTP ${res.status}`);
-  return validate(extractJson(data.text ?? ''));
+  const text = await callBridge({ prompt: `${systemPrompt()}\n\nPhrase : "${transcript}"\nJSON :`, label: 'pesee' });
+  return validate(extractJson(text));
 }
 
 async function extractLocal(transcript: string): Promise<WeightPatch | null> {
@@ -286,8 +272,7 @@ async function extractLocal(transcript: string): Promise<WeightPatch | null> {
 export async function extractWeight(
   transcript: string,
   mode: ExtractionMode,
-  apiKey: string,
-  cloudModel: string,
+  cloud: CloudConfig,
 ): Promise<{ patch: WeightPatch; source: WeightSource }> {
   const clean = transcript.trim();
   if (!clean) return { patch: {}, source: 'rules' };
@@ -296,9 +281,9 @@ export async function extractWeight(
   const withDate = (patch: WeightPatch): WeightPatch => ({ ...parseWeightDate(clean), ...patch });
 
   try {
-    if (mode === 'cloud' && apiKey) {
-      const patch = await extractCloud(clean, apiKey, cloudModel);
-      if (patch) return { patch: withDate(patch), source: 'anthropic' };
+    if (mode === 'cloud' && cloud.apiKey) {
+      const patch = await extractCloud(clean, cloud);
+      if (patch) return { patch: withDate(patch), source: cloud.provider };
     } else if (mode === 'claudecode') {
       const patch = await extractBridge(clean);
       if (patch) return { patch: withDate(patch), source: 'claudecode' };
@@ -307,8 +292,9 @@ export async function extractWeight(
       if (patch) return { patch: withDate(patch), source: 'llm' };
     }
   } catch (e) {
-    if (e instanceof Anthropic.APIError) throw new Error(`API Claude : ${e.message}`);
-    if (mode === 'claudecode') throw e instanceof Error ? new Error(`Pont Claude Code : ${e.message}`) : e;
+    // Les erreurs d'API arrivent déjà nommées et lisibles (cf. cloud.ts).
+    if (mode === 'cloud') throw e;
+    if (mode === 'claudecode') throw e instanceof Error ? new Error(`Pont CLI : ${e.message}`) : e;
     // IA locale indisponible → repli silencieux sur les règles.
   }
 

@@ -1,6 +1,7 @@
 import { useMemo, useRef, useState } from 'react';
+import { currentCliLabel } from '../extraction/bridge';
 import type { FocusEvent } from 'react';
-import { useStore, todayStr, nowTime } from '../store/store';
+import { useStore, todayStr, nowTime, useCloudConfig } from '../store/store';
 import { MicRecorder } from '../stt/recorder';
 import { isSttLoaded, loadStt, transcribe } from '../stt/whisper';
 import { NativeRecognizer } from '../stt/webspeech';
@@ -451,8 +452,7 @@ function SunDictation({ onSorties, date }: { onSorties: (sorties: SunPatch[]) =>
   const nativeRef = useRef<NativeRecognizer | null>(null);
 
   const extractionMode = useStore((s) => s.extractionMode);
-  const cloudApiKey = useStore((s) => s.cloudApiKey);
-  const cloudModel = useStore((s) => s.cloudModel);
+  const cloud = useCloudConfig();
   const sttEngine = useStore((s) => s.sttEngine);
   const sttModel = useStore((s) => s.sttModel);
   const deviceId = useStore((s) => s.deviceId);
@@ -534,7 +534,7 @@ function SunDictation({ onSorties, date }: { onSorties: (sorties: SunPatch[]) =>
     setBusy(true);
     setStatus('Extraction…');
     try {
-      const { sorties, source } = await extractSun(clean, extractionMode, cloudApiKey, cloudModel);
+      const { sorties, source } = await extractSun(clean, extractionMode, cloud);
       if (sorties.length === 0) {
         setStatus('Rien compris. Réglez les curseurs à la main ci-dessous.');
         return;
@@ -549,7 +549,7 @@ function SunDictation({ onSorties, date }: { onSorties: (sorties: SunPatch[]) =>
       );
       setText('');
     } catch (e) {
-      // Pont Claude Code indisponible ici (typiquement sur téléphone) : on met la
+      // Pont CLI indisponible ici (typiquement sur téléphone) : on met la
       // dictée en file d'attente pour l'ordinateur, comme pour un repas, plutôt
       // que de la perdre. Même repli que Capture.
       if (extractionMode === 'claudecode' && isSyncConfigured() && profileId) {
@@ -559,7 +559,7 @@ function SunDictation({ onSorties, date }: { onSorties: (sorties: SunPatch[]) =>
           // de traitement (cf. addSunExposure / poller).
           await pushSunTranscript(deviceId, profileId, clean, date ?? todayStr(), Date.now());
           setText('');
-          setStatus('Pont Claude Code indisponible ici : dictée mise en file d’attente, sera traitée dès que l’ordinateur sera disponible.');
+          setStatus(`Pont ${currentCliLabel()} indisponible ici : dictée mise en file d’attente, sera traitée dès que l’ordinateur sera disponible.`);
           return;
         } catch (syncErr) {
           setStatus(`Échec de la mise en file d'attente : ${(syncErr as Error).message}`);

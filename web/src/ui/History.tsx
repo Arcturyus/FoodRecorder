@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
-import { useStore, todayStr, useEffectiveFoods, isDayCounted } from '../store/store';
+import { useStore, todayStr, useEffectiveFoods, isDayCounted, useCloudConfig } from '../store/store';
 import { useTargets } from './useTargets';
 import { foodFrequencies, frequencyKey } from '../nutrition/frequency';
 import type { FoodFrequency } from '../nutrition/frequency';
@@ -541,8 +541,7 @@ function FoodSearch({
  */
 function UnclassifiedFoods({ freqs }: { freqs: FoodFrequency[] }) {
   const extractionMode = useStore((s) => s.extractionMode);
-  const cloudApiKey = useStore((s) => s.cloudApiKey);
-  const cloudModel = useStore((s) => s.cloudModel);
+  const cloud = useCloudConfig();
   const setItemCategories = useStore((s) => s.setItemCategories);
   const [busy, setBusy] = useState(false);
   const [status, setStatus] = useState('');
@@ -557,8 +556,7 @@ function UnclassifiedFoods({ freqs }: { freqs: FoodFrequency[] }) {
       const byName = await categorizeNames(
         unclassified.map((f) => f.nom),
         extractionMode,
-        cloudApiKey,
-        cloudModel,
+        cloud,
       );
       const n = setItemCategories(byName);
       setStatus(n > 0 ? `${n} aliment(s) classés dans l'historique.` : 'Aucun aliment classé.');

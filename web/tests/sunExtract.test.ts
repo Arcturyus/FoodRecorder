@@ -1,6 +1,9 @@
 import { describe, expect, it, vi, afterEach } from 'vitest';
 import { extractSun, parseSunRules } from '../src/extraction/sun';
 
+/** Réglages « clé API » inertes : ces tests passent tous par le pont CLI. */
+const NO_CLOUD = { provider: 'anthropic', apiKey: '', model: 'claude-opus-4-8' } as const;
+
 /** Réponse simulée du pont Claude Code (mode « claudecode » = un simple fetch). */
 function mockBridge(payload: unknown) {
   vi.stubGlobal(
@@ -27,8 +30,7 @@ describe('extractSun — plusieurs sorties en une dictée', () => {
     const { sorties, source } = await extractSun(
       'je suis sorti vingt minutes ce matin en t-shirt et une demi-heure à 17h en short',
       'claudecode',
-      '',
-      '',
+      NO_CLOUD,
     );
     expect(source).toBe('claudecode');
     expect(sorties).toHaveLength(2);
@@ -45,7 +47,7 @@ describe('extractSun — plusieurs sorties en une dictée', () => {
         { heure: '17:00', dureeMin: 30 },
       ],
     });
-    const { sorties } = await extractSun('vingt minutes ce matin puis une demi-heure à 17h', 'claudecode', '', '');
+    const { sorties } = await extractSun('vingt minutes ce matin puis une demi-heure à 17h', 'claudecode', NO_CLOUD);
     expect(sorties[1].heure).toBe('17:00');
     expect(sorties[1].dureeMin).toBe(30);
   });
@@ -53,7 +55,7 @@ describe('extractSun — plusieurs sorties en une dictée', () => {
   it('complète une sortie unique avec ce que le LLM a oublié (date des règles)', async () => {
     // Le LLM ne renvoie que la durée ; « hier » n'est vu que par les règles.
     mockBridge({ sorties: [{ dureeMin: 25 }] });
-    const { sorties } = await extractSun('hier je suis sorti vingt-cinq minutes', 'claudecode', '', '');
+    const { sorties } = await extractSun('hier je suis sorti vingt-cinq minutes', 'claudecode', NO_CLOUD);
     expect(sorties).toHaveLength(1);
     expect(sorties[0].dureeMin).toBe(25);
     expect(sorties[0].date).toBe(parseSunRules('hier je suis sorti vingt-cinq minutes').date);
@@ -62,26 +64,26 @@ describe('extractSun — plusieurs sorties en une dictée', () => {
 
   it('tolère un objet de sortie nu (sans l’enveloppe « sorties »)', async () => {
     mockBridge({ heure: '13:00', dureeMin: 30, ciel: 'tres-ensoleille' });
-    const { sorties } = await extractSun('une demi-heure au soleil ce midi', 'claudecode', '', '');
+    const { sorties } = await extractSun('une demi-heure au soleil ce midi', 'claudecode', NO_CLOUD);
     expect(sorties).toHaveLength(1);
     expect(sorties[0]).toMatchObject({ heure: '13:00', dureeMin: 30, ciel: 'tres-ensoleille' });
   });
 
   it('tolère un tableau nu', async () => {
     mockBridge([{ heure: '13:00', dureeMin: 30 }, { heure: '18:00', dureeMin: 15 }]);
-    const { sorties } = await extractSun('deux sorties', 'claudecode', '', '');
+    const { sorties } = await extractSun('deux sorties', 'claudecode', NO_CLOUD);
     expect(sorties).toHaveLength(2);
   });
 
   it('ignore une date future renvoyée par le LLM', async () => {
     mockBridge({ sorties: [{ date: '2099-01-01', dureeMin: 30 }] });
-    const { sorties } = await extractSun('trente minutes au soleil', 'claudecode', '', '');
+    const { sorties } = await extractSun('trente minutes au soleil', 'claudecode', NO_CLOUD);
     expect(sorties[0].date).toBeUndefined();
   });
 
   it('replie sur le parseur à règles si le LLM ne renvoie rien d’exploitable', async () => {
     mockBridge({ sorties: [] });
-    const { sorties, source } = await extractSun('une demi-heure au soleil ce midi', 'claudecode', '', '');
+    const { sorties, source } = await extractSun('une demi-heure au soleil ce midi', 'claudecode', NO_CLOUD);
     expect(source).toBe('rules');
     expect(sorties).toHaveLength(1);
     expect(sorties[0].dureeMin).toBe(30);
@@ -91,17 +93,16 @@ describe('extractSun — plusieurs sorties en une dictée', () => {
     const { sorties, source } = await extractSun(
       'ce midi je suis resté une demi-heure en plein soleil en short',
       'rules',
-      '',
-      '',
-      );
+      NO_CLOUD,
+    );
     expect(source).toBe('rules');
     expect(sorties).toHaveLength(1);
     expect(sorties[0]).toMatchObject({ heure: '13:00', dureeMin: 30, ciel: 'tres-ensoleille', peau: 'bras-jambes' });
   });
 
   it('dictée vide ou incomprise → aucune sortie (rien n’est enregistré)', async () => {
-    expect((await extractSun('   ', 'rules', '', '')).sorties).toEqual([]);
-    expect((await extractSun('bonjour', 'rules', '', '')).sorties).toEqual([]);
+    expect((await extractSun('   ', 'rules', NO_CLOUD)).sorties).toEqual([]);
+    expect((await extractSun('bonjour', 'rules', NO_CLOUD)).sorties).toEqual([]);
   });
 });
 

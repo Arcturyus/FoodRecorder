@@ -1,4 +1,3 @@
-import Anthropic from '@anthropic-ai/sdk';
 import type { ExtractedItem } from '../nutrition/types';
 import {
   validateExtraction,
@@ -9,35 +8,31 @@ import {
   PARTIE_COMESTIBLE_PROMPT,
 } from './schema';
 import { parseTranscript } from './ruleParser';
+import { callBridge, currentCli, currentCliLabel } from './bridge';
 
 /**
- * Extraction via l'API Claude (option « clé API »).
- * Contrairement au reste de l'app, ceci envoie le texte à l'API Anthropic —
- * la clé et le texte quittent l'appareil. Backend optionnel, désactivé par défaut.
- * Fallback sur le parseur à règles si la clé est absente ou la réponse inexploitable ;
- * les erreurs d'appel (clé invalide, réseau, quota) sont remontées à l'UI.
+ * Extraction via un CLI local (pont) : « Claude Code » ou « Codex ».
+ *
+ * Ne marche que sur l'ordinateur qui exécute l'app (`npm run dev`) avec le CLI
+ * installé et DÉJÀ connecté (abonnement Claude Pro/Max, ChatGPT Plus…) : aucune
+ * clé API, aucun identifiant à saisir — on réutilise la session du CLI. Le
+ * navigateur appelle le middleware /api/claude-code (cf. le plugin Vite), qui
+ * lance le CLI. Repli sur le parseur à règles si le pont/CLI est indisponible.
  */
 
-export interface CloudModelOption {
-  id: string;
-  label: string;
-  hint: string;
+/** Source d'une extraction par le pont : le CLI qui a répondu. */
+export type CliSource = 'claudecode' | 'codex';
+
+/** `claude` s'archive historiquement sous « claudecode » dans le journal. */
+function cliSource(): CliSource {
+  return currentCli() === 'codex' ? 'codex' : 'claudecode';
 }
-
-/** Modèles proposés. Opus 4.8 par défaut ; Haiku 4.5 = le moins cher. */
-export const CLOUD_MODELS: CloudModelOption[] = [
-  { id: 'claude-opus-4-8', label: 'Claude Opus 4.8 (recommandé)', hint: 'le plus précis' },
-  { id: 'claude-sonnet-5', label: 'Claude Sonnet 5', hint: 'bon compromis' },
-  { id: 'claude-haiku-4-5', label: 'Claude Haiku 4.5', hint: 'le plus rapide et le moins cher' },
-];
-
-export const DEFAULT_CLOUD_MODEL = CLOUD_MODELS[0].id;
 
 const SYSTEM_PROMPT = `Tu extrais les aliments d'une phrase en français décrivant un repas.
 La phrase provient d'une TRANSCRIPTION VOCALE automatique : elle peut contenir des erreurs de reconnaissance, des homophones, des mots mal découpés, des parasites, des hésitations ou des auto-corrections. Interprète l'INTENTION du locuteur plutôt que le texte mot à mot.
 Réponds UNIQUEMENT avec un objet JSON de la forme :
 {"items":[{"aliment": string, "quantite": number, "unite": string, "estimation": boolean}]}
-Aucun texte hors du JSON.
+Aucun texte hors du JSON, pas de bloc de code.
 - "unite" ∈ ["g","ml","piece","portion","cas","cac","bol","verre","assiette","tranche","poignee","carre","pot","pincee","dose"].
 - "aliment" : le nom de l'aliment en français, sans quantité ni adjectifs superflus.
 - Si la quantité n'est pas donnée, choisis une quantité plausible et mets "estimation": true, sinon false.
@@ -45,7 +40,6 @@ Aucun texte hors du JSON.
 - Tiens compte des reformulations et auto-corrections : « de la viande hachée donc du bœuf 5 % de matière grasse » désigne UN seul aliment (steak haché de bœuf 5 %).
 - ATTENTION : ne confonds pas une reformulation avec une ÉNUMÉRATION D'INGRÉDIENTS. Quand la phrase nomme un PLAT puis liste ce qu'il contient (« une part de gâteau au chocolat, il y a du sucre, du beurre, du chocolat 85 % et de la farine »), l'aliment est LE PLAT ENTIER — un seul item estimé — et JAMAIS l'un de ses ingrédients pris isolément, ni chaque ingrédient séparément. Les ingrédients cités ne servent qu'à affiner l'estimation nutritionnelle du plat (via "nutriments"). N'émets un ingrédient comme aliment distinct que s'il a été consommé seul, avec sa propre quantité.
 - Les déterminants et petits mots (un, une, en, le, des…) sont souvent mal transcrits : ne supprime PAS un aliment clairement nommé sous prétexte que son article semble bizarre (« une pêche en abricot » = « une pêche, un abricot »). Dans le doute, INCLUS l'aliment plutôt que de l'omettre.
-- Si tu hésites entre plusieurs VARIANTES d'un même aliment (ex. fromage blanc 0 % vs 3 % vs skyr) sans indice dans la phrase, donne le nom générique sans trancher (« fromage blanc ») : l'application choisira la variante la plus consommée récemment par l'utilisateur.
 
 ${UNITES_PROMPT}
 
@@ -62,19 +56,19 @@ Entrée : "une pêche en abricot et 250 g de viande hachée donc de bœuf 5 % de
 Raisonnement : « en abricot » = « un abricot » (déterminant mal transcrit), donc un second fruit ; « viande hachée … bœuf 5 % » = steak haché de bœuf 5 %.
 Sortie : {"items":[{"aliment":"pêche","quantite":1,"unite":"piece","estimation":true},{"aliment":"abricot","quantite":1,"unite":"piece","estimation":true},{"aliment":"steak haché de bœuf 5%","quantite":250,"unite":"g","estimation":false}]}
 
-Exemple (le bol est converti en grammes ; le yaourt est un objet standard dénombrable) :
-Entrée : "un bol de riz avec 150 g de poulet et un yaourt nature"
-Sortie : {"items":[{"aliment":"riz","quantite":200,"unite":"g","estimation":true,"quantiteMin":150,"quantiteMax":260},{"aliment":"poulet","quantite":150,"unite":"g","estimation":false},{"aliment":"yaourt nature","quantite":1,"unite":"piece","estimation":false}]}
-
 Exemple (plat composé décrit par ses ingrédients) :
 Entrée : "une part de gâteau au chocolat noir donc il y a du sucre et du beurre du chocolat noir 85 % et de la farine et du fromage blanc 300 grammes"
 Raisonnement : « il y a du sucre, du beurre, du chocolat 85 %, de la farine » énumère les INGRÉDIENTS du gâteau (un plat composé) → UN seul item « gâteau au chocolat noir » estimé (≈ une part), à qui on attache une estimation nutritionnelle ; ne surtout PAS le réduire à « chocolat noir ». Le fromage blanc 300 g est un aliment distinct, pesé.
 Sortie : {"items":[{"aliment":"gâteau au chocolat noir","quantite":90,"unite":"g","estimation":true,"quantiteMin":70,"quantiteMax":120,"categorie":"sucre-snack","nutriments":{"kcal":390,"proteines":6,"glucides":45,"lipides":21,"fibres":3,"agSatures":13,"agMonoInsatures":5.5,"agPolyInsatures":1.5,"omega3":0.1,"omega6":1.3,"omega9":5,"fer":2,"magnesium":45,"potassium":210,"calcium":45,"zinc":1,"sodium":250,"selenium":5,"iode":8,"vitA":120,"vitC":0,"vitD":0.5,"vitE":1,"vitK1":2,"vitK2":1,"vitB1":0.08,"vitB2":0.2,"vitB3":0.6,"vitB5":0.5,"vitB6":0.05,"vitB9":20,"vitB12":0.3,"creatine":0,"collagene":0}},{"aliment":"fromage blanc","quantite":300,"unite":"g","estimation":false}]}`;
 
+function buildPrompt(transcript: string): string {
+  return `${SYSTEM_PROMPT}\n\nPhrase : "${transcript}"\nJSON :`;
+}
+
 const IMAGE_SYSTEM_PROMPT = `Tu analyses la photo d'un repas et tu listes les aliments visibles avec une estimation de quantité.
 Réponds UNIQUEMENT avec un objet JSON de la forme :
 {"items":[{"aliment": string, "quantite": number, "unite": string, "estimation": boolean}]}
-Aucun texte hors du JSON.
+Aucun texte hors du JSON, pas de bloc de code.
 - "unite" ∈ ["g","ml","piece","portion","cas","cac","bol","verre","assiette","tranche","poignee","carre","pot","pincee","dose"].
 - "aliment" : le nom de l'aliment en français, sans marque ni adjectifs superflus.
 - Estime la quantité d'après ce que tu vois (taille des portions, du contenant) et mets TOUJOURS "estimation": true.
@@ -93,9 +87,6 @@ Sur une photo, chaque quantité est une estimation visuelle : renseigne SYSTÉMA
 
 ${ESTIMATION_PROMPT}`;
 
-/** Formats d'image acceptés par l'API vision d'Anthropic. */
-export const ACCEPTED_IMAGE_TYPES = ['image/jpeg', 'image/png', 'image/webp', 'image/gif'] as const;
-
 /** Extrait le premier objet JSON d'une réponse texte. */
 function extractJson(text: string): unknown | null {
   const start = text.indexOf('{');
@@ -108,85 +99,38 @@ function extractJson(text: string): unknown | null {
   }
 }
 
-export async function extractWithAnthropic(
-  transcript: string,
-  apiKey: string,
-  model: string,
-): Promise<{ items: ExtractedItem[]; source: 'anthropic' | 'rules' }> {
-  if (!apiKey) return { items: parseTranscript(transcript), source: 'rules' };
-
-  const client = new Anthropic({ apiKey, dangerouslyAllowBrowser: true });
-
-  try {
-    const resp = await client.messages.create({
-      model,
-      max_tokens: 1024,
-      system: SYSTEM_PROMPT,
-      messages: [{ role: 'user', content: transcript }],
-    });
-    const text = resp.content
-      .filter((b): b is Anthropic.TextBlock => b.type === 'text')
-      .map((b) => b.text)
-      .join('');
-    const items = validateExtraction(extractJson(text));
-    if (items && items.length > 0) return { items, source: 'anthropic' };
-  } catch (e) {
-    // clé invalide, réseau, quota… → erreur lisible pour l'UI
-    throw e instanceof Anthropic.APIError
-      ? new Error(`API Claude : ${e.message}`)
-      : e;
-  }
-  return { items: parseTranscript(transcript), source: 'rules' };
-}
-
 /**
- * Extraction des aliments depuis une PHOTO via l'API Claude (vision).
- * Réservé au mode « API Claude » : nécessite un gros modèle multimodal.
- * `imageBase64` est la donnée base64 nue (sans le préfixe `data:…;base64,`).
+ * Extraction des aliments depuis une PHOTO via le pont : l'image est envoyée au
+ * middleware, qui l'écrit sur disque et la donne au CLI (multimodal) — par le
+ * chemin cité dans le prompt pour `claude`, par le drapeau `-i` pour `codex`.
+ * Pas de repli sur les règles ici (rien à parser sans texte).
  */
-export async function extractImageWithAnthropic(
+export async function extractImageWithCli(
   imageBase64: string,
   mediaType: string,
-  apiKey: string,
-  model: string,
-): Promise<{ items: ExtractedItem[]; source: 'anthropic' }> {
-  if (!apiKey) throw new Error('Clé API requise pour analyser une photo.');
-  if (!ACCEPTED_IMAGE_TYPES.includes(mediaType as (typeof ACCEPTED_IMAGE_TYPES)[number])) {
-    throw new Error('Format d’image non supporté (JPEG, PNG, WebP ou GIF).');
-  }
-
-  const client = new Anthropic({ apiKey, dangerouslyAllowBrowser: true });
-
+): Promise<{ items: ExtractedItem[]; source: CliSource }> {
   try {
-    const resp = await client.messages.create({
-      model,
-      max_tokens: 1024,
-      system: IMAGE_SYSTEM_PROMPT,
-      messages: [
-        {
-          role: 'user',
-          content: [
-            {
-              type: 'image',
-              source: {
-                type: 'base64',
-                media_type: mediaType as 'image/jpeg' | 'image/png' | 'image/webp' | 'image/gif',
-                data: imageBase64,
-              },
-            },
-            { type: 'text', text: 'Quels aliments et quelles quantités vois-tu sur cette photo ?' },
-          ],
-        },
-      ],
+    const text = await callBridge({
+      prompt: `${IMAGE_SYSTEM_PROMPT}\n\nJSON :`,
+      label: 'photo',
+      image: { data: imageBase64, mediaType },
     });
-    const text = resp.content
-      .filter((b): b is Anthropic.TextBlock => b.type === 'text')
-      .map((b) => b.text)
-      .join('');
     const items = validateExtraction(extractJson(text));
-    if (items && items.length > 0) return { items, source: 'anthropic' };
-    return { items: [], source: 'anthropic' };
+    return { items: items ?? [], source: cliSource() };
   } catch (e) {
-    throw e instanceof Anthropic.APIError ? new Error(`API Claude : ${e.message}`) : e;
+    throw e instanceof Error ? new Error(`Pont ${currentCliLabel()} : ${e.message}`) : e;
   }
+}
+
+export async function extractWithCli(
+  transcript: string,
+): Promise<{ items: ExtractedItem[]; source: CliSource | 'rules' }> {
+  try {
+    const text = await callBridge({ prompt: buildPrompt(transcript), label: 'repas' });
+    const items = validateExtraction(extractJson(text));
+    if (items && items.length > 0) return { items, source: cliSource() };
+  } catch (e) {
+    throw e instanceof Error ? new Error(`Pont ${currentCliLabel()} : ${e.message}`) : e;
+  }
+  return { items: parseTranscript(transcript), source: 'rules' };
 }

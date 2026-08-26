@@ -11,10 +11,12 @@
  * mot par aliment, donc une réponse courte même sur des dizaines d'aliments.
  */
 
-import Anthropic from '@anthropic-ai/sdk';
 import { z } from 'zod';
 import type { FoodCategory } from '../nutrition/types';
 import type { ExtractionMode } from '../store/store';
+import { askCloud } from './cloud';
+import type { CloudConfig } from './providers';
+import { callBridge } from './bridge';
 
 const CATEGORIES = [
   'fruit', 'legume', 'feculent', 'viande', 'poisson', 'oeuf-laitier',
@@ -65,29 +67,8 @@ function extractJson(text: string): unknown | null {
   }
 }
 
-async function askBridge(user: string): Promise<string> {
-  const res = await fetch('/api/claude-code', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ prompt: `${SYSTEM_PROMPT}\n\n${user}`, label: 'catégories' }),
-  });
-  const data = (await res.json().catch(() => ({}))) as { text?: string; error?: string };
-  if (!res.ok || data.error) throw new Error(data.error || `HTTP ${res.status}`);
-  return data.text ?? '';
-}
-
-async function askCloud(user: string, apiKey: string, model: string): Promise<string> {
-  const client = new Anthropic({ apiKey, dangerouslyAllowBrowser: true });
-  const resp = await client.messages.create({
-    model,
-    max_tokens: 2048,
-    system: SYSTEM_PROMPT,
-    messages: [{ role: 'user', content: user }],
-  });
-  return resp.content
-    .filter((b): b is Anthropic.TextBlock => b.type === 'text')
-    .map((b) => b.text)
-    .join('');
+function askBridge(user: string): Promise<string> {
+  return callBridge({ prompt: `${SYSTEM_PROMPT}\n\n${user}`, label: 'categories' });
 }
 
 /**
@@ -99,19 +80,18 @@ async function askCloud(user: string, apiKey: string, model: string): Promise<st
 export async function categorizeNames(
   names: string[],
   mode: ExtractionMode,
-  apiKey: string,
-  cloudModel: string,
+  cloud: CloudConfig,
 ): Promise<Record<string, FoodCategory>> {
   if (mode !== 'cloud' && mode !== 'claudecode') {
-    throw new Error('Le classement demande une IA forte (Claude Code ou API Claude) — voir Réglages.');
+    throw new Error('Le classement demande une IA forte (clé API ou pont CLI) — voir Réglages.');
   }
-  if (mode === 'cloud' && !apiKey) throw new Error('Clé API manquante — voir Réglages.');
+  if (mode === 'cloud' && !cloud.apiKey) throw new Error('Clé API manquante — voir Réglages.');
 
   const out: Record<string, FoodCategory> = {};
   for (let start = 0; start < names.length; start += BATCH) {
     const batch = names.slice(start, start + BATCH);
     const user = `Aliments :\n${batch.map((n, i) => `[${i}] ${n}`).join('\n')}\nJSON :`;
-    const text = mode === 'cloud' ? await askCloud(user, apiKey, cloudModel) : await askBridge(user);
+    const text = mode === 'cloud' ? await askCloud(SYSTEM_PROMPT, user, cloud) : await askBridge(user);
     const parsed = responseSchema.safeParse(extractJson(text));
     if (!parsed.success) throw new Error('Réponse de l’IA illisible.');
     for (const { i, c } of parsed.data.categories) {

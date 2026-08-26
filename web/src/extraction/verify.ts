@@ -15,7 +15,6 @@
  * bloquant.
  */
 
-import Anthropic from '@anthropic-ai/sdk';
 import { z } from 'zod';
 import type { ExtractedItem, Food, NutrientKey } from '../nutrition/types';
 import { EMPTY_NUTRIENTS } from '../nutrition/types';
@@ -23,6 +22,9 @@ import { matchFood } from '../nutrition/match';
 import type { RecentCounts } from '../nutrition/match';
 import { STRONG_DB_MATCH } from '../nutrition/compute';
 import type { ExtractionMode } from '../store/store';
+import { askCloud } from './cloud';
+import type { CloudConfig } from './providers';
+import { callBridge } from './bridge';
 import { NUTRIMENTS_PROMPT_DOC } from './schema';
 
 /** Toutes les clés de nutriments (ordre stable). */
@@ -107,29 +109,8 @@ function extractJson(text: string): unknown | null {
   }
 }
 
-async function askBridge(system: string, user: string): Promise<string> {
-  const res = await fetch('/api/claude-code', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ prompt: `${system}\n\n${user}`, label: 'verify' }),
-  });
-  const data = (await res.json().catch(() => ({}))) as { text?: string; error?: string };
-  if (!res.ok || data.error) throw new Error(data.error || `HTTP ${res.status}`);
-  return data.text ?? '';
-}
-
-async function askCloud(system: string, user: string, apiKey: string, model: string): Promise<string> {
-  const client = new Anthropic({ apiKey, dangerouslyAllowBrowser: true });
-  const resp = await client.messages.create({
-    model,
-    max_tokens: 2048,
-    system,
-    messages: [{ role: 'user', content: user }],
-  });
-  return resp.content
-    .filter((b): b is Anthropic.TextBlock => b.type === 'text')
-    .map((b) => b.text)
-    .join('');
+function askBridge(system: string, user: string): Promise<string> {
+  return callBridge({ prompt: `${system}\n\n${user}`, label: 'verify' });
 }
 
 /**
@@ -162,12 +143,11 @@ export async function verifyMatches(
   items: ExtractedItem[],
   foods: Food[],
   mode: ExtractionMode,
-  apiKey: string,
-  cloudModel: string,
+  cloud: CloudConfig,
   recentCounts?: RecentCounts,
 ): Promise<ExtractedItem[]> {
   if (mode !== 'cloud' && mode !== 'claudecode') return items;
-  if (mode === 'cloud' && !apiKey) return items;
+  if (mode === 'cloud' && !cloud.apiKey) return items;
 
   const doubtful = doubtfulItems(items, foods, recentCounts);
   if (doubtful.length === 0) return items;
@@ -176,7 +156,7 @@ export async function verifyMatches(
   try {
     const system = systemPrompt();
     const user = userPrompt(doubtful);
-    text = mode === 'cloud' ? await askCloud(system, user, apiKey, cloudModel) : await askBridge(system, user);
+    text = mode === 'cloud' ? await askCloud(system, user, cloud) : await askBridge(system, user);
   } catch {
     return items; // IA indisponible : on garde le matching de la base.
   }
