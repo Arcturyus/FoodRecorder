@@ -6,7 +6,8 @@
  */
 
 import { useStore, todayStr, resyncEntries, effectiveFoods, normalizeNutrients, BANK_SCHEMA_VERSION } from './store';
-import type { JournalEntry, FavoriteMeal, FoodOverrides, SttEngine, ExtractionMode } from './store';
+import type { JournalEntry, FavoriteMeal, FoodOverrides, SttEngine, ExtractionMode, CliBridge } from './store';
+import type { CloudProvider } from '../extraction/providers';
 import { migrateToPersonalBank } from '../nutrition/bank';
 import type { Food } from '../nutrition/types';
 import type { Profile, TargetOverrides } from '../nutrition/targets';
@@ -26,6 +27,10 @@ export interface BackupSettings {
   sttModel: string;
   llmModel: string;
   extractionMode: ExtractionMode;
+  cloudProvider: CloudProvider;
+  /** Modèle retenu PAR fournisseur. Les clés, elles, ne sortent jamais d'ici. */
+  cloudModels: Partial<Record<CloudProvider, string>>;
+  cliBridge: CliBridge;
   cloudModel: string;
 }
 
@@ -80,6 +85,9 @@ export function buildBackup(): BackupData {
       sttModel: s.sttModel,
       llmModel: s.llmModel,
       extractionMode: s.extractionMode,
+      cloudProvider: s.cloudProvider,
+      cloudModels: s.cloudModels,
+      cliBridge: s.cliBridge,
       cloudModel: s.cloudModel,
     },
   };
@@ -142,6 +150,9 @@ export function importBackup(text: string): string {
           ...(b.settings.sttModel ? { sttModel: b.settings.sttModel } : {}),
           ...(b.settings.llmModel ? { llmModel: b.settings.llmModel } : {}),
           ...(b.settings.extractionMode ? { extractionMode: b.settings.extractionMode } : {}),
+          ...(b.settings.cloudProvider ? { cloudProvider: b.settings.cloudProvider } : {}),
+          ...(b.settings.cloudModels ? { cloudModels: b.settings.cloudModels } : {}),
+          ...(b.settings.cliBridge ? { cliBridge: b.settings.cliBridge } : {}),
           ...(b.settings.cloudModel ? { cloudModel: b.settings.cloudModel } : {}),
         }
       : {}),

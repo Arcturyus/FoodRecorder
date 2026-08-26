@@ -5,12 +5,17 @@ import { mkdir, writeFile } from 'node:fs/promises';
 import { resolve } from 'node:path';
 
 /**
- * Plugin de dev Vite : pont HTTP local vers le CLI « Claude Code ».
+ * Plugin de dev Vite : pont HTTP local vers un CLI d'IA installé sur la machine
+ * — « Claude Code » (`claude`) ou « Codex » (`codex`).
  *
  * Le navigateur ne peut pas lancer de process ; ce middleware le fait à sa place
- * et réutilise la session DÉJÀ authentifiée du CLI (abonnement Claude Pro/Max) —
- * aucune clé API ni login à saisir dans l'app. Comme il dépend du CLI installé et
- * du serveur de dev, ce mode est « ordinateur uniquement » (pas de mobile).
+ * et réutilise la session DÉJÀ authentifiée du CLI (abonnement Claude Pro/Max,
+ * ChatGPT Plus…) — aucune clé API ni login à saisir dans l'app. Comme il dépend
+ * du CLI installé et du serveur de dev, ce mode est « ordinateur uniquement »
+ * (pas de mobile).
+ *
+ * Le nom du module et la route `/api/claude-code` sont d'époque, quand Claude
+ * Code était le seul CLI supporté ; ils désignent aujourd'hui le pont en général.
  *
  * Chaque appel est archivé en entier dans `response/` (cf. writeResponseLog) :
  * prompt complet, raisonnement (thinking), texte de sortie, modèle, coût, tokens
@@ -56,8 +61,13 @@ interface StreamMessage {
   modelUsage?: Record<string, unknown>;
 }
 
+/** CLI local que le pont sait piloter. */
+type Cli = 'claude' | 'codex';
+
+const CLI_LABEL: Record<Cli, string> = { claude: 'Claude Code', codex: 'Codex' };
+
 /** Résultat complet d'un appel CLI, tel qu'archivé dans `response/`. */
-interface ClaudeRun {
+interface CliRun {
   /** Texte final (ligne `result`), ce que l'app consomme réellement. */
   text: string;
   /** Raisonnement concaténé (blocs `thinking`), vide si le modèle n'en émet pas. */
@@ -76,34 +86,65 @@ interface ClaudeRun {
  * permet d'archiver le raisonnement du modèle. On reconstitue ensuite le texte
  * final et le raisonnement à partir du flux.
  */
-function runClaude(prompt: string, model?: string, timeoutMs?: number): Promise<ClaudeRun> {
+function runCli(
+  cli: Cli,
+  prompt: string,
+  model?: string,
+  timeoutMs?: number,
+  imagePath?: string | null,
+): Promise<CliRun> {
   return new Promise((resolve, reject) => {
-    const args = ['-p', '--output-format', 'stream-json', '--verbose'];
-    if (model) args.push('--model', model);
-    // shell:true pour résoudre « claude(.cmd) » via le PATH (npm global) sous Windows.
-    const child = spawn('claude', args, { shell: true });
+    // Deux CLI, deux protocoles :
+    //  - `claude -p --output-format stream-json` émet chaque message, ce qui
+    //    permet d'archiver le raisonnement, le coût et le modèle réellement servi ;
+    //  - `codex exec -` lit le prompt sur stdin et n'imprime QUE le message final
+    //    sur stdout (sa progression part sur stderr). Pas de raisonnement ni de
+    //    coût à archiver, mais le texte, lui, est directement exploitable.
+    //    `--sandbox read-only` est le mode par défaut : on l'écrit quand même,
+    //    car c'est lui qui garantit qu'aucune approbation ne sera demandée.
+    const args =
+      cli === 'codex'
+        ? ['exec', '--sandbox', 'read-only', ...(model ? ['-m', model] : []), ...(imagePath ? ['-i', imagePath] : []), '-']
+        : ['-p', '--output-format', 'stream-json', '--verbose', ...(model ? ['--model', model] : [])];
+    // shell:true pour résoudre « claude(.cmd) » / « codex(.cmd) » via le PATH sous Windows.
+    const child = spawn(cli, args, { shell: true });
 
     const limite = Math.min(Math.max(timeoutMs ?? CLI_TIMEOUT_MS, CLI_TIMEOUT_MS), CLI_TIMEOUT_MAX_MS);
     let stdout = '';
     let stderr = '';
     const timer = setTimeout(() => {
       child.kill();
-      reject(new Error(`Délai dépassé (${Math.round(limite / 1000)} s) : le CLI Claude n’a pas répondu.`));
+      reject(new Error(`Délai dépassé (${Math.round(limite / 1000)} s) : le CLI ${CLI_LABEL[cli]} n’a pas répondu.`));
     }, limite);
 
     child.stdout.on('data', (d) => (stdout += d));
     child.stderr.on('data', (d) => (stderr += d));
     child.on('error', (e) => {
       clearTimeout(timer);
-      reject(new Error(`Impossible de lancer « claude » : ${e.message}. CLI installé et dans le PATH ?`));
+      reject(new Error(`Impossible de lancer « ${cli} » : ${e.message}. CLI installé et dans le PATH ?`));
     });
     child.on('close', (code) => {
       clearTimeout(timer);
-      if (code !== 0) {
-        reject(new Error(stderr.trim() || `Le CLI Claude a quitté (code ${code}).`));
+      // Codex n'imprime que le message final : rien à reconstituer.
+      const run: CliRun =
+        cli === 'codex'
+          ? { text: stdout.trim(), thinking: '', isError: false, model: model ?? null, costUsd: null, durationMs: null, messages: [] }
+          : parseStream(stdout);
+
+      // Un CLI qui a RÉPONDU est un succès, même s'il sort en code non nul :
+      // les deux écrivent des avertissements sur stderr (sandbox indisponible,
+      // quota bientôt atteint) et peuvent finir en erreur alors que le flux
+      // contient la réponse. La jeter ferait retomber la saisie sur le parseur
+      // à règles alors que l'IA avait bien travaillé.
+      if (run.text.trim()) {
+        resolve(run);
         return;
       }
-      resolve(parseStream(stdout));
+      if (code !== 0) {
+        reject(new Error(stderr.trim() || `Le CLI ${CLI_LABEL[cli]} a quitté (code ${code}).`));
+        return;
+      }
+      resolve(run);
     });
 
     child.stdin.write(prompt);
@@ -112,7 +153,7 @@ function runClaude(prompt: string, model?: string, timeoutMs?: number): Promise<
 }
 
 /** Reconstitue texte final + raisonnement + métadonnées depuis le flux JSONL. */
-function parseStream(stdout: string): ClaudeRun {
+function parseStream(stdout: string): CliRun {
   const messages: StreamMessage[] = [];
   for (const line of stdout.split('\n')) {
     const t = line.trim();
@@ -152,9 +193,9 @@ function parseStream(stdout: string): ClaudeRun {
   };
 }
 
-function checkClaude(): Promise<{ available: boolean; version?: string; error?: string }> {
+function checkCli(cli: Cli): Promise<{ available: boolean; version?: string; error?: string }> {
   return new Promise((resolve) => {
-    const child = spawn('claude', ['--version'], { shell: true });
+    const child = spawn(cli, ['--version'], { shell: true });
     let out = '';
     child.stdout.on('data', (d) => (out += d));
     child.on('error', (e) => resolve({ available: false, error: e.message }));
@@ -218,12 +259,14 @@ export function claudeCodeBridge(): Plugin {
         res.setHeader('Content-Type', 'application/json');
         try {
           if (req.method === 'GET') {
-            res.end(JSON.stringify(await checkClaude()));
+            const asked = new URL(req.url ?? '/', 'http://localhost').searchParams.get('cli');
+            res.end(JSON.stringify(await checkCli(asked === 'codex' ? 'codex' : 'claude')));
             return;
           }
           if (req.method === 'POST') {
             const body = JSON.parse((await readBody(req)) || '{}') as {
               prompt?: unknown;
+              cli?: unknown;
               model?: unknown;
               label?: unknown;
               timeoutMs?: unknown;
@@ -240,6 +283,7 @@ export function claudeCodeBridge(): Plugin {
             const label = typeof body.label === 'string' && body.label.trim() ? body.label : hasImage ? 'photo' : 'text';
             const base = `${stamp()}-${safeLabel(label)}`;
             const model = typeof body.model === 'string' ? body.model : undefined;
+            const cli: Cli = body.cli === 'codex' ? 'codex' : 'claude';
             await mkdir(dir, { recursive: true });
 
             // Photo éventuelle : écrite dans response/ (conservée comme input du
@@ -260,10 +304,16 @@ export function claudeCodeBridge(): Plugin {
               : prompt;
 
             const startedAt = new Date().toISOString();
-            let run: ClaudeRun | null = null;
+            let run: CliRun | null = null;
             let error: string | null = null;
             try {
-              run = await runClaude(fullPrompt, model, typeof body.timeoutMs === 'number' ? body.timeoutMs : undefined);
+              run = await runCli(
+                cli,
+                fullPrompt,
+                model,
+                typeof body.timeoutMs === 'number' ? body.timeoutMs : undefined,
+                imagePath,
+              );
             } catch (e) {
               error = (e as Error).message;
             }
@@ -271,7 +321,7 @@ export function claudeCodeBridge(): Plugin {
             // Archive complète de l'appel, quel que soit son sort (réussi ou non).
             await writeFile(
               resolve(dir, `${base}.json`),
-              JSON.stringify({ startedAt, label, model: model ?? '(défaut)', prompt: fullPrompt, image: imageMeta, response: run, error }, null, 2),
+              JSON.stringify({ startedAt, cli, label, model: model ?? '(défaut)', prompt: fullPrompt, image: imageMeta, response: run, error }, null, 2),
               'utf8',
             );
             server.config.logger.info(`[claude-code] réponse archivée : ${base}.json`);

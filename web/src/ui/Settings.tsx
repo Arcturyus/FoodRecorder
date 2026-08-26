@@ -1,17 +1,18 @@
 import { useRef, useState } from 'react';
-import { useStore } from '../store/store';
-import type { ExtractionMode, SttEngine } from '../store/store';
+import { useStore, useCloudConfig } from '../store/store';
+import type { CliBridge, ExtractionMode, SttEngine } from '../store/store';
 import { exportJsonFile, exportJournalCsvFile, exportWeightsCsvFile, importBackup } from '../store/backup';
 import { LLM_MODELS, loadLlm, isLlmLoaded, loadedModel } from '../extraction/llm';
-import { CLOUD_MODELS } from '../extraction/anthropic';
-import { checkClaudeCode } from '../extraction/claudeCode';
+import { CLOUD_PROVIDERS, PROVIDERS, providerInfo } from '../extraction/providers';
+import type { CloudProvider } from '../extraction/providers';
+import { checkBridge, CLI_LABELS } from '../extraction/bridge';
 import { STT_MODELS } from '../stt/whisper';
 import { isNativeSttSupported } from '../stt/webspeech';
 import { ProfileSyncPanel } from './ProfileSync';
 
 /**
  * Réglages : connexion au compte de synchro, sauvegarde des données, choix du
- * moteur d'extraction (règles / IA locale / API Claude), clé API, et modèles
+ * moteur d'extraction (règles / IA locale / clé API / pont CLI), fournisseur, et modèles
  * STT/LLM selon la machine.
  *
  * La synchro est EN TÊTE : c'est ce qu'on vient chercher en premier sur un
@@ -24,14 +25,16 @@ export function Settings() {
   const sttModel = useStore((s) => s.sttModel);
   const llmModel = useStore((s) => s.llmModel);
   const extractionMode = useStore((s) => s.extractionMode);
-  const cloudApiKey = useStore((s) => s.cloudApiKey);
-  const cloudModel = useStore((s) => s.cloudModel);
+  const cloud = useCloudConfig();
+  const cliBridge = useStore((s) => s.cliBridge);
   const setSttEngine = useStore((s) => s.setSttEngine);
   const setSttModel = useStore((s) => s.setSttModel);
   const setLlmModel = useStore((s) => s.setLlmModel);
   const setExtractionMode = useStore((s) => s.setExtractionMode);
   const setCloudApiKey = useStore((s) => s.setCloudApiKey);
   const setCloudModel = useStore((s) => s.setCloudModel);
+  const setCloudProvider = useStore((s) => s.setCloudProvider);
+  const setCliBridge = useStore((s) => s.setCliBridge);
 
   const [llmStatus, setLlmStatus] = useState('');
   const [loading, setLoading] = useState(false);
@@ -39,16 +42,16 @@ export function Settings() {
   const [ccStatus, setCcStatus] = useState('');
   const [checking, setChecking] = useState(false);
 
-  async function checkBridge() {
+  async function verifyBridge() {
     setChecking(true);
     setCcStatus('');
-    const s = await checkClaudeCode();
+    const s = await checkBridge(cliBridge);
     setChecking(false);
     setCcStatus(
       s.available
         ? `✓ CLI détecté${s.version ? ` (${s.version})` : ''}. Prêt à l'emploi.`
-        : `✗ Indisponible : ${s.error ?? 'CLI introuvable'}. Vérifiez que « claude » est installé et connecté, ` +
-            'et que l’app tourne bien via « npm run dev » sur cet ordinateur.',
+        : `✗ Indisponible : ${s.error ?? 'CLI introuvable'}. Vérifiez que « ${cliBridge} » est installé et ` +
+            'connecté, et que l’app tourne bien via « npm run dev » sur cet ordinateur.',
     );
   }
 
@@ -81,14 +84,24 @@ export function Settings() {
   const modes: { id: ExtractionMode; label: string; desc: string; desktopOnly?: boolean }[] = [
     { id: 'rules', label: 'Règles (par défaut)', desc: 'rapide, hors-ligne, 100 % local' },
     { id: 'local', label: 'IA locale (open source)', desc: 'WebLLM dans le navigateur, WebGPU', desktopOnly: true },
-    { id: 'cloud', label: 'API Claude (clé) — recommandé', desc: 'plus précis, envoie le texte à Anthropic' },
+    { id: 'cloud', label: 'Clé API — recommandé', desc: 'plus précis ; le texte part chez le fournisseur choisi' },
     {
       id: 'claudecode',
-      label: 'Pont Claude Code — recommandé',
-      desc: 'via le CLI « claude » déjà connecté, sans clé API',
+      label: 'Pont CLI — recommandé',
+      desc: 'via un CLI déjà connecté sur cet ordinateur, sans clé API',
       desktopOnly: true,
     },
   ];
+
+  const bridges: { id: CliBridge; desc: string }[] = [
+    { id: 'claude', desc: 'abonnement Claude Pro/Max' },
+    { id: 'codex', desc: 'abonnement ChatGPT Plus' },
+  ];
+
+  const info = providerInfo(cloud.provider);
+  // Un modèle absent de la liste du fournisseur a été saisi à la main : on
+  // bascule le sélecteur sur « Autre » plutôt que d'écraser ce choix.
+  const knownModel = info.models.some((m) => m.id === cloud.model);
 
   return (
     <>
@@ -152,7 +165,7 @@ export function Settings() {
             {!webgpu && (
               <div className="hint" style={{ color: 'var(--warn)' }}>
                 WebGPU non détecté : l'IA locale est indisponible. Essayez Chrome/Edge récent, ou utilisez
-                les règles ou l'API Claude.
+                les règles ou une clé API.
               </div>
             )}
             {llmStatus && <div className="status">{llmStatus}</div>}
@@ -161,15 +174,35 @@ export function Settings() {
 
         {extractionMode === 'cloud' && (
           <div style={{ marginTop: 14 }}>
-            <div className="row wrap-form">
+            <label className="field">
+              Fournisseur
+              <select
+                value={cloud.provider}
+                onChange={(e) => setCloudProvider(e.target.value as CloudProvider)}
+              >
+                {CLOUD_PROVIDERS.map((p) => (
+                  <option key={p} value={p}>
+                    {PROVIDERS[p].label}
+                  </option>
+                ))}
+              </select>
+            </label>
+
+            <div className="hint" style={{ marginTop: 8 }}>
+              <strong>Sans payer :</strong> {info.freeTier}
+              {info.vision === 'non' && ' Ce fournisseur ne sert aucun modèle capable de lire une photo : le bouton photo reste désactivé.'}
+              {info.vision === 'selon-modele' && ' La photo ne marchera que si le modèle choisi est multimodal.'}
+            </div>
+
+            <div className="row wrap-form" style={{ marginTop: 10 }}>
               <label className="field" style={{ flex: '1 1 260px' }}>
-                Clé API Anthropic
+                Clé API {info.label}
                 <span className="row" style={{ gap: 6 }}>
                   <input
                     type={showKey ? 'text' : 'password'}
-                    value={cloudApiKey}
+                    value={cloud.apiKey}
                     onChange={(e) => setCloudApiKey(e.target.value)}
-                    placeholder="sk-ant-…"
+                    placeholder={info.keyPlaceholder}
                     style={{ flex: 1 }}
                     autoComplete="off"
                   />
@@ -179,38 +212,73 @@ export function Settings() {
                 </span>
               </label>
               <label className="field">
-                Modèle Claude
-                <select value={cloudModel} onChange={(e) => setCloudModel(e.target.value)}>
-                  {CLOUD_MODELS.map((m) => (
+                Modèle
+                <select
+                  value={knownModel ? cloud.model : '__autre__'}
+                  onChange={(e) => setCloudModel(e.target.value === '__autre__' ? '' : e.target.value)}
+                >
+                  {info.models.map((m) => (
                     <option key={m.id} value={m.id}>
                       {m.label} — {m.hint}
                     </option>
                   ))}
+                  <option value="__autre__">Autre (saisir l’identifiant)…</option>
                 </select>
               </label>
             </div>
+
+            {!knownModel && (
+              <label className="field" style={{ marginTop: 8 }}>
+                Identifiant du modèle
+                <input
+                  value={cloud.model}
+                  onChange={(e) => setCloudModel(e.target.value)}
+                  placeholder={info.models[0].id}
+                  autoComplete="off"
+                />
+                <span className="small">
+                  Tel qu’il apparaît dans la documentation du fournisseur. Utile quand un modèle est retiré ou
+                  qu’un nouveau sort — la liste ci-dessus vieillit, pas ce champ.
+                </span>
+              </label>
+            )}
+
+            <div className="hint" style={{ marginTop: 8 }}>
+              Créer une clé : <a href={info.keyUrl} target="_blank" rel="noreferrer">{info.keyUrl}</a>
+            </div>
+
             <div className="hint" style={{ color: 'var(--warn)' }}>
-              Attention : ce mode envoie le texte de vos repas et votre clé à l'API Anthropic — ce n'est plus
-              100 % local. La clé est stockée en clair dans ce navigateur (localStorage). N'utilisez ce mode
-              que sur un appareil de confiance.
+              Attention : ce mode envoie le texte de vos repas et votre clé à {info.label} — ce n’est plus 100 %
+              local. La clé est stockée en clair dans ce navigateur (localStorage). N’utilisez ce mode que sur un
+              appareil de confiance. Chaque fournisseur garde sa propre clé : en changer n’efface pas les autres.
             </div>
           </div>
         )}
 
         {extractionMode === 'claudecode' && (
           <div style={{ marginTop: 14 }}>
-            <div className="row">
-              <button onClick={checkBridge} disabled={checking}>
+            <label className="field">
+              CLI utilisé
+              <select value={cliBridge} onChange={(e) => setCliBridge(e.target.value as CliBridge)}>
+                {bridges.map((b) => (
+                  <option key={b.id} value={b.id}>
+                    {CLI_LABELS[b.id]} ({b.id}) — {b.desc}
+                  </option>
+                ))}
+              </select>
+            </label>
+            <div className="row" style={{ marginTop: 10 }}>
+              <button onClick={verifyBridge} disabled={checking}>
                 {checking ? 'Vérification…' : 'Vérifier la disponibilité'}
               </button>
             </div>
             {ccStatus && <div className="status">{ccStatus}</div>}
             <div className="hint">
-              Ce mode lance le CLI <strong>Claude Code</strong> installé sur cet ordinateur et réutilise votre
-              session <strong>déjà connectée</strong> (abonnement Claude Pro/Max) : <strong>aucune clé API</strong> à
-              saisir, rien à reconnecter. Fonctionne <strong>uniquement sur l'ordinateur</strong> qui exécute
-              l'application via <code>npm run dev</code> — pas sur mobile. La précision dépend du modèle configuré
-              dans votre CLI (réglable avec <code>/model</code>).
+              Ce mode lance le CLI <strong>{CLI_LABELS[cliBridge]}</strong> installé sur cet ordinateur et
+              réutilise votre session <strong>déjà connectée</strong> : <strong>aucune clé API</strong> à saisir,
+              rien à reconnecter. Fonctionne <strong>uniquement sur l’ordinateur</strong> qui exécute
+              l’application via <code>npm run dev</code> — pas sur mobile. La précision dépend du modèle
+              configuré dans votre CLI.
             </div>
           </div>
         )}

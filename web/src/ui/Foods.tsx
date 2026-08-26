@@ -3,7 +3,7 @@ import { normalize, isSupplementQuery } from '../nutrition/normalize';
 import { RDA } from '../nutrition/rda';
 import type { RdaEntry } from '../nutrition/rda';
 import { useTargets } from './useTargets';
-import { useStore, useEffectiveFoods } from '../store/store';
+import { useStore, useEffectiveFoods, useCloudConfig } from '../store/store';
 import { EMPTY_NUTRIENTS } from '../nutrition/types';
 import type { Food, FoodCategory, NutrientKey, Nutrients } from '../nutrition/types';
 import { FOODS } from '../nutrition/foods';
@@ -488,8 +488,7 @@ function FoodList({
  */
 function EntretienPanel({ foods }: { foods: Food[] }) {
   const extractionMode = useStore((s) => s.extractionMode);
-  const cloudApiKey = useStore((s) => s.cloudApiKey);
-  const cloudModel = useStore((s) => s.cloudModel);
+  const cloud = useCloudConfig();
   const setFoodCategories = useStore((s) => s.setFoodCategories);
   const [busy, setBusy] = useState(false);
   const [status, setStatus] = useState('');
@@ -503,7 +502,7 @@ function EntretienPanel({ foods }: { foods: Food[] }) {
     setBusy(true);
     setStatus('');
     try {
-      const byName = await categorizeNames(cibles.map((f) => f.nom), extractionMode, cloudApiKey, cloudModel);
+      const byName = await categorizeNames(cibles.map((f) => f.nom), extractionMode, cloud);
       const byId: Record<string, FoodCategory> = {};
       for (const f of cibles) {
         const c = byName[f.nom];
@@ -528,7 +527,7 @@ function EntretienPanel({ foods }: { foods: Food[] }) {
         pour relire les valeurs d'un aliment, ouvrez-le avec « ✏️ Modifier » et demandez son avis à l'IA.
       </p>
       {!strongAi ? (
-        <div className="hint">Le classement par IA demande le mode « API Claude » ou « Claude Code » — voir Réglages.</div>
+        <div className="hint">Le classement par IA demande le mode « clé API » ou « pont CLI » — voir Réglages.</div>
       ) : (
         <div className="row" style={{ gap: 8, flexWrap: 'wrap' }}>
           <button

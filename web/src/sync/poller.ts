@@ -1,5 +1,6 @@
-import { useStore, todayStr, nowTime, effectiveFoods, recentFoodCounts } from '../store/store';
-import { checkClaudeCode, extractWithClaudeCode, extractImageWithClaudeCode } from '../extraction/claudeCode';
+import { useStore, todayStr, nowTime, effectiveFoods, recentFoodCounts, cloudConfigOf } from '../store/store';
+import { extractWithCli, extractImageWithCli } from '../extraction/cliExtract';
+import { checkBridge } from '../extraction/bridge';
 import { verifyMatches } from '../extraction/verify';
 import { extractSun } from '../extraction/sun';
 import { extractWeight, completeWeightEntry } from '../extraction/weight';
@@ -45,8 +46,6 @@ export async function runSyncTick(): Promise<void> {
   try {
     const {
       extractionMode,
-      cloudApiKey,
-      cloudModel,
       customFoods,
       entries,
       addEntry,
@@ -55,17 +54,14 @@ export async function runSyncTick(): Promise<void> {
     } = useStore.getState();
 
     /** Laisse l'IA forte juger les correspondances incertaines (cf. extraction/verify.ts). */
-    const verify = (items: Awaited<ReturnType<typeof extractWithClaudeCode>>['items']) =>
-      verifyMatches(
-        items,
-        effectiveFoods(customFoods),
-        'claudecode',
-        cloudApiKey,
-        cloudModel,
-        recentFoodCounts(entries),
-      );
+    // La file d'attente est traitée par le PONT (c'est tout son intérêt : le
+    // téléphone délègue à l'ordinateur), jamais par une clé API — d'où une
+    // config « clé API » inerte passée à verifyMatches, qui n'en fera rien.
+    const cloud = cloudConfigOf(useStore.getState());
+    const verify = (items: Awaited<ReturnType<typeof extractWithCli>>['items']) =>
+      verifyMatches(items, effectiveFoods(customFoods), 'claudecode', cloud, recentFoodCounts(entries));
 
-    const bridge = extractionMode === 'claudecode' ? await checkClaudeCode() : { available: false };
+    const bridge = extractionMode === 'claudecode' ? await checkBridge() : { available: false };
     queue.setBridge(bridge.available);
 
     if (!bridge.available) {
@@ -125,9 +121,9 @@ export async function runSyncTick(): Promise<void> {
       begin('transcript');
       let failure: string | undefined;
       try {
-        const res = await extractWithClaudeCode(row.payload.transcript);
+        const res = await extractWithCli(row.payload.transcript);
         if (res.items.length > 0) {
-          const items = res.source === 'claudecode' ? await verify(res.items) : res.items;
+          const items = res.source === 'rules' ? res.items : await verify(res.items);
           // Heure/jour = ceux estampillés par l'émetteur à l'envoi (cf. supabase.ts),
           // pas l'heure de CE traitement différé. L'entrée remonte ensuite aux autres
           // appareils par la synchro d'état (profileSync), avec un id unique.
@@ -150,7 +146,7 @@ export async function runSyncTick(): Promise<void> {
       begin('image');
       let failure: string | undefined;
       try {
-        const res = await extractImageWithClaudeCode(row.payload.imageBase64, row.payload.mediaType);
+        const res = await extractImageWithCli(row.payload.imageBase64, row.payload.mediaType);
         if (res.items.length > 0) {
           const items = await verify(res.items);
           addEntry('📷 Photo', items, res.source, row.payload.date, row.payload.clientTime);
@@ -180,8 +176,8 @@ export async function runSyncTick(): Promise<void> {
       begin('sun');
       let failure: string | undefined;
       try {
-        const { sorties, source } = await extractSun(row.payload.transcript, 'claudecode', cloudApiKey, cloudModel);
-        if (sorties.length > 0 && source === 'claudecode') {
+        const { sorties, source } = await extractSun(row.payload.transcript, 'claudecode', cloud);
+        if (sorties.length > 0 && source !== 'rules') {
           // Ce poste n'a pas le formulaire de l'appareil qui a dicté : les
           // champs non dits prennent les valeurs de repli. Le jour ciblé est
           // celui estampillé par l'émetteur (sinon aujourd'hui), et l'heure de
@@ -207,14 +203,14 @@ export async function runSyncTick(): Promise<void> {
       begin('weight');
       let failure: string | undefined;
       try {
-        const { patch, source } = await extractWeight(row.payload.transcript, 'claudecode', cloudApiKey, cloudModel);
+        const { patch, source } = await extractWeight(row.payload.transcript, 'claudecode', cloud);
         const stamp = row.payload.clientTime ? new Date(row.payload.clientTime) : new Date();
         const pesee =
-          source === 'claudecode'
+          source !== 'rules'
             ? completeWeightEntry(patch, {
                 date: row.payload.date ?? todayStr(stamp),
                 heure: nowTime(stamp),
-                source: 'claudecode',
+                source,
               })
             : null;
         if (pesee) addWeightEntry(pesee, row.payload.clientTime);

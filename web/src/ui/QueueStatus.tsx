@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react';
+import { currentCliLabel } from '../extraction/bridge';
 import { todayStr } from '../store/store';
 import { useQueueStatus, pendingTotal, type PendingCounts } from '../sync/queueStatus';
 import type { PendingItem, SyncKind } from '../sync/supabase';
@@ -6,7 +7,7 @@ import type { PendingItem, SyncKind } from '../sync/supabase';
 /**
  * Bandeau « où en est la file » en tête de l'onglet du jour.
  *
- * Deux points de vue selon l'appareil : celui qui a le pont Claude Code (l'ordinateur en
+ * Deux points de vue selon l'appareil : celui qui a le pont CLI (l'ordinateur en
  * `npm run dev`) annonce ce que le CLI est en train d'analyser et son rang dans le lot ;
  * les autres (téléphone) ne peuvent qu'annoncer l'attente — ils n'ont aucun moyen de savoir
  * si l'ordinateur mouline ou s'il est éteint, et le bandeau ne le prétend donc pas.
@@ -91,7 +92,7 @@ export function QueueStatus() {
   let message: string;
   if (current) {
     const [nom] = KIND_LABEL[current.kind];
-    message = `Claude Code analyse la ${nom} (${current.index}/${current.total})…`;
+    message = `${currentCliLabel()} analyse la ${nom} (${current.index}/${current.total})…`;
   } else if (waiting > 0) {
     message = hasBridge
       ? `${describePending(pending)} à analyser.`

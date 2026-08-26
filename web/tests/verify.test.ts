@@ -5,6 +5,9 @@ import { FOODS } from '../src/nutrition/foods';
 import { EMPTY_NUTRIENTS } from '../src/nutrition/types';
 import type { ExtractedItem, Nutrients } from '../src/nutrition/types';
 
+/** Réglages « clé API » inertes : ces tests passent tous par le pont CLI. */
+const NO_CLOUD = { provider: 'anthropic', apiKey: '', model: 'claude-opus-4-8' } as const;
+
 /** Réponse simulée du pont Claude Code + capture du prompt envoyé. */
 let lastPrompt = '';
 function mockBridge(payload: unknown) {
@@ -35,7 +38,7 @@ describe('verifyMatches — l’IA forte tranche sur les matchs incertains', () 
     mockBridge({ verdicts: [{ i: 0, meme: false, categorie: 'sucre-snack', grammesParPiece: 120, nutriments: tarte }] });
 
     const items = [item('tarte à la myrtille')];
-    const [out] = await verifyMatches(items, FOODS, 'claudecode', '', '');
+    const [out] = await verifyMatches(items, FOODS, 'claudecode', NO_CLOUD);
 
     expect(out.nutriments?.kcal).toBe(260);
     expect(out.categorie).toBe('sucre-snack');
@@ -51,7 +54,7 @@ describe('verifyMatches — l’IA forte tranche sur les matchs incertains', () 
   it('« même aliment » → l’item est inchangé, la base garde la main', async () => {
     mockBridge({ verdicts: [{ i: 0, meme: true }] });
     const items = [item('pommes de terre vapeur', 200, 'g')];
-    const [out] = await verifyMatches(items, FOODS, 'claudecode', '', '');
+    const [out] = await verifyMatches(items, FOODS, 'claudecode', NO_CLOUD);
     expect(out).toEqual(items[0]);
     expect(out.nutriments).toBeUndefined();
   });
@@ -61,7 +64,7 @@ describe('verifyMatches — l’IA forte tranche sur les matchs incertains', () 
     vi.stubGlobal('fetch', fetchSpy);
     // « banane » correspond exactement à l'aliment « Banane ».
     const items = [item('banane', 1, 'piece')];
-    const out = await verifyMatches(items, FOODS, 'claudecode', '', '');
+    const out = await verifyMatches(items, FOODS, 'claudecode', NO_CLOUD);
     expect(fetchSpy).not.toHaveBeenCalled();
     expect(out).toEqual(items);
   });
@@ -69,7 +72,7 @@ describe('verifyMatches — l’IA forte tranche sur les matchs incertains', () 
   it('soumet aussi un aliment INTROUVABLE en base (sinon il ne compte pour rien)', async () => {
     // « soupe de potiron » ne matche aucun aliment de la base.
     mockBridge({ verdicts: [{ i: 0, meme: false, categorie: 'plat', grammesParPiece: 300, nutriments: tarte }] });
-    const [out] = await verifyMatches([item('soupe de potiron', 1, 'bol')], FOODS, 'claudecode', '', '');
+    const [out] = await verifyMatches([item('soupe de potiron', 1, 'bol')], FOODS, 'claudecode', NO_CLOUD);
     // La ligne de l'élément (pas l'exemple du prompt système) annonce l'absence de match.
     expect(lastPrompt).toMatch(/\[0\] dit : "soupe de potiron".*la base propose : RIEN/);
     expect(out.nutriments?.kcal).toBe(260);
@@ -84,7 +87,7 @@ describe('verifyMatches — l’IA forte tranche sur les matchs incertains', () 
   it('rattrape les matchs absurdes du moteur de texte (« pastel de nata » → Pastèque)', async () => {
     // Sans 2e passe, la base sert de la pastèque : 30 kcal/100 g au lieu de ~300.
     mockBridge({ verdicts: [{ i: 0, meme: false, categorie: 'sucre-snack', grammesParPiece: 60, nutriments: { ...tarte, kcal: 298 } }] });
-    const [out] = await verifyMatches([item('pastel de nata', 1, 'piece')], FOODS, 'claudecode', '', '');
+    const [out] = await verifyMatches([item('pastel de nata', 1, 'piece')], FOODS, 'claudecode', NO_CLOUD);
     expect(lastPrompt).toMatch(/\[0\] dit : "pastel de nata".*la base propose : "Pastèque"/);
 
     const [avant] = computeItems([item('pastel de nata', 1, 'piece')], FOODS);
@@ -98,14 +101,14 @@ describe('verifyMatches — l’IA forte tranche sur les matchs incertains', () 
     const fetchSpy = vi.fn();
     vi.stubGlobal('fetch', fetchSpy);
     const items: ExtractedItem[] = [{ ...item('pastel de nata'), nutriments: tarte }];
-    await verifyMatches(items, FOODS, 'claudecode', '', '');
+    await verifyMatches(items, FOODS, 'claudecode', NO_CLOUD);
     expect(fetchSpy).not.toHaveBeenCalled();
   });
 
   it('soumet plusieurs items douteux en UN seul appel', async () => {
     mockBridge({ verdicts: [{ i: 0, meme: true }, { i: 1, meme: true }] });
     const fetchSpy = globalThis.fetch as unknown as ReturnType<typeof vi.fn>;
-    await verifyMatches([item('tarte à la myrtille'), item('soupe de potiron')], FOODS, 'claudecode', '', '');
+    await verifyMatches([item('tarte à la myrtille'), item('soupe de potiron')], FOODS, 'claudecode', NO_CLOUD);
     expect(fetchSpy).toHaveBeenCalledTimes(1);
     expect(lastPrompt).toContain('tarte à la myrtille');
     expect(lastPrompt).toContain('soupe de potiron');
@@ -115,7 +118,7 @@ describe('verifyMatches — l’IA forte tranche sur les matchs incertains', () 
     // Seul l'item 1 est ré-estimé : l'item 0 doit rester intact.
     mockBridge({ verdicts: [{ i: 1, meme: false, categorie: 'plat', nutriments: tarte }] });
     const items = [item('tarte à la myrtille'), item('soupe de potiron')];
-    const out = await verifyMatches(items, FOODS, 'claudecode', '', '');
+    const out = await verifyMatches(items, FOODS, 'claudecode', NO_CLOUD);
     expect(out[0].nutriments).toBeUndefined();
     expect(out[1].nutriments?.kcal).toBe(260);
   });
@@ -125,7 +128,7 @@ describe('verifyMatches — l’IA forte tranche sur les matchs incertains', () 
     // l'index 1 — c'est ce numéro que l'IA voit et renvoie.
     mockBridge({ verdicts: [{ i: 1, meme: false, categorie: 'plat', nutriments: tarte }] });
     const items = [item('banane', 1, 'piece'), item('tarte à la myrtille')];
-    const out = await verifyMatches(items, FOODS, 'claudecode', '', '');
+    const out = await verifyMatches(items, FOODS, 'claudecode', NO_CLOUD);
     expect(lastPrompt).toContain('[1] dit : "tarte à la myrtille"');
     expect(lastPrompt).not.toContain('[0] dit : "banane"');
     expect(out[0].nutriments).toBeUndefined();
@@ -135,7 +138,7 @@ describe('verifyMatches — l’IA forte tranche sur les matchs incertains', () 
   it('ignore un index hallucité hors de la liste soumise', async () => {
     mockBridge({ verdicts: [{ i: 99, meme: false, categorie: 'plat', nutriments: tarte }] });
     const items = [item('tarte à la myrtille')];
-    const out = await verifyMatches(items, FOODS, 'claudecode', '', '');
+    const out = await verifyMatches(items, FOODS, 'claudecode', NO_CLOUD);
     expect(out[0].nutriments).toBeUndefined();
   });
 
@@ -143,7 +146,7 @@ describe('verifyMatches — l’IA forte tranche sur les matchs incertains', () 
     mockBridge({
       verdicts: [{ i: 0, meme: false, categorie: 'plat', quantite: 150, quantiteMin: 120, quantiteMax: 200, nutriments: tarte }],
     });
-    const [out] = await verifyMatches([item('tarte à la myrtille')], FOODS, 'claudecode', '', '');
+    const [out] = await verifyMatches([item('tarte à la myrtille')], FOODS, 'claudecode', NO_CLOUD);
     expect(out.quantite).toBe(150);
     expect(out.quantiteMin).toBe(120);
     expect(out.quantiteMax).toBe(200);
@@ -153,7 +156,7 @@ describe('verifyMatches — l’IA forte tranche sur les matchs incertains', () 
     mockBridge({
       verdicts: [{ i: 0, meme: false, categorie: 'plat', quantite: 500, quantiteMin: 120, quantiteMax: 200, nutriments: tarte }],
     });
-    const [out] = await verifyMatches([item('tarte à la myrtille')], FOODS, 'claudecode', '', '');
+    const [out] = await verifyMatches([item('tarte à la myrtille')], FOODS, 'claudecode', NO_CLOUD);
     expect(out.quantite).toBe(500);
     expect(out.quantiteMin).toBeUndefined();
     expect(out.quantiteMax).toBeUndefined();
@@ -162,20 +165,20 @@ describe('verifyMatches — l’IA forte tranche sur les matchs incertains', () 
   it('IA indisponible ou réponse illisible → items inchangés (comportement actuel)', async () => {
     vi.stubGlobal('fetch', vi.fn(async () => { throw new Error('pont KO'); }));
     const items = [item('tarte à la myrtille')];
-    await expect(verifyMatches(items, FOODS, 'claudecode', '', '')).resolves.toEqual(items);
+    await expect(verifyMatches(items, FOODS, 'claudecode', NO_CLOUD)).resolves.toEqual(items);
 
     vi.stubGlobal('fetch', vi.fn(async () => ({ ok: true, json: async () => ({ text: 'je ne sais pas' }) })));
-    await expect(verifyMatches(items, FOODS, 'claudecode', '', '')).resolves.toEqual(items);
+    await expect(verifyMatches(items, FOODS, 'claudecode', NO_CLOUD)).resolves.toEqual(items);
   });
 
   it('ne fait rien hors des modes « IA forte »', async () => {
     const fetchSpy = vi.fn();
     vi.stubGlobal('fetch', fetchSpy);
     const items = [item('tarte à la myrtille')];
-    expect(await verifyMatches(items, FOODS, 'rules', '', '')).toEqual(items);
-    expect(await verifyMatches(items, FOODS, 'local', '', '')).toEqual(items);
+    expect(await verifyMatches(items, FOODS, 'rules', NO_CLOUD)).toEqual(items);
+    expect(await verifyMatches(items, FOODS, 'local', NO_CLOUD)).toEqual(items);
     // Mode API sans clé : pas d'appel.
-    expect(await verifyMatches(items, FOODS, 'cloud', '', 'claude-opus-4-8')).toEqual(items);
+    expect(await verifyMatches(items, FOODS, 'cloud', NO_CLOUD)).toEqual(items);
     expect(fetchSpy).not.toHaveBeenCalled();
   });
 });

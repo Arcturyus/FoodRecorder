@@ -4,6 +4,7 @@ import { useStore, useEffectiveFoods, todayStr } from '../store/store';
 import { matchFood } from '../nutrition/match';
 import { normalizeForMatch } from '../nutrition/normalize';
 import { UNITS } from '../nutrition/types';
+import { sourceLabel } from '../extraction/providers';
 import type { Food, NutrientKey } from '../nutrition/types';
 import { useTargets } from './useTargets';
 import { fmt, UNIT_LABELS } from './format';
@@ -122,15 +123,7 @@ export function EntryCard({
             </span>
           </button>
           {time} · {fmt(kcal)} kcal ·{' '}
-          {entry.source === 'llm'
-            ? 'IA'
-            : entry.source === 'anthropic'
-              ? 'Claude'
-              : entry.source === 'claudecode'
-                ? 'Claude Code'
-                : entry.source === 'rules'
-                  ? 'auto'
-                  : 'manuel'}
+          {sourceLabel(entry.source)}
         </span>
         <div className="row">
           {isPast && (

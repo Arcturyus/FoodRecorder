@@ -167,4 +167,7 @@ données) ?
 est ce que dans stats ? mieux vaut des panels long ou faire beaucoup plus de panle courrts reflexion dans telphone et ordi (attetion dans le futur le nb de features peut encore augmenter)
 
 
-- [ ] CLique sur un jours dans le graph dans stats mettre un petit emnu voulez vous voir ce jour dans histoirique (ou texte similaire) et tu peux confirmer ca t'envoie dans histoirique sur ce jour
+- [ ] CLique sur un jours dans le graph dans stats mettre un petit menu voulez vous voir ce jour dans histoirique (ou texte similaire) et tu peux confirmer ca t'envoie dans histoirique sur ce jour
+
+
+- [ ] variables "prix" pour 100g à ajouter pour la frontière de pareto dans la banque ca peut être sympa

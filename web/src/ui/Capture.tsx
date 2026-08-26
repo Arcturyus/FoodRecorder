@@ -1,11 +1,13 @@
 import { useRef, useState } from 'react';
-import { useStore, useEffectiveFoods, recentFoodCounts, todayStr } from '../store/store';
+import { useStore, useEffectiveFoods, recentFoodCounts, todayStr, useCloudConfig } from '../store/store';
 import { MicRecorder } from '../stt/recorder';
 import { isSttLoaded, loadStt, transcribe } from '../stt/whisper';
 import { NativeRecognizer } from '../stt/webspeech';
 import { extractWithLlm } from '../extraction/llm';
-import { extractWithAnthropic, extractImageWithAnthropic } from '../extraction/anthropic';
-import { extractWithClaudeCode, extractImageWithClaudeCode } from '../extraction/claudeCode';
+import { extractWithCloud, extractImageWithCloud } from '../extraction/cloudExtract';
+import { extractWithCli, extractImageWithCli } from '../extraction/cliExtract';
+import { currentCliLabel } from '../extraction/bridge';
+import { providerInfo, supportsVision } from '../extraction/providers';
 import { verifyMatches } from '../extraction/verify';
 import { parseTranscript } from '../extraction/ruleParser';
 import { isSyncConfigured, pushTranscript, pushImage } from '../sync/supabase';
@@ -138,8 +140,7 @@ export function Capture({ date, title }: { date?: string; title?: string } = {})
   const favoriteMeals = useStore((s) => s.favoriteMeals);
   const applyFavoriteMeal = useStore((s) => s.applyFavoriteMeal);
   const extractionMode = useStore((s) => s.extractionMode);
-  const cloudApiKey = useStore((s) => s.cloudApiKey);
-  const cloudModel = useStore((s) => s.cloudModel);
+  const cloud = useCloudConfig();
   const sttEngine = useStore((s) => s.sttEngine);
   const sttModel = useStore((s) => s.sttModel);
   const deviceId = useStore((s) => s.deviceId);
@@ -165,8 +166,7 @@ export function Capture({ date, title }: { date?: string; title?: string } = {})
         items,
         foods,
         extractionMode,
-        cloudApiKey,
-        cloudModel,
+        cloud,
         recentFoodCounts(entries),
       );
     }
@@ -264,11 +264,11 @@ export function Capture({ date, title }: { date?: string; title?: string } = {})
       return;
     }
     let items;
-    let source: 'llm' | 'anthropic' | 'claudecode' | 'rules';
+    let source: JournalEntry['source'];
     if (extractionMode === 'cloud') {
-      setStatus('Extraction (API Claude)…');
+      setStatus(`Extraction (${providerInfo(cloud.provider).label})…`);
       try {
-        const res = await extractWithAnthropic(clean, cloudApiKey, cloudModel);
+        const res = await extractWithCloud(clean, cloud);
         items = res.items;
         source = res.source;
       } catch (e) {
@@ -277,9 +277,9 @@ export function Capture({ date, title }: { date?: string; title?: string } = {})
         source = 'rules';
       }
     } else if (extractionMode === 'claudecode') {
-      setStatus('Extraction (Claude Code)…');
+      setStatus(`Extraction (${currentCliLabel()})…`);
       try {
-        const res = await extractWithClaudeCode(clean);
+        const res = await extractWithCli(clean);
         items = res.items;
         source = res.source;
       } catch (e) {
@@ -293,7 +293,7 @@ export function Capture({ date, title }: { date?: string; title?: string } = {})
             // de MAINTENANT, pas de son heure de traitement (cf. addEntry).
             await pushTranscript(deviceId, profileId, clean, date ?? todayStr(), Date.now());
             setText('');
-            setStatus('Pont Claude Code indisponible ici : mis en file d’attente, sera traité dès que l’ordinateur sera disponible.');
+            setStatus(`Pont ${currentCliLabel()} indisponible ici : mis en file d’attente, sera traité dès que l’ordinateur sera disponible.`);
             return;
           } catch (syncErr) {
             setStatus(`Échec de la mise en file d'attente : ${(syncErr as Error).message}`);
@@ -353,10 +353,10 @@ export function Capture({ date, title }: { date?: string; title?: string } = {})
     setBusy(true);
     try {
       if (extractionMode === 'claudecode') {
-        setStatus('Analyse de la photo (Claude Code)…');
+        setStatus(`Analyse de la photo (${currentCliLabel()})…`);
         try {
           const { data, mediaType } = await fileToBase64(file);
-          const res = await extractImageWithClaudeCode(data, mediaType);
+          const res = await extractImageWithCli(data, mediaType);
           if (res.items.length === 0) {
             setStatus('Aucun aliment détecté sur la photo. Reprenez la photo ou ajoutez à la main.');
             return;
@@ -390,10 +390,10 @@ export function Capture({ date, title }: { date?: string; title?: string } = {})
         }
         return;
       }
-      // Mode « API Claude » : analyse directe sur cet appareil.
-      setStatus('Analyse de la photo (API Claude)…');
+      // Mode « clé API » : analyse directe sur cet appareil.
+      setStatus(`Analyse de la photo (${providerInfo(cloud.provider).label})…`);
       const { data, mediaType } = await fileToBase64(file);
-      const res = await extractImageWithAnthropic(data, mediaType, cloudApiKey, cloudModel);
+      const res = await extractImageWithCloud(data, mediaType, cloud);
       if (res.items.length === 0) {
         setStatus('Aucun aliment détecté sur la photo. Reprenez la photo ou ajoutez à la main.');
         return;
@@ -407,7 +407,8 @@ export function Capture({ date, title }: { date?: string; title?: string } = {})
     }
   }
 
-  const photoSupported = extractionMode === 'cloud' || extractionMode === 'claudecode';
+  const photoSupported =
+    extractionMode === 'claudecode' || (extractionMode === 'cloud' && supportsVision(cloud.provider));
 
   return (
     <div className="panel capture">
@@ -454,9 +455,9 @@ export function Capture({ date, title }: { date?: string; title?: string } = {})
       <div className="hint">
         La dictée remplit le champ : relisez, corrigez, puis « Ajouter ».
         {extractionMode === 'cloud'
-          ? ' Analyse par API Claude.'
+          ? ` Analyse par ${providerInfo(cloud.provider).label}.`
           : extractionMode === 'claudecode'
-            ? ' Analyse par Claude Code (ordinateur).'
+            ? ` Analyse par ${currentCliLabel()} (ordinateur).`
             : extractionMode === 'local'
               ? ' Analyse par IA locale.'
               : ' Analyse par règles (hors-ligne).'}

@@ -16,12 +16,14 @@
  * on le lui aplatit en texte.
  */
 
-import Anthropic from '@anthropic-ai/sdk';
 import { z } from 'zod';
 import { EMPTY_NUTRIENTS } from '../nutrition/types';
 import type { Food, FoodCategory, NutrientKey, Nutrients } from '../nutrition/types';
 import { nutrientLabelOf } from '../nutrition/rda';
 import type { ExtractionMode } from '../store/store';
+import { askCloudChat, type ChatTurn } from './cloud';
+import type { CloudConfig } from './providers';
+import { callBridge } from './bridge';
 import { NUTRIMENTS_PROMPT_DOC } from './schema';
 
 const NUTRIENT_KEYS = Object.keys(EMPTY_NUTRIENTS) as NutrientKey[];
@@ -133,8 +135,8 @@ function firstUserMessage(food: Food, usage?: ReviewUsage): string {
 }
 
 /** Historique → messages de l'API Claude. */
-function toMessages(food: Food, usage: ReviewUsage | undefined, history: ReviewTurn[]): Anthropic.MessageParam[] {
-  const msgs: Anthropic.MessageParam[] = [{ role: 'user', content: firstUserMessage(food, usage) }];
+function toMessages(food: Food, usage: ReviewUsage | undefined, history: ReviewTurn[]): ChatTurn[] {
+  const msgs: ChatTurn[] = [{ role: 'user', content: firstUserMessage(food, usage) }];
   for (const t of history) {
     if (t.role === 'assistant') {
       msgs.push({
@@ -170,24 +172,8 @@ function toFlatPrompt(food: Food, usage: ReviewUsage | undefined, history: Revie
  */
 const RELECTURE_TIMEOUT_MS = 180_000;
 
-async function askBridge(prompt: string): Promise<string> {
-  const res = await fetch('/api/claude-code', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ prompt, label: 'relecture', timeoutMs: RELECTURE_TIMEOUT_MS }),
-  });
-  const data = (await res.json().catch(() => ({}))) as { text?: string; error?: string };
-  if (!res.ok || data.error) throw new Error(data.error || `HTTP ${res.status}`);
-  return data.text ?? '';
-}
-
-async function askCloud(messages: Anthropic.MessageParam[], apiKey: string, model: string): Promise<string> {
-  const client = new Anthropic({ apiKey, dangerouslyAllowBrowser: true });
-  const resp = await client.messages.create({ model, max_tokens: 2048, system: SYSTEM_PROMPT, messages });
-  return resp.content
-    .filter((b): b is Anthropic.TextBlock => b.type === 'text')
-    .map((b) => b.text)
-    .join('');
+function askBridge(prompt: string): Promise<string> {
+  return callBridge({ prompt, label: 'relecture', timeoutMs: RELECTURE_TIMEOUT_MS });
 }
 
 /**
@@ -201,17 +187,16 @@ export async function reviewFood(
   usage: ReviewUsage | undefined,
   history: ReviewTurn[],
   mode: ExtractionMode,
-  apiKey: string,
-  cloudModel: string,
+  cloud: CloudConfig,
 ): Promise<ReviewTurn> {
   if (mode !== 'cloud' && mode !== 'claudecode') {
-    throw new Error('La relecture demande une IA forte (Claude Code ou API Claude) — voir Réglages.');
+    throw new Error('La relecture demande une IA forte (clé API ou pont CLI) — voir Réglages.');
   }
-  if (mode === 'cloud' && !apiKey) throw new Error('Clé API manquante — voir Réglages.');
+  if (mode === 'cloud' && !cloud.apiKey) throw new Error('Clé API manquante — voir Réglages.');
 
   const text =
     mode === 'cloud'
-      ? await askCloud(toMessages(food, usage, history), apiKey, cloudModel)
+      ? await askCloudChat(SYSTEM_PROMPT, toMessages(food, usage, history), cloud)
       : await askBridge(toFlatPrompt(food, usage, history));
 
   const parsed = reviewSchema.safeParse(extractJson(text));

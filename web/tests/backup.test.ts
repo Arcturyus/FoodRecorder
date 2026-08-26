@@ -22,6 +22,7 @@ const banane = FOOD_BY_ID.get('banane')!;
  */
 const EXCLUS: Record<string, string> = {
   cloudApiKey: 'secret : ne doit jamais sortir de l’appareil',
+  cloudApiKeys: 'secrets : les clés de chaque fournisseur ne doivent jamais sortir de l’appareil',
   deviceId: 'identité de CET appareil : la restaurer ailleurs créerait deux appareils jumeaux pour la synchro',
   syncCursor: 'curseur de synchro propre à l’appareil',
   lastAutoSave: 'marqueur local de la sauvegarde du jour',
