@@ -1,11 +1,9 @@
 import { useState } from 'react';
 import { ProfilePanel } from './ProfilePanel';
 import { EnergyPanel } from './EnergyPanel';
-import { WeightCapture } from './WeightCapture';
 import { WeightForm } from './WeightForm';
 import { WeightChart } from './WeightChart';
 import { WeightHistory } from './WeightHistory';
-import type { WeightPatch } from '../extraction/weight';
 
 /**
  * Onglet « Poids ». L'ordre suit ce qu'on vient y faire : d'abord ENREGISTRER une
@@ -19,13 +17,11 @@ import type { WeightPatch } from '../extraction/weight';
  * corporelle, est passée en tête de l'onglet Réglages.
  */
 export function Weight() {
-  const [prefill, setPrefill] = useState<{ patch: WeightPatch; nonce: number } | null>(null);
   const [focusEntry, setFocusEntry] = useState<{ id: string; nonce: number } | null>(null);
 
   return (
     <>
-      <WeightCapture onExtract={(patch) => setPrefill({ patch, nonce: Date.now() })} />
-      <WeightForm prefill={prefill} />
+      <WeightForm />
       <WeightChart onEditEntry={(id) => setFocusEntry({ id, nonce: Date.now() })} />
       <WeightHistory focusEntry={focusEntry} />
       <ProfilePanel />

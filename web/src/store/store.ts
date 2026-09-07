@@ -314,6 +314,8 @@ interface AppState {
   cloudModels: Partial<Record<CloudProvider, string>>;
   /** CLI visé par le pont local. */
   cliBridge: CliBridge;
+  /** Modèle retenu par CLI local (absent = modèle par défaut de cette CLI). */
+  cliModels: Partial<Record<CliBridge, string>>;
   /**
    * ANCIENS champs mono-fournisseur (Anthropic). Plus lus par l'app : ils ont
    * été recopiés dans `cloudApiKeys`/`cloudModels` à l'hydratation. On les
@@ -368,6 +370,7 @@ interface AppState {
   setCloudApiKey: (k: string) => void;
   setCloudModel: (id: string) => void;
   setCliBridge: (c: CliBridge) => void;
+  setCliModel: (cli: CliBridge, id: string) => void;
   setProfile: (patch: Partial<Profile>) => void;
   setSyncCursor: (cursor: string) => void;
   setLastAutoSave: (day: string) => void;
@@ -507,10 +510,12 @@ interface AppState {
    * heure de saisie (epoch ms), passée par la synchro pour l'heure d'envoi de
    * l'appareil émetteur ; défaut `Date.now()`.
    */
-  addSunExposure: (e: Omit<SunExposure, 'id' | 'createdAt'>, createdAt?: number) => void;
+  addSunExposure: (e: Omit<SunExposure, 'id' | 'createdAt'>, createdAt?: number) => string;
   /** Corrige une sortie déjà enregistrée (durée, ciel, peau… après une dictée auto-validée). */
   updateSunExposure: (id: string, patch: Partial<Omit<SunExposure, 'id' | 'createdAt'>>) => void;
   removeSunExposure: (id: string) => void;
+  /** Recalcule chaque item lié à la banque, sans changer les saisies libres. */
+  resyncHistory: () => number;
 }
 
 export const useStore = create<AppState>()(
@@ -527,6 +532,7 @@ export const useStore = create<AppState>()(
       cloudApiKeys: {},
       cloudModels: {},
       cliBridge: 'claude',
+      cliModels: {},
       cloudApiKey: '',
       cloudModel: defaultModelFor(DEFAULT_CLOUD_PROVIDER),
       profile: DEFAULT_PROFILE,
@@ -552,6 +558,8 @@ export const useStore = create<AppState>()(
       setCloudModel: (id) =>
         set((s) => ({ cloudModels: { ...s.cloudModels, [s.cloudProvider]: id } })),
       setCliBridge: (c) => set({ cliBridge: c }),
+      setCliModel: (cli, id) =>
+        set((s) => ({ cliModels: { ...s.cliModels, [cli]: id } })),
       setProfile: (patch) => set((s) => ({ profile: { ...s.profile, ...patch } })),
       setSyncCursor: (cursor) => set({ syncCursor: cursor }),
       setLastAutoSave: (day) => set({ lastAutoSave: day }),
@@ -1018,8 +1026,11 @@ export const useStore = create<AppState>()(
 
       setWeightConfig: (patch) => set((s) => ({ weightConfig: { ...s.weightConfig, ...patch } })),
 
-      addSunExposure: (e, createdAt) =>
-        set((s) => ({ sunExposures: [{ ...e, id: uid(), createdAt: createdAt ?? Date.now() }, ...s.sunExposures] })),
+      addSunExposure: (e, createdAt) => {
+        const id = uid();
+        set((s) => ({ sunExposures: [{ ...e, id, createdAt: createdAt ?? Date.now() }, ...s.sunExposures] }));
+        return id;
+      },
 
       updateSunExposure: (id, patch) =>
         set((s) => ({
@@ -1030,6 +1041,12 @@ export const useStore = create<AppState>()(
 
       removeSunExposure: (id) =>
         set((s) => ({ sunExposures: s.sunExposures.filter((e) => e.id !== id) })),
+
+      resyncHistory: () => {
+        const s = get();
+        set({ entries: resyncEntries(s.entries, s.customFoods) });
+        return s.entries.length;
+      },
     }),
     { name: 'foodrecorder-v1', merge: mergePersisted },
   ),
@@ -1122,6 +1139,9 @@ function mergePersisted(persisted: unknown, current: AppState): AppState {
     // déplacement — `cloudApiKey`/`cloudModel` restent en place (cf. AppState).
     cloudApiKeys: p.cloudApiKeys ?? (p.cloudApiKey ? { anthropic: p.cloudApiKey } : {}),
     cloudModels: p.cloudModels ?? (p.cloudModel ? { anthropic: p.cloudModel } : {}),
+    // Réglage additif : les anciennes sauvegardes continuent avec le modèle
+    // par défaut de chaque CLI, sans migration des données nutritionnelles.
+    cliModels: p.cliModels ?? {},
     mutedDays: p.mutedDays ?? {},
     dayNotes: p.dayNotes ?? {},
     nutrientImportance: p.nutrientImportance ?? {},

@@ -406,7 +406,7 @@ interface ContribCtx {
 function ContributionCard({ c, ctx }: { c: NutrientContribution; ctx: ContribCtx }) {
   const part = ctx.grandTotal > 0 ? (c.total / ctx.grandTotal) * 100 : 0;
   const perDay = c.total / Math.max(1, ctx.recordedDays);
-  const pctAjr = ctx.target && ctx.target.ajr > 0 ? (perDay / ctx.target.ajr) * 100 : null;
+  const pctOptimal = ctx.target && ctx.target.optimal > 0 ? (perDay / ctx.target.optimal) * 100 : null;
   return (
     <div style={{ maxWidth: 250 }}>
       <div className="row" style={{ justifyContent: 'space-between', alignItems: 'baseline', gap: 8 }}>
@@ -418,10 +418,10 @@ function ContributionCard({ c, ctx }: { c: NutrientContribution; ctx: ContribCtx
       <div className="hc-rows" style={{ marginTop: 8 }}>
         <div><span>Apporté sur la période</span><span className="mono">{fmtVal(c.total)} {ctx.unit}</span></div>
         <div><span>Soit par jour</span><span className="mono">{fmtVal(perDay)} {ctx.unit}/j</span></div>
-        {pctAjr !== null && (
+        {pctOptimal !== null && (
           <div>
-            <span>{ctx.target!.goal === 'limit' ? 'Du plafond/j' : "De l'AJR/j"}</span>
-            <span className="mono">{fmt(pctAjr)} %</span>
+            <span>De l'optimal/j</span>
+            <span className="mono">{fmt(pctOptimal)} %</span>
           </div>
         )}
         {c.grammes > 0 && (
@@ -522,7 +522,7 @@ function NutrientContributorsPanel({
   }, [contributions, grandTotal]);
 
   const perDay = grandTotal / Math.max(1, recordedDays);
-  const pctAjr = target && target.ajr > 0 ? (perDay / target.ajr) * 100 : null;
+  const pctOptimal = target && target.optimal > 0 ? (perDay / target.optimal) * 100 : null;
   const isLimit = target?.goal === 'limit';
   const ctx: ContribCtx = { unit, grandTotal, recordedDays, target };
 
@@ -561,9 +561,9 @@ function NutrientContributorsPanel({
             <strong>{fmtVal(grandTotal)} {unit}</strong> au total sur la période, soit{' '}
             <strong>{fmtVal(perDay)} {unit}/j</strong> sur {fmt(recordedDays)} jour(s) enregistré(s) ({fmt(days)} j de
             période)
-            {pctAjr !== null && (
+            {pctOptimal !== null && (
               <>
-                {' '}— {fmt(pctAjr)} % {isLimit ? 'du plafond' : "de l'AJR"} ({fmt(target!.ajr)} {unit}/j)
+                {' '}— {fmt(pctOptimal)} % de l'optimal ({fmt(target!.optimal)} {unit}/j)
               </>
             )}
             .{' '}
@@ -722,7 +722,7 @@ function ContributionDetail({
 }) {
   const buckets = useMemo(() => groupDates(datesInRange(range), gran), [range, gran]);
   const perDay = c.total / Math.max(1, ctx.recordedDays);
-  const pctAjr = ctx.target && ctx.target.ajr > 0 ? (perDay / ctx.target.ajr) * 100 : null;
+  const pctOptimal = ctx.target && ctx.target.optimal > 0 ? (perDay / ctx.target.optimal) * 100 : null;
 
   return (
     <div style={{ marginTop: 12, paddingTop: 12, borderTop: `1px solid ${C.border}` }}>
@@ -730,7 +730,7 @@ function ContributionDetail({
         <strong>{c.nom}</strong>
         <span className="small mono">
           {fmtVal(c.total)} {ctx.unit} · {fmtVal(perDay)} {ctx.unit}/j
-          {pctAjr !== null && ` · ${fmt(pctAjr)} % ${ctx.target!.goal === 'limit' ? 'du plafond' : "de l'AJR"}`}
+          {pctOptimal !== null && ` · ${fmt(pctOptimal)} % de l'optimal`}
         </span>
       </div>
       <p className="small" style={{ margin: '4px 0 8px' }}>
