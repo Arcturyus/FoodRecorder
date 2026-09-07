@@ -18,10 +18,25 @@ import { useBankUsage, derniereFoisLabel } from './useBankUsage';
 /** Résultats affichés par groupe : au-delà, la liste déborde de l'écran. */
 const MAX_RESULTS = 8;
 
-export function ManualAdd({ date, title }: { date?: string; title?: string } = {}) {
+export function ManualAdd({
+  date,
+  title,
+  entryId,
+  autoFocus = false,
+  onAdded,
+}: {
+  date?: string;
+  /** `null` masque le titre pour l'utilisation dans un repas existant. */
+  title?: string | null;
+  /** Rattache l'aliment choisi à cette entrée au lieu de créer une nouvelle entrée. */
+  entryId?: string;
+  autoFocus?: boolean;
+  onAdded?: () => void;
+} = {}) {
   const all = useEffectiveFoods();
   const usage = useBankUsage();
   const addFoodEntry = useStore((s) => s.addFoodEntry);
+  const addFoodToEntry = useStore((s) => s.addFoodToEntry);
 
   const [query, setQuery] = useState('');
   const [selected, setSelected] = useState<Food | null>(null);
@@ -110,22 +125,25 @@ export function ManualAdd({ date, title }: { date?: string; title?: string } = {
       return;
     }
     setConfirmBig(false);
-    addFoodEntry(selected, qNum, unite, date);
+    if (entryId) addFoodToEntry(entryId, selected, qNum, unite);
+    else addFoodEntry(selected, qNum, unite, date);
     const when = date ? ` au ${new Date(`${date}T00:00:00`).toLocaleDateString('fr-FR')}` : '';
     setFlash(`Ajouté${when} : ${fmt(qNum, 2)} ${UNIT_LABELS[unite]} de ${selected.nom} (${fmt(kcal)} kcal).`);
     setSelected(null);
     setQuery('');
     setQuantite('100');
     setUnite('g');
+    onAdded?.();
   }
 
   return (
-    <div className="panel">
-      <h2>{title ?? 'Ajout manuel rapide'}</h2>
+    <div className={entryId ? 'manual-add-inline' : 'panel'}>
+      {title !== null && <h2>{title ?? 'Ajout manuel rapide'}</h2>}
       <input
         style={{ width: '100%' }}
-        placeholder="Chercher un aliment (ex. « banane », « poulet »)…"
+        placeholder={entryId ? 'Ajouter un aliment (ex. « une pomme »)' : 'Chercher un aliment (ex. « banane », « poulet »)…'}
         value={query}
+        autoFocus={autoFocus}
         onChange={(e) => {
           setQuery(e.target.value);
           setSelected(null);

@@ -124,7 +124,7 @@ export function WeightForm({ prefill }: { prefill?: { patch: WeightPatch; nonce:
   }
 
   return (
-    <div className="panel">
+    <div className="panel" data-agent-section="nouvelle-pesee">
       <h2>Nouvelle pesée</h2>
 
       <div className="row wrap-form">

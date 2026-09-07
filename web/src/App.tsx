@@ -23,8 +23,11 @@ import { Weight } from './ui/Weight';
 import { Nutrients } from './ui/Nutrients';
 import { History } from './ui/History';
 import { Settings } from './ui/Settings';
+import { AgentChat } from './ui/AgentChat';
+import { AgentLauncher } from './ui/AgentLauncher';
+import { useNavigation, type AppTab } from './agent/navigation';
 
-type Tab = 'jour' | 'historique' | 'stats' | 'poids' | 'aliments' | 'nutriments' | 'reglages';
+type Tab = AppTab;
 
 interface TabMeta {
   id: Tab;
@@ -50,7 +53,8 @@ const SECONDARY_TABS: TabMeta[] = [
   { id: 'reglages', label: 'Réglages', short: 'Réglages', icon: '⚙️' },
 ];
 
-const ALL_TABS: TabMeta[] = [...PRIMARY_TABS, ...SECONDARY_TABS];
+const CHAT_TAB: TabMeta = { id: 'chat', label: 'Chat', short: 'Chat', icon: '✦' };
+const ALL_TABS: TabMeta[] = [...PRIMARY_TABS, CHAT_TAB, ...SECONDARY_TABS];
 
 /**
  * Onglets qui reçoivent la largeur étendue (~1200 px au lieu de 820).
@@ -61,18 +65,22 @@ const ALL_TABS: TabMeta[] = [...PRIMARY_TABS, ...SECONDARY_TABS];
  * Le CSS n'applique cette classe qu'au-dessus de 1100 px de fenêtre : téléphone
  * et tablette ne voient aucune différence.
  */
-const WIDE_TABS = new Set<Tab>(['stats', 'aliments', 'nutriments', 'historique']);
+const WIDE_TABS = new Set<Tab>(['stats', 'aliments', 'nutriments', 'historique', 'chat']);
 
 export function App() {
-  const [tab, setTab] = useState<Tab>('jour');
+  const tab = useNavigation((s) => s.tab);
+  const dayDate = useNavigation((s) => s.dayDate);
+  const section = useNavigation((s) => s.section);
+  const navNonce = useNavigation((s) => s.nonce);
+  const navigate = useNavigation((s) => s.go);
+  const setDayDate = useNavigation((s) => s.setDayDate);
+  const consumeSection = useNavigation((s) => s.consumeSection);
   const [showMore, setShowMore] = useState(false);
   /**
    * Jour affiché par l'onglet « Aujourd'hui ». Reste sur aujourd'hui par défaut
    * (le cas de loin le plus fréquent : zéro clic), mais peut basculer sur un
    * jour passé pour rattraper un oubli sans passer par le calendrier.
    */
-  const [dayDate, setDayDate] = useState(todayStr());
-
   /**
    * Sur l'onglet « Aujourd'hui », remplace le libellé par la date (« 2 août »)
    * dès qu'on n'est plus sur le jour courant : sans ça, le seul indice qu'on a
@@ -88,10 +96,21 @@ export function App() {
    * On ne le garde donc que le temps où l'on travaille dessus.
    */
   function goTab(id: Tab) {
-    if (id === 'jour') setDayDate(todayStr());
-    setTab(id);
+    navigate(id);
     setShowMore(false);
   }
+
+  useEffect(() => {
+    if (!section) return;
+    const frame = requestAnimationFrame(() => {
+      const target = document.querySelector<HTMLElement>(`[data-agent-section="${section}"]`);
+      target?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+      target?.classList.add('agent-focus-target');
+      if (target) window.setTimeout(() => target.classList.remove('agent-focus-target'), 1800);
+      consumeSection();
+    });
+    return () => cancelAnimationFrame(frame);
+  }, [navNonce, section, consumeSection]);
 
   // Suit les changements locaux pour la sync par profil (no-op tant qu'aucun profil n'est joint).
   useEffect(() => {
@@ -167,6 +186,7 @@ export function App() {
       {tab === 'aliments' && <Foods />}
       {tab === 'nutriments' && <Nutrients />}
       {tab === 'reglages' && <Settings />}
+      {tab === 'chat' && <AgentChat />}
 
       {/* Feuille « Plus » (mobile) : onglets secondaires. */}
       {showMore && (
@@ -207,6 +227,9 @@ export function App() {
           <span className="tabbar-label">Plus</span>
         </button>
       </nav>
+      {tab !== 'chat' && (
+        <AgentLauncher onOpen={() => goTab('chat')} />
+      )}
     </div>
   );
 }

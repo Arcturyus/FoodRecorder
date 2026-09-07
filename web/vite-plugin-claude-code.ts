@@ -1,7 +1,7 @@
 import type { Plugin } from 'vite';
 import type { IncomingMessage } from 'node:http';
 import { spawn } from 'node:child_process';
-import { mkdir, writeFile } from 'node:fs/promises';
+import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import { resolve } from 'node:path';
 
 /**
@@ -66,6 +66,20 @@ type Cli = 'claude' | 'codex';
 
 const CLI_LABEL: Record<Cli, string> = { claude: 'Claude Code', codex: 'Codex' };
 
+interface BridgeModel {
+  id: string;
+  label: string;
+  description?: string;
+  isDefault?: boolean;
+}
+
+interface ModelListResult {
+  cli: Cli;
+  models: BridgeModel[];
+  source: 'account' | 'cli-help';
+  warning?: string;
+}
+
 /** Résultat complet d'un appel CLI, tel qu'archivé dans `response/`. */
 interface CliRun {
   /** Texte final (ligne `result`), ce que l'app consomme réellement. */
@@ -78,6 +92,9 @@ interface CliRun {
   durationMs: number | null;
   /** Le flux stream-json COMPLET, ligne par ligne (« tout en entier »). */
   messages: StreamMessage[];
+  /** Sorties brutes, utiles au diagnostic mais jamais renvoyées au navigateur. */
+  rawStdout?: string;
+  rawStderr?: string;
 }
 
 /**
@@ -92,6 +109,7 @@ function runCli(
   model?: string,
   timeoutMs?: number,
   imagePath?: string | null,
+  outputLastPath?: string | null,
 ): Promise<CliRun> {
   return new Promise((resolve, reject) => {
     // Deux CLI, deux protocoles :
@@ -104,7 +122,7 @@ function runCli(
     //    car c'est lui qui garantit qu'aucune approbation ne sera demandée.
     const args =
       cli === 'codex'
-        ? ['exec', '--sandbox', 'read-only', ...(model ? ['-m', model] : []), ...(imagePath ? ['-i', imagePath] : []), '-']
+        ? ['exec', '--sandbox', 'read-only', '--color', 'never', ...(outputLastPath ? ['--output-last-message', outputLastPath] : []), ...(model ? ['-m', model] : []), ...(imagePath ? ['-i', imagePath] : []), '-']
         : ['-p', '--output-format', 'stream-json', '--verbose', ...(model ? ['--model', model] : [])];
     // shell:true pour résoudre « claude(.cmd) » / « codex(.cmd) » via le PATH sous Windows.
     const child = spawn(cli, args, { shell: true });
@@ -123,12 +141,17 @@ function runCli(
       clearTimeout(timer);
       reject(new Error(`Impossible de lancer « ${cli} » : ${e.message}. CLI installé et dans le PATH ?`));
     });
-    child.on('close', (code) => {
+    child.on('close', async (code) => {
       clearTimeout(timer);
-      // Codex n'imprime que le message final : rien à reconstituer.
+      // Codex peut imprimer sa progression sur stdout selon son lanceur Windows.
+      // `--output-last-message` est donc la seule source fiable du texte final.
+      let codexFinal = '';
+      if (cli === 'codex' && outputLastPath) {
+        try { codexFinal = (await readFile(outputLastPath, 'utf8')).trim(); } catch { /* appel sans message final */ }
+      }
       const run: CliRun =
         cli === 'codex'
-          ? { text: stdout.trim(), thinking: '', isError: false, model: model ?? null, costUsd: null, durationMs: null, messages: [] }
+          ? { text: codexFinal, thinking: '', isError: false, model: model ?? null, costUsd: null, durationMs: null, messages: [], rawStdout: stdout, rawStderr: stderr }
           : parseStream(stdout);
 
       // Un CLI qui a RÉPONDU est un succès, même s'il sort en code non nul :
@@ -205,6 +228,121 @@ function checkCli(cli: Cli): Promise<{ available: boolean; version?: string; err
   });
 }
 
+function captureCli(cli: Cli, args: string[], timeoutMs = 15_000): Promise<{ stdout: string; stderr: string }> {
+  return new Promise((resolve, reject) => {
+    const child = spawn(cli, args, { shell: true });
+    let stdout = '';
+    let stderr = '';
+    let settled = false;
+    const timer = setTimeout(() => {
+      settled = true;
+      child.kill();
+      reject(new Error(`Délai dépassé pendant l’interrogation de ${CLI_LABEL[cli]}.`));
+    }, timeoutMs);
+    child.stdout.on('data', (d) => (stdout += d));
+    child.stderr.on('data', (d) => (stderr += d));
+    child.on('error', (e) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      reject(e);
+    });
+    child.on('close', (code) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      if (code === 0) resolve({ stdout, stderr });
+      else reject(new Error(stderr.trim() || `${CLI_LABEL[cli]} a quitté avec le code ${code}.`));
+    });
+  });
+}
+
+/** Catalogue réellement renvoyé par le compte authentifié au Codex app-server. */
+function listCodexModels(): Promise<ModelListResult> {
+  return new Promise((resolve, reject) => {
+    const child = spawn('codex', ['app-server', '--listen', 'stdio://'], { shell: true });
+    let buffer = '';
+    let stderr = '';
+    let settled = false;
+    const finish = (error?: Error, result?: ModelListResult) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      child.kill();
+      if (error) reject(error); else resolve(result!);
+    };
+    const timer = setTimeout(() => finish(new Error('Délai dépassé pendant la lecture des modèles Codex.')), 20_000);
+    child.stderr.on('data', (d) => (stderr += d));
+    child.on('error', (e) => finish(e));
+    child.on('close', (code) => {
+      if (!settled) finish(new Error(stderr.trim() || `Codex app-server a quitté avec le code ${code}.`));
+    });
+    child.stdout.on('data', (chunk) => {
+      buffer += chunk.toString();
+      const lines = buffer.split(/\r?\n/);
+      buffer = lines.pop() ?? '';
+      for (const line of lines) {
+        if (!line.trim()) continue;
+        let message: any;
+        try { message = JSON.parse(line); } catch { continue; }
+        if (message.id === 1) {
+          if (message.error) { finish(new Error(message.error.message ?? 'Initialisation Codex refusée.')); return; }
+          child.stdin.write(`${JSON.stringify({ method: 'initialized', params: {} })}\n`);
+          child.stdin.write(`${JSON.stringify({ id: 2, method: 'model/list', params: { includeHidden: false, limit: 100 } })}\n`);
+        }
+        if (message.id === 2) {
+          if (message.error) { finish(new Error(message.error.message ?? 'Catalogue Codex indisponible.')); return; }
+          const data = Array.isArray(message.result?.data) ? message.result.data : [];
+          finish(undefined, {
+            cli: 'codex',
+            source: 'account',
+            models: data.filter((m: any) => typeof m?.model === 'string').map((m: any) => ({
+              id: m.model,
+              label: typeof m.displayName === 'string' ? m.displayName : m.model,
+              description: typeof m.description === 'string' ? m.description : undefined,
+              isDefault: m.isDefault === true,
+            })),
+          });
+          return;
+        }
+      }
+    });
+    child.stdin.write(`${JSON.stringify({ id: 1, method: 'initialize', params: { clientInfo: { name: 'foodrecorder', title: 'FoodRecorder', version: '0.1.0' }, capabilities: {} } })}\n`);
+  });
+}
+
+/**
+ * Claude Code n'expose pas de catalogue compte en mode non interactif. On lit
+ * donc les alias annoncés par LA VERSION installée, après contrôle de session,
+ * sans consommer une génération juste pour tester chaque modèle.
+ */
+async function listClaudeModels(): Promise<ModelListResult> {
+  const auth = await captureCli('claude', ['auth', 'status', '--json']);
+  try {
+    const status = JSON.parse(auth.stdout) as { loggedIn?: boolean };
+    if (status.loggedIn === false) throw new Error('Claude Code n’est pas connecté.');
+  } catch (e) {
+    if ((e as Error).message.includes('n’est pas connecté')) throw e;
+    // Une ancienne version peut répondre en texte malgré --json : le code 0
+    // reste alors la meilleure preuve de session disponible.
+  }
+  const help = await captureCli('claude', ['--help']);
+  const section = help.stdout.match(/--model <model>([\s\S]*?)(?:\n\s{2}--|\nCommands:)/)?.[1] ?? '';
+  const ids = [...section.matchAll(/['"]([A-Za-z0-9._-]+)['"]/g)].map((m) => m[1]);
+  const models = [...new Set(ids)].map((id) => ({ id, label: id }));
+  if (!models.length) throw new Error('Cette version de Claude Code ne publie aucun alias de modèle dans son aide.');
+  return {
+    cli: 'claude',
+    source: 'cli-help',
+    models,
+    warning: 'Claude Code ne publie pas la liste exacte autorisée par le compte : alias annoncés par le CLI, accès vérifié au premier envoi.',
+  };
+}
+
+function listCliModels(cli: Cli): Promise<ModelListResult> {
+  return cli === 'codex' ? listCodexModels() : listClaudeModels();
+}
+
 function readBody(req: IncomingMessage): Promise<string> {
   return new Promise((resolve, reject) => {
     let data = '';
@@ -259,8 +397,9 @@ export function claudeCodeBridge(): Plugin {
         res.setHeader('Content-Type', 'application/json');
         try {
           if (req.method === 'GET') {
-            const asked = new URL(req.url ?? '/', 'http://localhost').searchParams.get('cli');
-            res.end(JSON.stringify(await checkCli(asked === 'codex' ? 'codex' : 'claude')));
+            const query = new URL(req.url ?? '/', 'http://localhost').searchParams;
+            const cli: Cli = query.get('cli') === 'codex' ? 'codex' : 'claude';
+            res.end(JSON.stringify(query.get('models') === '1' ? await listCliModels(cli) : await checkCli(cli)));
             return;
           }
           if (req.method === 'POST') {
@@ -282,7 +421,13 @@ export function claudeCodeBridge(): Plugin {
             const hasImage = Boolean(body.image && typeof body.image.data === 'string');
             const label = typeof body.label === 'string' && body.label.trim() ? body.label : hasImage ? 'photo' : 'text';
             const base = `${stamp()}-${safeLabel(label)}`;
+            const outputLastPath = resolve(dir, `${base}-final.txt`);
             const model = typeof body.model === 'string' ? body.model : undefined;
+            if (model && !/^[A-Za-z0-9._:/-]{1,128}$/.test(model)) {
+              res.statusCode = 400;
+              res.end(JSON.stringify({ error: 'Identifiant de modèle invalide.' }));
+              return;
+            }
             const cli: Cli = body.cli === 'codex' ? 'codex' : 'claude';
             await mkdir(dir, { recursive: true });
 
@@ -313,6 +458,7 @@ export function claudeCodeBridge(): Plugin {
                 model,
                 typeof body.timeoutMs === 'number' ? body.timeoutMs : undefined,
                 imagePath,
+                cli === 'codex' ? outputLastPath : null,
               );
             } catch (e) {
               error = (e as Error).message;

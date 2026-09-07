@@ -9,6 +9,7 @@ import { checkBridge, CLI_LABELS } from '../extraction/bridge';
 import { STT_MODELS } from '../stt/whisper';
 import { isNativeSttSupported } from '../stt/webspeech';
 import { ProfileSyncPanel } from './ProfileSync';
+import { AgentActivity } from './AgentActivity';
 
 /**
  * Réglages : connexion au compte de synchro, sauvegarde des données, choix du
@@ -27,6 +28,7 @@ export function Settings() {
   const extractionMode = useStore((s) => s.extractionMode);
   const cloud = useCloudConfig();
   const cliBridge = useStore((s) => s.cliBridge);
+  const cliModels = useStore((s) => s.cliModels);
   const setSttEngine = useStore((s) => s.setSttEngine);
   const setSttModel = useStore((s) => s.setSttModel);
   const setLlmModel = useStore((s) => s.setLlmModel);
@@ -35,6 +37,7 @@ export function Settings() {
   const setCloudModel = useStore((s) => s.setCloudModel);
   const setCloudProvider = useStore((s) => s.setCloudProvider);
   const setCliBridge = useStore((s) => s.setCliBridge);
+  const setCliModel = useStore((s) => s.setCliModel);
 
   const [llmStatus, setLlmStatus] = useState('');
   const [loading, setLoading] = useState(false);
@@ -93,9 +96,9 @@ export function Settings() {
     },
   ];
 
-  const bridges: { id: CliBridge; desc: string }[] = [
-    { id: 'claude', desc: 'abonnement Claude Pro/Max' },
-    { id: 'codex', desc: 'abonnement ChatGPT Plus' },
+  const bridges: { id: CliBridge; label: string; desc: string }[] = [
+    { id: 'codex', label: 'Codex CLI', desc: 'processus local · authentification existante' },
+    { id: 'claude', label: 'Claude Code CLI', desc: 'processus local · authentification existante' },
   ];
 
   const info = providerInfo(cloud.provider);
@@ -107,6 +110,7 @@ export function Settings() {
     <>
       <ProfileSyncPanel />
       <BackupPanel />
+      <AgentActivity />
 
       <div className="panel">
         <h2>Moteur d'extraction</h2>
@@ -257,16 +261,59 @@ export function Settings() {
 
         {extractionMode === 'claudecode' && (
           <div style={{ marginTop: 14 }}>
-            <label className="field">
-              CLI utilisé
-              <select value={cliBridge} onChange={(e) => setCliBridge(e.target.value as CliBridge)}>
-                {bridges.map((b) => (
-                  <option key={b.id} value={b.id}>
-                    {CLI_LABELS[b.id]} ({b.id}) — {b.desc}
-                  </option>
-                ))}
-              </select>
-            </label>
+            <h3 style={{ marginBottom: 4 }}>Fournisseur d’agent</h3>
+            <p className="small" style={{ marginTop: 0 }}>
+              Utilisé uniquement lorsque les règles déterministes ne suffisent pas.
+            </p>
+            <div className="row" style={{ flexDirection: 'column', alignItems: 'stretch', gap: 8 }}>
+              {bridges.map((bridge) => (
+                <label
+                  key={bridge.id}
+                  className="row"
+                  style={{
+                    gap: 10,
+                    padding: '14px 16px',
+                    border: `1px solid ${cliBridge === bridge.id ? 'var(--accent)' : 'var(--border)'}`,
+                    borderRadius: 10,
+                    cursor: 'pointer',
+                  }}
+                >
+                  <input
+                    type="radio"
+                    name="cliBridge"
+                    checked={cliBridge === bridge.id}
+                    onChange={() => setCliBridge(bridge.id)}
+                    style={{ width: 'auto' }}
+                  />
+                  <span>
+                    <strong>{bridge.label}</strong>
+                    <span className="small" style={{ display: 'block' }}>{bridge.desc}</span>
+                  </span>
+                </label>
+              ))}
+            </div>
+            <div className="row wrap-form" style={{ marginTop: 14 }}>
+              <label className="field" style={{ flex: '1 1 260px' }}>
+                Modèle Codex CLI
+                <input
+                  value={cliModels.codex ?? ''}
+                  onChange={(e) => setCliModel('codex', e.target.value)}
+                  placeholder="gpt-5.6-terra"
+                  autoComplete="off"
+                />
+                <span className="small">Laisser vide pour utiliser le modèle configuré par Codex.</span>
+              </label>
+              <label className="field" style={{ flex: '1 1 260px' }}>
+                Modèle Claude Code
+                <input
+                  value={cliModels.claude ?? ''}
+                  onChange={(e) => setCliModel('claude', e.target.value)}
+                  placeholder="claude-sonnet-5"
+                  autoComplete="off"
+                />
+                <span className="small">Laisser vide pour utiliser le modèle configuré par Claude Code.</span>
+              </label>
+            </div>
             <div className="row" style={{ marginTop: 10 }}>
               <button onClick={verifyBridge} disabled={checking}>
                 {checking ? 'Vérification…' : 'Vérifier la disponibilité'}
@@ -277,8 +324,8 @@ export function Settings() {
               Ce mode lance le CLI <strong>{CLI_LABELS[cliBridge]}</strong> installé sur cet ordinateur et
               réutilise votre session <strong>déjà connectée</strong> : <strong>aucune clé API</strong> à saisir,
               rien à reconnecter. Fonctionne <strong>uniquement sur l’ordinateur</strong> qui exécute
-              l’application via <code>npm run dev</code> — pas sur mobile. La précision dépend du modèle
-              configuré dans votre CLI.
+              l’application via <code>npm run dev</code> — pas sur mobile. Les réglages ci-dessus sont enregistrés
+              immédiatement dans ce navigateur.
             </div>
           </div>
         )}
