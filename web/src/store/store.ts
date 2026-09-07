@@ -415,6 +415,8 @@ interface AppState {
   addEntry: (transcript: string, items: ExtractedItem[], source: JournalEntry['source'], date?: string, createdAt?: number) => string;
   /** Ajout manuel d'un aliment choisi explicitement (pas de matching flou). `date` : jour ciblé (défaut aujourd'hui). */
   addFoodEntry: (food: Food, quantite: number, unite: Unit, date?: string) => string;
+  /** Ajoute un aliment explicitement choisi à une entrée existante, sans créer un nouveau repas. */
+  addFoodToEntry: (entryId: string, food: Food, quantite: number, unite: Unit) => void;
   updateItem: (entryId: string, itemId: string, patch: Partial<JournalItem>) => void;
   /**
    * Renomme un aliment du journal en texte libre (« pizza » → « pizza 4
@@ -673,6 +675,24 @@ export const useStore = create<AppState>()(
         set((s) => ({ entries: [entry, ...s.entries] }));
         return entry.id;
       },
+
+      addFoodToEntry: (entryId, food, quantite, unite) =>
+        set((s) => {
+          const inBank = get().adoptCatalogFood(food);
+          const grams = toGrams({ aliment: inBank.nom, quantite, unite, estimation: false }, inBank);
+          const item: JournalItem = {
+            id: uid(),
+            foodId: inBank.id,
+            nomAffiche: inBank.nom,
+            quantite,
+            unite,
+            grams,
+            nutrients: scaleNutrients(inBank.n, grams),
+            estimation: false,
+            douteux: false,
+          };
+          return { entries: s.entries.map((entry) => entry.id === entryId ? { ...entry, items: [...entry.items, item] } : entry) };
+        }),
 
       updateItem: (entryId, itemId, patch) =>
         set((s) => ({

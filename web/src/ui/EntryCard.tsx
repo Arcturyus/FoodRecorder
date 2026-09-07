@@ -12,6 +12,7 @@ import { DETAIL_GROUPS, SHORT_LABELS, draftToContribution, nutrientsToDraft } fr
 import { DayPickerButton, relativeDayLabel } from './DayPicker';
 import { NumberField } from './NumberField';
 import { MEAL_GAP_MIN, type MealPosition } from './meals';
+import { ManualAdd } from './ManualAdd';
 
 /** Heure courte d'un horodatage (« 12:30 »). */
 export function hhmm(ts: number): string {
@@ -54,6 +55,7 @@ export function EntryCard({
     setOpen(!collapsed);
   }, [collapsed]);
   const [editing, setEditing] = useState(false);
+  const [addingFood, setAddingFood] = useState(false);
   const removeEntry = useStore((s) => s.removeEntry);
   const moveEntry = useStore((s) => s.moveEntry);
   const setEntryMealLink = useStore((s) => s.setEntryMealLink);
@@ -140,6 +142,9 @@ export function EntryCard({
           <button className="ghost small" data-tip="Enregistrer comme repas favori réutilisable" onClick={saveAsFavorite}>
             ☆ Favori
           </button>
+          <button className="primary small" onClick={() => setAddingFood(true)}>
+            Ajouter un aliment
+          </button>
           <button className="ghost small" onClick={() => setEditing((e) => !e)}>
             {editing ? 'Terminer' : 'Options'}
           </button>
@@ -153,6 +158,7 @@ export function EntryCard({
       {entry.items.map((it) => (
         <ItemRow key={it.id} entryId={entry.id} item={it} canDeleteItem={entry.items.length > 1} />
       ))}
+      {addingFood && <ManualAdd entryId={entry.id} title={null} autoFocus onAdded={() => setAddingFood(false)} />}
       {editing && (
         <div className="row" style={{ marginTop: 10, alignItems: 'flex-end' }}>
           <label className="field">
@@ -170,7 +176,6 @@ export function EntryCard({
         </div>
       )}
       {editing && mealPos && <MealLinkSetting entry={entry} pos={mealPos} onSet={setEntryMealLink} />}
-      {editing && <AddItemInline entryId={entry.id} />}
     </div>
   );
 }
@@ -562,28 +567,6 @@ function ItemDetail({ entryId, item }: { entryId: string; item: JournalItem }) {
           </div>
         </div>
       ))}
-    </div>
-  );
-}
-
-function AddItemInline({ entryId }: { entryId: string }) {
-  const [text, setText] = useState('');
-  const addItemToEntry = useStore((s) => s.addItemToEntry);
-  const submit = () => {
-    if (!text.trim()) return;
-    addItemToEntry(entryId, { aliment: text.trim(), quantite: 1, unite: 'portion', estimation: true });
-    setText('');
-  };
-  return (
-    <div className="row" style={{ marginTop: 10 }}>
-      <input
-        style={{ flex: 1 }}
-        placeholder="Ajouter un aliment (ex. « une pomme »)"
-        value={text}
-        onChange={(e) => setText(e.target.value)}
-        onKeyDown={(e) => e.key === 'Enter' && submit()}
-      />
-      <button onClick={submit}>Ajouter</button>
     </div>
   );
 }

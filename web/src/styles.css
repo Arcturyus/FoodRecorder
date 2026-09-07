@@ -474,6 +474,10 @@ header.app-head .sub { color: var(--muted); font-size: 13px; }
 .hint { color: var(--muted); font-size: 12px; margin-top: 8px; }
 .status { color: var(--accent-2); font-size: 12px; margin-top: 8px; }
 
+/* Recherche ouverte depuis un repas : pas de second panneau ni de titre, mais
+   un espace qui la distingue clairement des aliments déjà enregistrés. */
+.manual-add-inline { margin-top: 10px; padding-top: 10px; border-top: 1px solid var(--border); }
+
 .item-row {
   display: grid;
   grid-template-columns: 1fr 76px 110px auto;
