@@ -48,21 +48,19 @@ export async function askCloudChat(
   system: string,
   turns: ChatTurn[],
   cfg: CloudConfig,
-  opts?: { maxTokens?: number },
+  opts?: { maxTokens?: number; signal?: AbortSignal },
 ): Promise<string> {
   const maxTokens = opts?.maxTokens ?? 2048;
   try {
     if (cfg.provider === 'anthropic') {
-      const resp = await anthropicClient(cfg).messages.create({
-        model: cfg.model,
-        max_tokens: maxTokens,
-        system,
-        messages: turns,
-      });
+      const resp = await anthropicClient(cfg).messages.create(
+        { model: cfg.model, max_tokens: maxTokens, system, messages: turns },
+        { signal: opts?.signal },
+      );
       return anthropicText(resp);
     }
     const messages: CompatMessage[] = [{ role: 'system', content: system }, ...turns];
-    return await chatOpenAICompat(messages, cfg, { maxTokens });
+    return await chatOpenAICompat(messages, cfg, { maxTokens, signal: opts?.signal });
   } catch (e) {
     throw wrap(e, cfg);
   }

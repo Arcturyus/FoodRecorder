@@ -1,5 +1,6 @@
 import { useEffect, useRef, type ReactNode } from 'react';
 import { SECTIONS_STORE, useUiPref } from './uiPrefs';
+import { useNavigation } from '../agent/navigation';
 
 /**
  * Panneau repliable. Remplace `<div className="panel"><h2>…</h2>` là où le
@@ -38,6 +39,8 @@ export function Section({
   children: ReactNode;
 }) {
   const [open, setOpen] = useUiPref(SECTIONS_STORE, id, defaultOpen);
+  const agentSection = useNavigation((s) => s.section);
+  const agentNonce = useNavigation((s) => s.nonce);
 
   const lastSignal = useRef(openSignal);
   useEffect(() => {
@@ -46,8 +49,12 @@ export function Section({
     setOpen(true);
   }, [openSignal, setOpen]);
 
+  useEffect(() => {
+    if (agentSection === id) setOpen(true);
+  }, [agentSection, agentNonce, id, setOpen]);
+
   return (
-    <div className="panel">
+    <div className="panel" data-agent-section={id}>
       <div className="sec-head">
         <button type="button" className="sec-toggle" aria-expanded={open} onClick={() => setOpen(!open)}>
           <span className={`sec-chevron${open ? ' open' : ''}`} aria-hidden="true">

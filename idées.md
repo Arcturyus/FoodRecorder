@@ -144,7 +144,7 @@ droite ?) — l'UX reste à trouver.
 
 Ajouter d'autres clés API : modèles open source, OpenAI, voire Codex CLI si c'est faisable sur le modèle
 du pont Claude Code.
-- gemeini, mistral aussi avec version free tier (pourquoi pas open router)
+- gemini, mistral aussi avec version free tier (pourquoi pas open router)
 
 ### C-05 · Fusion de doublons : rapprocher aussi par le contenu ?
 

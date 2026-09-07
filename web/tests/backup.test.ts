@@ -90,7 +90,7 @@ describe('aller-retour export → import', () => {
     const weightId = s.addWeightEntry({ date: '2026-07-20', heure: '08:00', aJeun: true, nu: true, poids: 66.1, source: 'manuel' });
     s.setWeightConfig({ objectifPoids: 68 });
     s.setProfile({ objectif: 'perte', deficitPct: 15 });
-    useStore.setState({ extractionMode: 'claudecode', llmModel: 'modele-test' });
+    useStore.setState({ extractionMode: 'claudecode', llmModel: 'modele-test', cliModels: { codex: 'gpt-test', claude: 'sonnet' } });
 
     const json = JSON.stringify(buildBackup());
 
@@ -104,6 +104,7 @@ describe('aller-retour export → import', () => {
       nutrientImportance: {},
       extractionMode: 'rules',
       llmModel: 'autre-modele',
+      cliModels: {},
     });
 
     const resume = importBackup(json);
@@ -120,6 +121,7 @@ describe('aller-retour export → import', () => {
     // Réglages : restaurés eux aussi (on ne veut pas les refaire à la main).
     expect(after.extractionMode).toBe('claudecode');
     expect(after.llmModel).toBe('modele-test');
+    expect(after.cliModels).toEqual({ codex: 'gpt-test', claude: 'sonnet' });
 
     // Le résumé annonce ce qui est revenu, y compris les données discrètes.
     expect(resume).toContain('1 note(s) de jour');
