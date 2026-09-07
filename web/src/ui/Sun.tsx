@@ -1,14 +1,6 @@
 import { useMemo, useRef, useState } from 'react';
-import { currentCliLabel } from '../extraction/bridge';
 import type { FocusEvent } from 'react';
-import { useStore, todayStr, nowTime, useCloudConfig } from '../store/store';
-import { MicRecorder } from '../stt/recorder';
-import { isSttLoaded, loadStt, transcribe } from '../stt/whisper';
-import { NativeRecognizer } from '../stt/webspeech';
-import { extractSun } from '../extraction/sun';
-import type { SunPatch } from '../extraction/sun';
-import { isSyncConfigured, pushSunTranscript } from '../sync/supabase';
-import { useSyncStore } from '../sync/syncStore';
+import { useStore, todayStr, nowTime } from '../store/store';
 import {
   SKY_OPTIONS,
   SKIN_OPTIONS,
@@ -20,10 +12,9 @@ import {
   vitaminDBreakdown,
   sunVitDForDate,
   normalizeCreme,
-  completeSunExposure,
   seasonHint,
 } from '../sun/vitaminD';
-import type { SkyCondition, SkinExposure, Phenotype, Creme, SunExposure, SunDefaults } from '../sun/vitaminD';
+import type { SkyCondition, SkinExposure, Phenotype, Creme, SunExposure } from '../sun/vitaminD';
 import { fmt } from './format';
 
 /** Durée lisible : « 45 min », « 1 h », « 1 h 30 ». */
@@ -33,22 +24,6 @@ function fmtDuree(min: number): string {
   const m = min % 60;
   return m === 0 ? `${h} h` : `${h} h ${m}`;
 }
-
-/** Résumé court d'un patch dicté (vérification rapide). */
-function summarizeSun(p: SunPatch): string {
-  const parts: string[] = [];
-  if (p.date) parts.push(new Date(`${p.date}T00:00:00`).toLocaleDateString('fr-FR', { weekday: 'short', day: 'numeric', month: 'short' }));
-  if (p.heure) parts.push(p.heure);
-  if (p.dureeMin != null) parts.push(fmtDuree(p.dureeMin));
-  if (p.ciel) parts.push(SKY_OPTIONS.find((o) => o.value === p.ciel)?.label ?? p.ciel);
-  if (p.peau) parts.push(SKIN_OPTIONS.find((o) => o.value === p.peau)?.short ?? p.peau);
-  if (p.phenotype) parts.push(PHENOTYPE_OPTIONS.find((o) => o.value === p.phenotype)?.label ?? p.phenotype);
-  if (p.creme && normalizeCreme(p.creme) !== 'aucune') {
-    parts.push(CREME_OPTIONS.find((o) => o.value === normalizeCreme(p.creme))?.label ?? 'crème solaire');
-  }
-  return parts.join(' · ');
-}
-
 /**
  * Section « Soleil » : le soleil n'est pas un aliment, on enregistre ici les
  * sorties (heure, durée, ciel, peau découverte, phototype, crème) et le gain
@@ -83,18 +58,6 @@ export function Sun({ date }: { date?: string } = {}) {
   const breakdown = vitaminDBreakdown(draft);
   const hint = seasonHint(activeDate);
 
-  /**
-   * Une dictée est auto-validée, comme un repas : chaque sortie comprise est
-   * ajoutée directement au journal (complétée par les réglages du formulaire
-   * pour ce qui n'a pas été dit). Les sorties restent modifiables dans la liste
-   * ci-dessous. Retourne le nombre ajouté, pour le message de statut.
-   */
-  function addFromDictation(sorties: SunPatch[]): number {
-    const defaults: SunDefaults = { date: activeDate, heure, dureeMin: duree, ciel, peau, phenotype, creme };
-    for (const p of sorties) addSunExposure(completeSunExposure(p, defaults, fixedDate));
-    return sorties.length;
-  }
-
   function add() {
     addSunExposure({ date: activeDate, heure, dureeMin: duree, ciel, peau, phenotype, creme });
   }
@@ -107,8 +70,6 @@ export function Sun({ date }: { date?: string } = {}) {
           gain du jour : <strong>{fmt(totalDay, 1)} µg</strong>
         </span>
       </div>
-
-      <SunDictation onSorties={addFromDictation} date={date} />
 
       {/* Heure + jour sur une même ligne : créneaux pratiques en un clic + heure/date précises */}
       <div className="sun-field">
@@ -230,7 +191,6 @@ export function Sun({ date }: { date?: string } = {}) {
     </div>
   );
 }
-
 /**
  * Une sortie enregistrée : résumé sur une ligne, dépliable pour corriger sur
  * place. La dictée étant auto-validée, c'est ici qu'on rattrape ce que l'IA a
@@ -434,163 +394,6 @@ function FormulaBreakdown({ breakdown }: { breakdown: ReturnType<typeof vitaminD
           )}
         </div>
       </div>
-    </div>
-  );
-}
-
-/**
- * Dictée d'une ou plusieurs sorties au soleil : mêmes moteurs STT/extraction que
- * le reste de l'app. Le résultat est enregistré directement (auto-validation,
- * comme un repas) ; les sorties restent corrigeables dans la liste du jour.
- */
-function SunDictation({ onSorties, date }: { onSorties: (sorties: SunPatch[]) => number; date?: string }) {
-  const [text, setText] = useState('');
-  const [status, setStatus] = useState('');
-  const [busy, setBusy] = useState(false);
-  const [recording, setRecording] = useState(false);
-  const recorderRef = useRef<MicRecorder | null>(null);
-  const nativeRef = useRef<NativeRecognizer | null>(null);
-
-  const extractionMode = useStore((s) => s.extractionMode);
-  const cloud = useCloudConfig();
-  const sttEngine = useStore((s) => s.sttEngine);
-  const sttModel = useStore((s) => s.sttModel);
-  const deviceId = useStore((s) => s.deviceId);
-  const profileId = useSyncStore((s) => s.profileId);
-
-  async function handleRecord() {
-    return sttEngine === 'native' ? handleNative() : handleWhisper();
-  }
-
-  async function handleNative() {
-    if (!recording) {
-      try {
-        const rec = new NativeRecognizer();
-        rec.start((live) => setText(live), text);
-        nativeRef.current = rec;
-        setRecording(true);
-        setStatus('Dictée en cours… (parlez, puis cliquez pour arrêter)');
-      } catch (e) {
-        setStatus(`Reconnaissance vocale indisponible : ${(e as Error).message}`);
-      }
-      return;
-    }
-    setRecording(false);
-    setBusy(true);
-    try {
-      const transcript = await nativeRef.current!.stop();
-      if (transcript) setText(transcript);
-      setStatus(transcript ? 'Relisez puis « Analyser ».' : 'Aucune parole reconnue.');
-    } catch (e) {
-      setStatus(`Erreur : ${(e as Error).message}`);
-    } finally {
-      nativeRef.current = null;
-      setBusy(false);
-    }
-  }
-
-  async function handleWhisper() {
-    if (!recording) {
-      try {
-        const rec = new MicRecorder();
-        await rec.start();
-        recorderRef.current = rec;
-        setRecording(true);
-        setStatus('Enregistrement… (parlez, puis cliquez pour arrêter)');
-      } catch {
-        setStatus('Micro inaccessible. Vérifiez les autorisations du navigateur.');
-      }
-      return;
-    }
-    setRecording(false);
-    setBusy(true);
-    try {
-      const { audio } = await recorderRef.current!.stop();
-      if (audio.length === 0) {
-        setStatus('Aucun son capté.');
-        return;
-      }
-      if (!isSttLoaded()) {
-        setStatus('Chargement du modèle de transcription…');
-        await loadStt(sttModel, (s, p) => setStatus(`Modèle STT : ${s} ${Math.round(p * 100)}%`));
-      }
-      setStatus('Transcription…');
-      const transcript = await transcribe(audio);
-      setText(transcript);
-      setStatus(transcript ? 'Relisez puis « Analyser ».' : 'Aucune parole reconnue.');
-    } catch (e) {
-      setStatus(`Erreur : ${(e as Error).message}`);
-    } finally {
-      setBusy(false);
-    }
-  }
-
-  async function analyze() {
-    const clean = text.trim();
-    if (!clean) {
-      setStatus('Rien à analyser.');
-      return;
-    }
-    setBusy(true);
-    setStatus('Extraction…');
-    try {
-      const { sorties, source } = await extractSun(clean, extractionMode, cloud);
-      if (sorties.length === 0) {
-        setStatus('Rien compris. Réglez les curseurs à la main ci-dessous.');
-        return;
-      }
-      const n = onSorties(sorties);
-      const via = source === 'rules' && extractionMode !== 'rules' ? ' [règles, IA indisponible]' : '';
-      const detail = sorties.map(summarizeSun).filter(Boolean).join(' — ');
-      setStatus(
-        n > 1
-          ? `✓ ${n} sorties ajoutées${via} : ${detail}. Corrigez-les ci-dessous si besoin.`
-          : `✓ Sortie ajoutée${via} : ${detail}. Corrigez-la ci-dessous si besoin.`,
-      );
-      setText('');
-    } catch (e) {
-      // Pont CLI indisponible ici (typiquement sur téléphone) : on met la
-      // dictée en file d'attente pour l'ordinateur, comme pour un repas, plutôt
-      // que de la perdre. Même repli que Capture.
-      if (extractionMode === 'claudecode' && isSyncConfigured() && profileId) {
-        try {
-          // Jour local résolu (comme l'ajout direct) + heure d'envoi : l'ordinateur
-          // qui traitera plus tard datera la sortie de MAINTENANT, pas de son heure
-          // de traitement (cf. addSunExposure / poller).
-          await pushSunTranscript(deviceId, profileId, clean, date ?? todayStr(), Date.now());
-          setText('');
-          setStatus(`Pont ${currentCliLabel()} indisponible ici : dictée mise en file d’attente, sera traitée dès que l’ordinateur sera disponible.`);
-          return;
-        } catch (syncErr) {
-          setStatus(`Échec de la mise en file d'attente : ${(syncErr as Error).message}`);
-          return;
-        }
-      }
-      setStatus(`Erreur : ${(e as Error).message}`);
-    } finally {
-      setBusy(false);
-    }
-  }
-
-  return (
-    <div style={{ margin: '6px 0 10px' }}>
-      <div className="mic-row">
-        <button className={`record-btn ${recording ? 'rec' : 'primary'}`} onClick={handleRecord} disabled={busy && !recording}>
-          {recording ? '⏹ Arrêter' : '🎙 Dicter'}
-        </button>
-        <textarea
-          placeholder="…ou dictez : « 30 min au soleil ce midi en t-shirt, peau claire, sans crème »"
-          value={text}
-          onChange={(e) => setText(e.target.value)}
-          onKeyDown={(e) => {
-            if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) analyze();
-          }}
-        />
-        <button onClick={analyze} disabled={busy || !text.trim()}>
-          Analyser
-        </button>
-      </div>
-      {status && <div className="status">{status}</div>}
     </div>
   );
 }

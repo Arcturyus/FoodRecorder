@@ -30,6 +30,11 @@ export function currentCliLabel(): string {
   return CLI_LABELS[currentCli()] ?? CLI_LABELS.claude;
 }
 
+/** Modèle explicitement choisi pour le CLI actif, ou défaut géré par le CLI. */
+export function currentCliModel(): string | undefined {
+  return useStore.getState().cliModels[currentCli()]?.trim() || undefined;
+}
+
 export interface BridgeRequest {
   prompt: string;
   /** Nomme le fichier d'archive côté serveur (photo/repas/verify/soleil…). */
@@ -37,6 +42,8 @@ export interface BridgeRequest {
   /** Relève le délai d'attente pour un appel lourd assumé par l'utilisateur. */
   timeoutMs?: number;
   image?: { data: string; mediaType: string };
+  /** Permet au chat agent d'interrompre un tour long. */
+  signal?: AbortSignal;
 }
 
 /**
@@ -45,10 +52,12 @@ export interface BridgeRequest {
  * la commande en échec — l'appelant décide s'il replie ou remonte.
  */
 export async function callBridge(req: BridgeRequest): Promise<string> {
+  const { signal, ...payload } = req;
   const res = await fetch(ENDPOINT, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ ...req, cli: currentCli() }),
+    body: JSON.stringify({ ...payload, cli: currentCli(), model: currentCliModel() }),
+    signal,
   });
   const data = (await res.json().catch(() => ({}))) as { text?: string; error?: string };
   if (!res.ok || data.error) throw new Error(data.error || `HTTP ${res.status}`);
@@ -61,6 +70,20 @@ export interface BridgeStatus {
   error?: string;
 }
 
+export interface BridgeModel {
+  id: string;
+  label: string;
+  description?: string;
+  isDefault?: boolean;
+}
+
+export interface BridgeModelsResult {
+  cli: CliBridge;
+  models: BridgeModel[];
+  source: 'account' | 'cli-help';
+  warning?: string;
+}
+
 /** Santé du pont + du CLI demandé (le middleware n'existe qu'en dev). */
 export async function checkBridge(cli: CliBridge = currentCli()): Promise<BridgeStatus> {
   try {
@@ -70,4 +93,17 @@ export async function checkBridge(cli: CliBridge = currentCli()): Promise<Bridge
   } catch (e) {
     return { available: false, error: (e as Error).message };
   }
+}
+
+/** Interroge la CLI installée au clic, sans lancer de génération de chat. */
+export async function listBridgeModels(cli: CliBridge = currentCli()): Promise<BridgeModelsResult> {
+  const res = await fetch(`${ENDPOINT}?cli=${cli}&models=1`);
+  const data = (await res.json().catch(() => ({}))) as Partial<BridgeModelsResult> & { error?: string };
+  if (!res.ok || data.error) throw new Error(data.error || `HTTP ${res.status}`);
+  return {
+    cli,
+    models: Array.isArray(data.models) ? data.models : [],
+    source: data.source === 'account' ? 'account' : 'cli-help',
+    warning: data.warning,
+  };
 }

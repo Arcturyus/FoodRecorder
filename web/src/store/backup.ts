@@ -31,6 +31,7 @@ export interface BackupSettings {
   /** Modèle retenu PAR fournisseur. Les clés, elles, ne sortent jamais d'ici. */
   cloudModels: Partial<Record<CloudProvider, string>>;
   cliBridge: CliBridge;
+  cliModels: Partial<Record<CliBridge, string>>;
   cloudModel: string;
 }
 
@@ -88,6 +89,7 @@ export function buildBackup(): BackupData {
       cloudProvider: s.cloudProvider,
       cloudModels: s.cloudModels,
       cliBridge: s.cliBridge,
+      cliModels: s.cliModels,
       cloudModel: s.cloudModel,
     },
   };
@@ -153,6 +155,7 @@ export function importBackup(text: string): string {
           ...(b.settings.cloudProvider ? { cloudProvider: b.settings.cloudProvider } : {}),
           ...(b.settings.cloudModels ? { cloudModels: b.settings.cloudModels } : {}),
           ...(b.settings.cliBridge ? { cliBridge: b.settings.cliBridge } : {}),
+          ...(b.settings.cliModels ? { cliModels: b.settings.cliModels } : {}),
           ...(b.settings.cloudModel ? { cloudModel: b.settings.cloudModel } : {}),
         }
       : {}),
