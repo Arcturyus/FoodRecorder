@@ -5,7 +5,7 @@ import { WEIGHT_METRICS } from '../weight/types';
 import type { WeightEntry, WeightMetricKey } from '../weight/types';
 import type { WeightPatch } from '../extraction/weight';
 import { fmt } from './format';
-import { NumberField } from './NumberField';
+import { SuggestedNumberField } from './SuggestedNumberField';
 
 /** Champs numériques saisissables (poids requis en tête). */
 const NUM_FIELDS = WEIGHT_METRICS; // même ordre que le CSV
@@ -34,8 +34,8 @@ function toNum(s: string): number | undefined {
  */
 export function WeightForm({ prefill }: { prefill?: { patch: WeightPatch; nonce: number } | null }) {
   const addWeightEntry = useStore((s) => s.addWeightEntry);
+  const weightEntries = useStore((s) => s.weightEntries);
   const weightConfig = useStore((s) => s.weightConfig);
-  const setWeightConfig = useStore((s) => s.setWeightConfig);
   const sexe = useStore((s) => s.profile.sexe);
 
   const [draft, setDraft] = useState<Draft>(EMPTY_DRAFT);
@@ -44,8 +44,13 @@ export function WeightForm({ prefill }: { prefill?: { patch: WeightPatch; nonce:
   const [aJeun, setAJeun] = useState(true);
   const [nu, setNu] = useState(true);
   const [remarque, setRemarque] = useState('');
-  const [showConfig, setShowConfig] = useState(false);
   const [flash, setFlash] = useState('');
+  const [acceptedFields, setAcceptedFields] = useState<Set<WeightMetricKey>>(() => new Set());
+
+  const lastWeight = useMemo(
+    () => [...weightEntries].sort((a, b) => `${a.date} ${a.heure}`.localeCompare(`${b.date} ${b.heure}`)).at(-1),
+    [weightEntries],
+  );
 
   // Applique un pré-remplissage venant de la dictée.
   useEffect(() => {
@@ -59,6 +64,7 @@ export function WeightForm({ prefill }: { prefill?: { patch: WeightPatch; nonce:
       }
       return next;
     });
+    setAcceptedFields((current) => new Set([...current, ...NUM_FIELDS.filter(({ key }) => p[key] != null).map(({ key }) => key)]));
     if (p.aJeun != null) setAJeun(p.aJeun);
     if (p.nu != null) setNu(p.nu);
     if (p.date && p.date <= todayStr()) setDate(p.date);
@@ -88,6 +94,7 @@ export function WeightForm({ prefill }: { prefill?: { patch: WeightPatch; nonce:
   const canSave = poids != null && poids > 0;
 
   function set(key: WeightMetricKey, v: string) {
+    setAcceptedFields((current) => new Set(current).add(key));
     setDraft((d) => ({ ...d, [key]: v }));
   }
 
@@ -98,6 +105,7 @@ export function WeightForm({ prefill }: { prefill?: { patch: WeightPatch; nonce:
     setAJeun(true);
     setNu(true);
     setRemarque('');
+    setAcceptedFields(new Set());
   }
 
   function save() {
@@ -152,7 +160,15 @@ export function WeightForm({ prefill }: { prefill?: { patch: WeightPatch; nonce:
             {m.label}
             {m.unit ? ` (${m.unit})` : ''}
             {m.key === 'poids' ? ' *' : ''}
-            <NumberField min={0} step={0.1} value={draft[m.key]} onChange={(v) => set(m.key, v)} />
+            <SuggestedNumberField
+              min={0}
+              step={0.1}
+              value={draft[m.key]}
+              suggestedValue={lastWeight?.[m.key]}
+              accepted={acceptedFields.has(m.key)}
+              onAccept={() => setAcceptedFields((current) => new Set(current).add(m.key))}
+              onChange={(v) => set(m.key, v)}
+            />
           </label>
         ))}
       </div>
@@ -176,9 +192,6 @@ export function WeightForm({ prefill }: { prefill?: { patch: WeightPatch; nonce:
           <br />
           Métabolisme basal — Harris-Benedict : {fmt(computed.bmrHarrisBenedict)} kcal · Mifflin-St Jeor :{' '}
           {fmt(computed.bmrMifflinStJeor)} kcal
-          <br />
-          Avec activité (× {fmt(weightConfig.activityMultiplier, 2)}) — HB : {fmt(computed.tmaHB)} kcal · MSJ :{' '}
-          {fmt(computed.tmaMSJ)} kcal
         </div>
       )}
 
@@ -186,43 +199,7 @@ export function WeightForm({ prefill }: { prefill?: { patch: WeightPatch; nonce:
         <button className="primary" disabled={!canSave} onClick={save}>
           Enregistrer la pesée
         </button>
-        <button className="ghost small" onClick={() => setShowConfig((v) => !v)}>
-          {showConfig ? 'Masquer les constantes' : 'Constantes (taille, âge…)'}
-        </button>
       </div>
-
-      {showConfig && (
-        <div className="row wrap-form" style={{ marginTop: 10 }}>
-          <label className="field">
-            Taille (m)
-            <NumberField
-              step={0.01}
-              value={weightConfig.taille}
-              onChange={(v) => setWeightConfig({ taille: toNum(v) || weightConfig.taille })}
-            />
-          </label>
-          <label className="field">
-            Âge (ans)
-            <NumberField
-              step={1}
-              value={weightConfig.age}
-              onChange={(v) => setWeightConfig({ age: toNum(v) ?? weightConfig.age })}
-            />
-          </label>
-          <label className="field">
-            Multiplicateur d'activité
-            <NumberField
-              step={0.05}
-              value={weightConfig.activityMultiplier}
-              onChange={(v) => setWeightConfig({ activityMultiplier: toNum(v) || weightConfig.activityMultiplier })}
-            />
-          </label>
-          <span className="small" style={{ flex: '1 1 100%' }}>
-            Le sexe ({sexe}) provient du profil (en haut de cet onglet). Ces constantes servent aux formules IMC /
-            métabolisme.
-          </span>
-        </div>
-      )}
 
       {flash && <div className="status" style={{ marginTop: 8 }}>{flash}</div>}
     </div>

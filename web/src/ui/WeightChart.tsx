@@ -83,8 +83,8 @@ interface Series {
   color: string;
   points: SeriesPoint[];
   dashed?: boolean;
-  /** Axe de droite (unité différente, ex. kcal superposées au poids). */
-  rightAxis?: boolean;
+  /** Axe de droite, avec un second axe décalé pour kcal + protéines simultanées. */
+  rightAxis?: 'right' | 'far';
   /** Dessiner les points individuels (sinon ligne seule). */
   drawPoints?: boolean;
   /**
@@ -129,6 +129,27 @@ export function dailyKcalPoints(
     const kcal = kcalByDate.get(date);
     if (!isDayCounted(mutedDays, kcal != null, date)) continue;
     out.push({ t, value: kcal ?? 0 });
+  }
+  return out;
+}
+
+/** Même règle de jours comptés que les kcal, appliquée aux protéines. */
+export function dailyProteinPoints(
+  journal: { date: string; items: { nutrients: { proteines: number } }[] }[],
+  mutedDays: Record<string, boolean>,
+  range: { start: string; end: string },
+): SeriesPoint[] {
+  const proteinByDate = new Map<string, number>();
+  for (const entry of journal) {
+    const protein = entry.items.reduce((sum, item) => sum + item.nutrients.proteines, 0);
+    proteinByDate.set(entry.date, (proteinByDate.get(entry.date) ?? 0) + protein);
+  }
+  const out: SeriesPoint[] = [];
+  for (let t = dayMs(range.start); t <= dayMs(range.end); t += DAY_MS) {
+    const date = todayStr(new Date(t));
+    const protein = proteinByDate.get(date);
+    if (!isDayCounted(mutedDays, protein != null, date)) continue;
+    out.push({ t, value: protein ?? 0 });
   }
   return out;
 }
@@ -224,15 +245,15 @@ export function WeightChart({ onEditEntry }: { onEditEntry?: (id: string) => voi
   /** Fenêtre de la moyenne mobile, en jours (réglable comme dans Stats). */
   const [maWindow, setMaWindow] = useState(7);
   const [showKcal, setShowKcal] = useState(false);
+  const [showProtein, setShowProtein] = useState(false);
   /** Ne garder que les pesées comparables (à jeun ET nu). */
   const [comparableOnly, setComparableOnly] = useState(false);
   /** Filtre horaire : pesées avant 11h et/ou après 14h (aucun coché = tout). */
   const [heureFilter, setHeureFilter] = useState({ before11: false, after14: false });
   /** Masse musculaire : kg par défaut (% × poids), bascule vers le % mesuré. */
   const [muscleUnit, setMuscleUnit] = useState<'kg' | '%'>('kg');
-  /** Métabolismes : courbes affichées + basal ou × multiplicateur d'activité. */
+  /** Métabolismes : courbes basales affichées. */
   const [metaboShow, setMetaboShow] = useState({ hb: true, msj: true, machine: true });
-  const [withActivity, setWithActivity] = useState(false);
 
   const earliest = useMemo(() => {
     if (entries.length === 0) return undefined;
@@ -305,31 +326,37 @@ export function WeightChart({ onEditEntry }: { onEditEntry?: (id: string) => voi
     [mode, showKcal, journal, range, mutedDays, gran],
   );
 
+  const proteinPoints: SeriesPoint[] = useMemo(
+    () =>
+      mode !== 'poids' || !showProtein
+        ? []
+        : aggregateByGranularity(dailyProteinPoints(journal, mutedDays, range), gran),
+    [mode, showProtein, journal, range, mutedDays, gran],
+  );
+
   /**
    * Séries du mode « Métabolismes » : HB / MSJ / balance (cases à cocher),
-   * basal ou × multiplicateur d'activité (les trois sont des basaux, le même
-   * multiplicateur s'applique).
+   * toutes basales. L'activité détaillée vit dans le profil, pas dans une
+   * constante propre aux pesées.
    */
   const metaboSeries: Series[] = useMemo(() => {
     if (mode !== 'metabolismes') return [];
-    const mult = withActivity ? weightConfig.activityMultiplier : 1;
-    const suffix = withActivity ? ` × ${fmt(weightConfig.activityMultiplier, 2)}` : '';
     const hb: SeriesPoint[] = [];
     const msj: SeriesPoint[] = [];
     const machine: SeriesPoint[] = [];
     for (const e of inRange) {
       const t = entryMs(e);
       const c = computedByEntry.get(e.id)!;
-      hb.push({ e, t, value: c.bmrHarrisBenedict * mult });
-      msj.push({ e, t, value: c.bmrMifflinStJeor * mult });
-      if (e.metabolismeBasalMachine != null) machine.push({ e, t, value: e.metabolismeBasalMachine * mult });
+      hb.push({ e, t, value: c.bmrHarrisBenedict });
+      msj.push({ e, t, value: c.bmrMifflinStJeor });
+      if (e.metabolismeBasalMachine != null) machine.push({ e, t, value: e.metabolismeBasalMachine });
     }
     const out: Series[] = [];
-    if (metaboShow.hb) out.push({ label: `Harris-Benedict${suffix}`, color: C.accent, points: aggregateByGranularity(hb, gran), drawPoints: true });
-    if (metaboShow.msj) out.push({ label: `Mifflin-St Jeor${suffix}`, color: C.accent2, points: aggregateByGranularity(msj, gran), drawPoints: true });
-    if (metaboShow.machine) out.push({ label: `Balance${suffix}`, color: C.warn, points: aggregateByGranularity(machine, gran), drawPoints: true });
+    if (metaboShow.hb) out.push({ label: 'Harris-Benedict', color: C.accent, points: aggregateByGranularity(hb, gran), drawPoints: true });
+    if (metaboShow.msj) out.push({ label: 'Mifflin-St Jeor', color: C.accent2, points: aggregateByGranularity(msj, gran), drawPoints: true });
+    if (metaboShow.machine) out.push({ label: 'Balance', color: C.warn, points: aggregateByGranularity(machine, gran), drawPoints: true });
     return out;
-  }, [mode, inRange, computedByEntry, weightConfig.activityMultiplier, metaboShow, withActivity, gran]);
+  }, [mode, inRange, computedByEntry, metaboShow, gran]);
 
   /** Séries du mode « Autres » : masse osseuse (axe gauche) + graisse viscérale (axe droit). */
   const autresSeries: Series[] = useMemo(() => {
@@ -343,7 +370,7 @@ export function WeightChart({ onEditEntry }: { onEditEntry?: (id: string) => voi
     }
     return [
       { label: 'Masse osseuse', color: C.accent, points: aggregateByGranularity(os, gran), drawPoints: true, unit: 'kg' },
-      { label: 'Graisse viscérale', color: C.violet, points: aggregateByGranularity(visc, gran), drawPoints: true, rightAxis: true, unit: '' },
+      { label: 'Graisse viscérale', color: C.violet, points: aggregateByGranularity(visc, gran), drawPoints: true, rightAxis: 'right', unit: '' },
     ];
   }, [mode, inRange, gran]);
 
@@ -450,14 +477,26 @@ export function WeightChart({ onEditEntry }: { onEditEntry?: (id: string) => voi
         label: lisse ? `kcal mangées${suffix}` : 'kcal mangées (par jour)',
         color: C.warn,
         points: lisse ? ma(kcalPoints) : kcalPoints,
-        rightAxis: true,
+        rightAxis: 'right',
         dashed: true,
         unit: 'kcal',
         rawPoints: lisse ? kcalPoints : undefined,
       });
     }
+    if (proteinPoints.length > 0) {
+      const lisse = smoothed && proteinPoints.length >= 2;
+      out.push({
+        label: lisse ? `protéines${suffix}` : 'protéines (par jour)',
+        color: C.violet,
+        points: lisse ? ma(proteinPoints) : proteinPoints,
+        rightAxis: kcalPoints.length > 0 ? 'far' : 'right',
+        dashed: true,
+        unit: 'g',
+        rawPoints: lisse ? proteinPoints : undefined,
+      });
+    }
     return out;
-  }, [mode, muscleUnit, points, showMa, maWindow, kcalPoints, metaboSeries, autresSeries, inRange, computedByEntry, gran]);
+  }, [mode, muscleUnit, points, showMa, maWindow, kcalPoints, proteinPoints, metaboSeries, autresSeries, inRange, computedByEntry, gran]);
 
   const targetLine = mode === 'poids' && objectif != null ? { value: objectif, label: `objectif ${fmt(objectif, 1)} kg` } : null;
   const hasHollow = series.some((s) => s.points.some((p) => p.hollow));
@@ -555,6 +594,14 @@ export function WeightChart({ onEditEntry }: { onEditEntry?: (id: string) => voi
                 <input type="checkbox" checked={showKcal} onChange={(e) => setShowKcal(e.target.checked)} style={{ width: 'auto' }} />
                 Superposer kcal mangées
               </label>
+              <label
+                className="small"
+                style={{ display: 'flex', alignItems: 'center', gap: 6, cursor: 'pointer' }}
+                data-tip="Même règle que les kcal : seuls les jours enregistrés sont tracés ; un jour vide compté (jeûne) vaut 0 g."
+              >
+                <input type="checkbox" checked={showProtein} onChange={(e) => setShowProtein(e.target.checked)} style={{ width: 'auto' }} />
+                Superposer protéines
+              </label>
               <label className="small" style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
                 Objectif (kg)
                 <NumberField
@@ -575,14 +622,6 @@ export function WeightChart({ onEditEntry }: { onEditEntry?: (id: string) => voi
 
       {mode === 'metabolismes' && (
         <div className="row" style={{ gap: 14, flexWrap: 'wrap', alignItems: 'center', marginBottom: 6 }}>
-          <span className="row" style={{ gap: 0 }} data-tip={`Multiplie les courbes par le multiplicateur d'activité (${fmt(weightConfig.activityMultiplier, 2)}, réglable dans les constantes)`}>
-            <button className={`small ${!withActivity ? 'chip-active' : 'ghost'}`} onClick={() => setWithActivity(false)}>
-              Basal
-            </button>
-            <button className={`small ${withActivity ? 'chip-active' : 'ghost'}`} onClick={() => setWithActivity(true)}>
-              × {fmt(weightConfig.activityMultiplier, 2)} (activité)
-            </button>
-          </span>
           {(
             [
               ['hb', 'Harris-Benedict'],
@@ -707,7 +746,7 @@ function MultiLineChart({
 }) {
   const W = 680;
   const H = 300;
-  const m = { top: 16, right: 46, bottom: 30, left: 46 };
+  const m = { top: 16, right: 86, bottom: 30, left: 46 };
   const svgRef = useRef<SVGSVGElement>(null);
   const [hover, setHover] = useState<{ si: number; pi: number } | null>(null);
   const [ptr, setPtr] = useState({ px: 0, py: 0 });
@@ -715,7 +754,8 @@ function MultiLineChart({
   const [drag, setDrag] = useState<{ x0: number; x1: number } | null>(null);
 
   const leftSeries = series.filter((s) => !s.rightAxis && s.points.length > 0);
-  const rightSeries = series.filter((s) => s.rightAxis && s.points.length > 0);
+  const rightSeries = series.filter((s) => s.rightAxis === 'right' && s.points.length > 0);
+  const farSeries = series.filter((s) => s.rightAxis === 'far' && s.points.length > 0);
   const allPoints = series.flatMap((s) => s.points);
 
   if (leftSeries.length === 0 || leftSeries.every((s) => s.points.length === 0)) {
@@ -737,11 +777,17 @@ function MultiLineChart({
   const [r0, r1] = rightVals.length > 0 ? [Math.min(...rightVals), Math.max(...rightVals)] : [0, 1];
   const rpad = axisPad(r0, r1);
   const yr = scaleLinear().domain([r0 - rpad, r1 + rpad]).nice().range([H - m.bottom, m.top]);
+  const farVals = farSeries.flatMap((s) => s.points.map((p) => p.value));
+  const [f0, f1] = farVals.length > 0 ? [Math.min(...farVals), Math.max(...farVals)] : [0, 1];
+  const fpad = axisPad(f0, f1);
+  const yf = scaleLinear().domain([f0 - fpad, f1 + fpad]).nice().range([H - m.bottom, m.top]);
 
-  const yScaleFor = (s: Series) => (s.rightAxis ? yr : ys);
+  const yScaleFor = (s: Series) => (s.rightAxis === 'right' ? yr : s.rightAxis === 'far' ? yf : ys);
   const yTicks = ys.ticks(5);
   const rTicks = rightSeries.length > 0 ? yr.ticks(5) : [];
+  const fTicks = farSeries.length > 0 ? yf.ticks(5) : [];
   const rightColor = rightSeries[0]?.color ?? C.warn;
+  const farColor = farSeries[0]?.color ?? C.violet;
   const nX = Math.max(...leftSeries.map((s) => s.points.length));
   const xTicks = xs.ticks(Math.min(6, Math.max(2, nX)));
 
@@ -870,6 +916,20 @@ function MultiLineChart({
             x={W - m.right + 8}
             y={yr(tk)}
             fill={rightColor}
+            fontSize={10}
+            textAnchor="start"
+            dominantBaseline="middle"
+            opacity={0.9}
+          >
+            {fmt(tk)}
+          </text>
+        ))}
+        {fTicks.map((tk) => (
+          <text
+            key={`f${tk}`}
+            x={W - m.right + 45}
+            y={yf(tk)}
+            fill={farColor}
             fontSize={10}
             textAnchor="start"
             dominantBaseline="middle"

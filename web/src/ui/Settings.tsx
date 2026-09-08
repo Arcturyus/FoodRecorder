@@ -444,7 +444,7 @@ function BackupPanel() {
           ⬇ Journal (CSV)
         </button>
         <button onClick={() => { exportWeightsCsvFile(); setStatus('CSV des pesées téléchargé.'); }}>
-          ⬇ Pesées (CSV)
+          ⬇ Suivi corps & apports (CSV)
         </button>
         <button className="ghost" onClick={() => fileRef.current?.click()}>
           ⬆ Importer une sauvegarde JSON…

@@ -26,11 +26,50 @@ export interface WeightEntry {
   source: ExtractionSource;
 }
 
+/**
+ * Mensurations prises ponctuellement au mètre ruban. Elles restent séparées
+ * des pesées : on peut mesurer un tour de taille sans se peser ce jour-là.
+ */
+export interface BodyMeasurementEntry {
+  id: string;
+  date: string; // YYYY-MM-DD
+  measurementProtocol?: string;
+  waistCm?: number;
+  upperArmLeftCm?: number;
+  upperArmRightCm?: number;
+  chestEmptyLungsCm?: number;
+  shoulderCm?: number;
+  hipCm?: number;
+  calfLeftCm?: number;
+  calfRightCm?: number;
+  neckCm?: number;
+  thighLeftCm?: number;
+  thighRightCm?: number;
+  forearmLeftCm?: number;
+  forearmRightCm?: number;
+  createdAt: number;
+}
+
+export const BODY_MEASUREMENT_FIELDS: { key: Exclude<keyof BodyMeasurementEntry, 'id' | 'date' | 'measurementProtocol' | 'createdAt'>; label: string }[] = [
+  { key: 'waistCm', label: 'Tour de taille' },
+  { key: 'upperArmLeftCm', label: 'Bras gauche' },
+  { key: 'upperArmRightCm', label: 'Bras droit' },
+  { key: 'chestEmptyLungsCm', label: 'Poitrine (poumons vides)' },
+  { key: 'shoulderCm', label: 'Épaules' },
+  { key: 'hipCm', label: 'Hanches' },
+  { key: 'calfLeftCm', label: 'Mollet gauche' },
+  { key: 'calfRightCm', label: 'Mollet droit' },
+  { key: 'neckCm', label: "Cou (sous la pomme d’Adam)" },
+  { key: 'thighLeftCm', label: 'Cuisse gauche' },
+  { key: 'thighRightCm', label: 'Cuisse droite' },
+  { key: 'forearmLeftCm', label: 'Avant-bras gauche' },
+  { key: 'forearmRightCm', label: 'Avant-bras droit' },
+];
+
 /** Constantes personnelles servant aux formules dérivées (éditables dans l'UI). */
 export interface WeightConfig {
   taille: number; // m
   age: number; // années
-  activityMultiplier: number; // ex. 1.55
   /** Objectif de poids (kg) affiché en ligne cible sur le graphique (optionnel). */
   objectifPoids?: number;
 }
@@ -38,7 +77,6 @@ export interface WeightConfig {
 export const DEFAULT_WEIGHT_CONFIG: WeightConfig = {
   taille: 1.815,
   age: 23,
-  activityMultiplier: 1.55,
 };
 
 /** Champs dérivés recalculés à partir d'une pesée + des constantes + du sexe. */
@@ -51,10 +89,6 @@ export interface WeightComputed {
   bmrMifflinStJeor: number;
   /** Indice de masse corporelle. */
   imc: number;
-  /** Taux métabolique avec activité (HB × multiplicateur), kcal. */
-  tmaHB: number;
-  /** Taux métabolique avec activité (MSJ × multiplicateur), kcal. */
-  tmaMSJ: number;
 }
 
 /** Clés numériques traçables sur les courbes (mesurées + poids). */

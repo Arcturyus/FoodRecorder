@@ -1,6 +1,6 @@
 import { describe, expect, it, beforeEach } from 'vitest';
 import { useStore, todayStr, recentFoodCounts, resolveItemNutrients } from '../src/store/store';
-import { buildBackup, importBackup, journalToCsv, weightsToCsv } from '../src/store/backup';
+import { buildBackup, importBackup, journalToCsv, progressToCsv, weightsToCsv } from '../src/store/backup';
 import { FOOD_BY_ID } from '../src/nutrition/foods';
 import { adoptFromCatalog } from '../src/nutrition/bank';
 import { isPhotoEntry } from '../src/nutrition/uncertainty';
@@ -389,6 +389,21 @@ describe('export / import (sauvegarde)', () => {
     const lines = csv.split('\r\n');
     expect(lines[0]).toContain('poids');
     expect(lines.length).toBe(useStore.getState().weightEntries.length + 1);
+  });
+
+  it('progressToCsv réunit apports, balance et mensurations dans une ligne quotidienne', () => {
+    useStore.setState({ profile: { ...useStore.getState().profile, sportHeures: 5, sportType: 'mixte' } });
+    useStore.getState().addFoodEntry(banane, 1, 'piece', '2026-01-01');
+    const weightId = useStore.getState().addWeightEntry({ date: '2026-01-01', heure: '08:00', aJeun: true, nu: true, poids: 65, masseGrasse: 17.5, masseMusculaire: 55, source: 'manuel' });
+    const measurementId = useStore.getState().addBodyMeasurement({ date: '2026-01-01', waistCm: 76, upperArmLeftCm: 34, measurementProtocol: 'à jeun, nu' });
+    const state = useStore.getState();
+    const weight = state.weightEntries.find((entry) => entry.id === weightId)!;
+    const measurement = state.bodyMeasurements.find((entry) => entry.id === measurementId)!;
+
+    const [header, row] = progressToCsv(state.entries.filter((entry) => entry.date === '2026-01-01'), [weight], [measurement]).split('\r\n');
+    expect(header).toContain('leanMassKg;skeletalMuscleKg;waistCm;trainingHoursPerWeek;trainingType');
+    expect(row).toContain('2026-01-01;65;');
+    expect(row).toContain(';76;5;mix cardio-muscu;à jeun, nu;34;');
   });
 });
 

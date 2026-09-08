@@ -1,6 +1,6 @@
 /**
  * Formules dérivées des pesées. Toutes vérifiées sur `stats balance.csv`
- * (taille 1,815 m · âge 23 · sexe M · multiplicateur 1,55) :
+ * (taille 1,815 m · âge 23 · sexe M) :
  *   67,6 kg → IMC 20,52 · HB 1734,45 · MSJ 1700,38 · squelettique 33,52.
  */
 
@@ -33,7 +33,5 @@ export function computeWeight(entry: WeightInput, config: WeightConfig, sexe: Se
     bmrHarrisBenedict,
     bmrMifflinStJeor,
     imc: config.taille > 0 ? poids / (config.taille * config.taille) : 0,
-    tmaHB: bmrHarrisBenedict * config.activityMultiplier,
-    tmaMSJ: bmrMifflinStJeor * config.activityMultiplier,
   };
 }

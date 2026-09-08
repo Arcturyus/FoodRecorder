@@ -4,6 +4,8 @@ import { EnergyPanel } from './EnergyPanel';
 import { WeightForm } from './WeightForm';
 import { WeightChart } from './WeightChart';
 import { WeightHistory } from './WeightHistory';
+import { BodyMeasurements } from './BodyMeasurements';
+import { BodyMeasurementsHistory } from './BodyMeasurementsHistory';
 
 /**
  * Onglet « Poids ». L'ordre suit ce qu'on vient y faire : d'abord ENREGISTRER une
@@ -22,8 +24,10 @@ export function Weight() {
   return (
     <>
       <WeightForm />
+      <BodyMeasurements />
       <WeightChart onEditEntry={(id) => setFocusEntry({ id, nonce: Date.now() })} />
       <WeightHistory focusEntry={focusEntry} />
+      <BodyMeasurementsHistory />
       <ProfilePanel />
       <EnergyPanel />
     </>

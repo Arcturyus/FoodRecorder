@@ -3,7 +3,7 @@ import { computeWeight } from '../src/weight/compute';
 import { DEFAULT_WEIGHT_CONFIG } from '../src/weight/types';
 import { SEED_WEIGHT_ENTRIES } from '../src/weight/seed';
 
-// Constantes du CSV : taille 1,815 m · âge 23 · sexe M · multiplicateur 1,55.
+// Constantes du CSV : taille 1,815 m · âge 23 · sexe M.
 const config = DEFAULT_WEIGHT_CONFIG;
 
 describe('formules de pesée (référence stats balance.csv)', () => {
@@ -13,8 +13,6 @@ describe('formules de pesée (référence stats balance.csv)', () => {
     expect(c.bmrHarrisBenedict).toBeCloseTo(1734.45, 1);
     expect(c.bmrMifflinStJeor).toBeCloseTo(1700.38, 1);
     expect(c.masseMusculaireSquelettique).toBeCloseTo(33.52, 2);
-    expect(c.tmaHB).toBeCloseTo(2688, 0);
-    expect(c.tmaMSJ).toBeCloseTo(2636, 0);
   });
 
   it('reproduit une autre ligne (65,5 kg, muscle 54,8 %)', () => {

@@ -177,8 +177,7 @@ function WeightRow({ entry, focus }: { entry: WeightEntry; focus?: number }) {
           <div className="hint" style={{ marginTop: 8 }}>
             IMC {fmt(computed.imc, 2)}
             {computed.masseMusculaireSquelettique != null && <> · MM squelettique {fmt(computed.masseMusculaireSquelettique, 2)} kg</>}
-            {' '}· BMR HB {fmt(computed.bmrHarrisBenedict)} · MSJ {fmt(computed.bmrMifflinStJeor)} kcal · avec activité HB{' '}
-            {fmt(computed.tmaHB)} / MSJ {fmt(computed.tmaMSJ)} kcal
+          {' '}· BMR HB {fmt(computed.bmrHarrisBenedict)} · MSJ {fmt(computed.bmrMifflinStJeor)} kcal
           </div>
         </>
       )}
