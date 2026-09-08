@@ -1,4 +1,4 @@
-import type { CSSProperties, KeyboardEventHandler } from 'react';
+import type { CSSProperties, FocusEventHandler, KeyboardEventHandler } from 'react';
 
 function decimalsOf(step: number): number {
   const s = step.toString();
@@ -29,6 +29,7 @@ type NumberFieldProps = {
   inputMode?: 'decimal' | 'numeric';
   autoFocus?: boolean;
   onKeyDown?: KeyboardEventHandler<HTMLInputElement>;
+  onFocus?: FocusEventHandler<HTMLInputElement>;
   style?: CSSProperties;
   title?: string;
 };
@@ -49,6 +50,7 @@ export function NumberField({
   inputMode = 'decimal',
   autoFocus,
   onKeyDown,
+  onFocus,
   style,
   title,
 }: NumberFieldProps) {
@@ -91,6 +93,7 @@ export function NumberField({
         value={value}
         autoFocus={autoFocus}
         onKeyDown={onKeyDown}
+        onFocus={onFocus}
         onChange={(e) => onChange(e.target.value)}
       />
       <button type="button" tabIndex={-1} onClick={() => bump(1)} aria-label="Augmenter">

@@ -33,7 +33,7 @@ import { normalizeForMatch } from '../nutrition/normalize';
 import { isPhotoEntry } from '../nutrition/uncertainty';
 import { DEFAULT_PROFILE } from '../nutrition/targets';
 import type { Profile, TargetOverride, TargetOverrides } from '../nutrition/targets';
-import type { WeightEntry, WeightConfig } from '../weight/types';
+import type { BodyMeasurementEntry, WeightEntry, WeightConfig } from '../weight/types';
 import { SEED_WEIGHT_ENTRIES, SEED_WEIGHT_CONFIG } from '../weight/seed';
 import type { SunExposure } from '../sun/vitaminD';
 import { normalizeCreme } from '../sun/vitaminD';
@@ -326,6 +326,7 @@ interface AppState {
   cloudModel: string;
   profile: Profile;
   weightEntries: WeightEntry[];
+  bodyMeasurements: BodyMeasurementEntry[];
   weightConfig: WeightConfig;
   favoriteMeals: FavoriteMeal[];
   /** Expositions au soleil (gain de vitamine D estimé, hors journal alimentaire). */
@@ -506,6 +507,9 @@ interface AppState {
   updateWeightEntry: (id: string, patch: Partial<WeightEntry>) => void;
   removeWeightEntry: (id: string) => void;
   setWeightConfig: (patch: Partial<WeightConfig>) => void;
+  addBodyMeasurement: (entry: Omit<BodyMeasurementEntry, 'id' | 'createdAt'>, createdAt?: number) => string;
+  updateBodyMeasurement: (id: string, patch: Partial<Omit<BodyMeasurementEntry, 'id' | 'createdAt'>>) => void;
+  removeBodyMeasurement: (id: string) => void;
 
   /**
    * Enregistre une sortie au soleil (section « Soleil » du jour). `createdAt` :
@@ -539,6 +543,7 @@ export const useStore = create<AppState>()(
       cloudModel: defaultModelFor(DEFAULT_CLOUD_PROVIDER),
       profile: DEFAULT_PROFILE,
       weightEntries: SEED_WEIGHT_ENTRIES,
+      bodyMeasurements: [],
       weightConfig: SEED_WEIGHT_CONFIG,
       favoriteMeals: [],
       sunExposures: [],
@@ -1046,6 +1051,18 @@ export const useStore = create<AppState>()(
 
       setWeightConfig: (patch) => set((s) => ({ weightConfig: { ...s.weightConfig, ...patch } })),
 
+      addBodyMeasurement: (entry, createdAt) => {
+        const full: BodyMeasurementEntry = { ...entry, id: uid(), createdAt: createdAt ?? Date.now() };
+        set((s) => ({ bodyMeasurements: [full, ...s.bodyMeasurements] }));
+        return full.id;
+      },
+
+      updateBodyMeasurement: (id, patch) =>
+        set((s) => ({ bodyMeasurements: s.bodyMeasurements.map((entry) => (entry.id === id ? { ...entry, ...patch } : entry)) })),
+
+      removeBodyMeasurement: (id) =>
+        set((s) => ({ bodyMeasurements: s.bodyMeasurements.filter((entry) => entry.id !== id) })),
+
       addSunExposure: (e, createdAt) => {
         const id = uid();
         set((s) => ({ sunExposures: [{ ...e, id, createdAt: createdAt ?? Date.now() }, ...s.sunExposures] }));
@@ -1153,6 +1170,7 @@ function mergePersisted(persisted: unknown, current: AppState): AppState {
     sunExposures: (p.sunExposures ?? []).map((e) => ({ ...e, creme: normalizeCreme(e.creme) })),
     // Le seed de pesées ne s'applique qu'à la 1re utilisation (clé absente du persisté).
     weightEntries: p.weightEntries ?? current.weightEntries,
+    bodyMeasurements: p.bodyMeasurements ?? [],
     weightConfig: { ...current.weightConfig, ...(p.weightConfig ?? {}) },
     // Reprise de l'ancien réglage mono-fournisseur : la clé et le modèle
     // Anthropic déjà saisis deviennent le casier « anthropic ». Recopie, pas

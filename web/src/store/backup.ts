@@ -11,7 +11,7 @@ import type { CloudProvider } from '../extraction/providers';
 import { migrateToPersonalBank } from '../nutrition/bank';
 import type { Food } from '../nutrition/types';
 import type { Profile, TargetOverrides } from '../nutrition/targets';
-import type { WeightEntry, WeightConfig } from '../weight/types';
+import type { BodyMeasurementEntry, WeightEntry, WeightConfig } from '../weight/types';
 import { WEIGHT_METRICS } from '../weight/types';
 import type { SunExposure } from '../sun/vitaminD';
 import type { NutrientKey } from '../nutrition/types';
@@ -48,6 +48,7 @@ export interface BackupData {
   favoriteMeals: FavoriteMeal[];
   profile: Profile;
   weightEntries: WeightEntry[];
+  bodyMeasurements?: BodyMeasurementEntry[];
   weightConfig: WeightConfig;
   /** Absent des sauvegardes antérieures à la fonctionnalité (import tolérant). */
   sunExposures?: SunExposure[];
@@ -75,6 +76,7 @@ export function buildBackup(): BackupData {
     favoriteMeals: s.favoriteMeals,
     profile: s.profile,
     weightEntries: s.weightEntries,
+    bodyMeasurements: s.bodyMeasurements,
     weightConfig: s.weightConfig,
     sunExposures: s.sunExposures,
     mutedDays: s.mutedDays,
@@ -138,6 +140,7 @@ export function importBackup(text: string): string {
     favoriteMeals,
     ...(b.profile ? { profile: b.profile } : {}),
     weightEntries: b.weightEntries,
+    bodyMeasurements: b.bodyMeasurements ?? [],
     ...(b.weightConfig ? { weightConfig: b.weightConfig } : {}),
     sunExposures: b.sunExposures ?? [],
     mutedDays: b.mutedDays ?? {},
@@ -221,21 +224,45 @@ export function journalToCsv(entries: JournalEntry[]): string {
   return toCsv(rows);
 }
 
-/** Pesées : une ligne par mesure, mêmes colonnes que le CSV de la balance. */
+/** Ancien export par pesée, conservé pour les integrations qui l'utilisent encore. */
 export function weightsToCsv(entries: WeightEntry[]): string {
   const rows: unknown[][] = [
-    ['date', 'heure', 'a_jeun', 'nu', ...WEIGHT_METRICS.map((mt) => mt.key), 'remarque'],
+    ['date', 'heure', 'a_jeun', 'nu', ...WEIGHT_METRICS.map((metric) => metric.key), 'remarque'],
   ];
-  const sorted = [...entries].sort((a, b) => `${a.date} ${a.heure}`.localeCompare(`${b.date} ${b.heure}`));
-  for (const e of sorted) {
-    rows.push([
-      e.date,
-      e.heure,
-      e.aJeun ? 'oui' : 'non',
-      e.nu ? 'oui' : 'non',
-      ...WEIGHT_METRICS.map((mt) => e[mt.key] ?? ''),
-      e.remarque ?? '',
-    ]);
+  for (const entry of [...entries].sort((a, b) => `${a.date} ${a.heure}`.localeCompare(`${b.date} ${b.heure}`))) {
+    rows.push([entry.date, entry.heure, entry.aJeun ? 'oui' : 'non', entry.nu ? 'oui' : 'non', ...WEIGHT_METRICS.map((metric) => entry[metric.key] ?? ''), entry.remarque ?? '']);
+  }
+  return toCsv(rows);
+}
+
+/**
+ * Suivi corporel quotidien pour tableur / analyse : journal, balance et mètre
+ * ruban sur une même ligne. Les réglages de sport sont le profil ACTUEL, pas
+ * un journal de séances ; ils sont répétés pour pouvoir modifier le CSV ensuite.
+ */
+export function progressToCsv(entries: JournalEntry[], weights: WeightEntry[], measurements: BodyMeasurementEntry[]): string {
+  const header = ['date', 'weightKg', 'intakeKcal', 'proteinG', 'bodyFatPct', 'waterPct', 'muscleMassPct', 'boneMassKg', 'visceralFatIndex', 'basalMetabolismKcal', 'leanMassKg', 'skeletalMuscleKg', 'waistCm', 'trainingHoursPerWeek', 'trainingType', 'measurementProtocol', 'upperArmLeftCm', 'upperArmRightCm', 'chestEmptyLungsCm', 'shoulderCm', 'hipCm', 'calfLeftCm', 'calfRightCm', 'neckCm', 'thighLeftCm', 'thighRightCm', 'forearmLeftCm', 'forearmRightCm'];
+  const dates = new Set([...entries.map((e) => e.date), ...weights.map((e) => e.date), ...measurements.map((e) => e.date)]);
+  const latestWeight = new Map<string, WeightEntry>();
+  for (const weight of [...weights].sort((a, b) => `${a.date} ${a.heure}`.localeCompare(`${b.date} ${b.heure}`))) latestWeight.set(weight.date, weight);
+  const measurementByDate = new Map<string, BodyMeasurementEntry>();
+  for (const measurement of [...measurements].sort((a, b) => a.createdAt - b.createdAt)) {
+    // Plusieurs relevés partiels le même jour se complètent ; aucune valeur
+    // existante ne disparaît parce qu'on n'a mesuré que le tour de taille.
+    measurementByDate.set(measurement.date, { ...measurementByDate.get(measurement.date), ...measurement });
+  }
+  const profile = useStore.getState().profile;
+  const trainingType = profile.sportType === 'mixte' ? 'mix cardio-muscu' : profile.sportType ?? '';
+  const rows: unknown[][] = [header];
+  for (const date of [...dates].sort()) {
+    const day = entries.filter((e) => e.date === date);
+    const intakeKcal = day.reduce((total, e) => total + e.items.reduce((sum, item) => sum + item.nutrients.kcal, 0), 0);
+    const proteinG = day.reduce((total, e) => total + e.items.reduce((sum, item) => sum + item.nutrients.proteines, 0), 0);
+    const weight = latestWeight.get(date);
+    const measurement = measurementByDate.get(date);
+    const leanMassKg = weight?.masseGrasse != null ? weight.poids * (1 - weight.masseGrasse / 100) : '';
+    const skeletalMuscleKg = weight?.masseMusculaire != null ? weight.poids * weight.masseMusculaire / 100 * 0.9 : '';
+    rows.push([date, weight?.poids ?? '', day.length ? Math.round(intakeKcal) : '', day.length ? Number(proteinG.toFixed(1)) : '', weight?.masseGrasse ?? '', weight?.eau ?? '', weight?.masseMusculaire ?? '', weight?.masseOsseuse ?? '', weight?.graisseViscerale ?? '', weight?.metabolismeBasalMachine ?? '', leanMassKg === '' ? '' : Number(leanMassKg.toFixed(2)), skeletalMuscleKg === '' ? '' : Number(skeletalMuscleKg.toFixed(2)), measurement?.waistCm ?? '', profile.sportHeures ?? '', trainingType, measurement?.measurementProtocol ?? (weight ? `à jeun: ${weight.aJeun ? 'oui' : 'non'}; nu: ${weight.nu ? 'oui' : 'non'}` : ''), measurement?.upperArmLeftCm ?? '', measurement?.upperArmRightCm ?? '', measurement?.chestEmptyLungsCm ?? '', measurement?.shoulderCm ?? '', measurement?.hipCm ?? '', measurement?.calfLeftCm ?? '', measurement?.calfRightCm ?? '', measurement?.neckCm ?? '', measurement?.thighLeftCm ?? '', measurement?.thighRightCm ?? '', measurement?.forearmLeftCm ?? '', measurement?.forearmRightCm ?? '']);
   }
   return toCsv(rows);
 }
@@ -263,5 +290,6 @@ export function exportJournalCsvFile(): void {
 }
 
 export function exportWeightsCsvFile(): void {
-  downloadFile(`foodrecorder-pesees-${todayStr()}.csv`, weightsToCsv(useStore.getState().weightEntries), 'text/csv');
+  const s = useStore.getState();
+  downloadFile(`foodrecorder-suivi-${todayStr()}.csv`, progressToCsv(s.entries, s.weightEntries, s.bodyMeasurements), 'text/csv');
 }
