@@ -19,6 +19,7 @@ import type { Granularity } from './PeriodSelector';
 import { decayWeight, decayWindowDays } from '../nutrition/recommend';
 import { usePeriodNutrition } from './usePeriodNutrition';
 import { fmt } from './format';
+import { FoodInsights } from './Foods';
 
 /** Toutes les clés de nutriments (moyennes par groupe de dates). */
 const NUT_KEYS = Object.keys(EMPTY_NUTRIENTS) as NutrientKey[];
@@ -158,6 +159,7 @@ export function Stats() {
    * ce réglage n'a de sens que dans un sens (viser haut), pas dans l'autre.
    */
   const [refMode, setRefMode] = useState<'optimal' | 'ajr'>('optimal');
+  const [view, setView] = useState<'nutrition' | 'aliments'>('nutrition');
 
   const toggle = (id: string) =>
     setSelected((prev) => (prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id]));
@@ -263,6 +265,18 @@ export function Stats() {
 
   return (
     <>
+      <div className="panel">
+        <div className="row" style={{ gap: 6, flexWrap: 'wrap' }}>
+          <button className={`ghost small ${view === 'nutrition' ? 'chip-active' : ''}`} onClick={() => setView('nutrition')}>
+            Nutrition
+          </button>
+          <button className={`ghost small ${view === 'aliments' ? 'chip-active' : ''}`} onClick={() => setView('aliments')}>
+            Aliments
+          </button>
+        </div>
+      </div>
+      {view === 'aliments' ? <FoodInsights /> : (
+        <>
       <div className="panel">
         <div className="row" style={{ justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: 8 }}>
           <h2 style={{ margin: 0 }}>Analyse sur {days} jours</h2>
@@ -436,7 +450,8 @@ export function Stats() {
         <h2>Répartition des calories (macros, moyenne/jour{decayOn && ' pondérée'})</h2>
         <MacroDonut totals={averages} />
       </div>
-
+        </>
+      )}
     </>
   );
 }
