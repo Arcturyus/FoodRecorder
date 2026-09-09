@@ -433,6 +433,13 @@ interface AppState {
    * l'ajustement et rétablit les valeurs de l'aliment / estimation.
    */
   setItemNutrients: (entryId: string, itemId: string, contribution: Nutrients | null) => void;
+  /**
+   * Corrige les valeurs de l'aliment associé dans ma banque à partir des
+   * apports saisis pour cet item. La correction est ramenée à 100 g et se
+   * répercute sur l'historique, sauf les ajustements ponctuels déjà posés.
+   * Renvoie false si l'item ne correspond à aucun aliment de la banque.
+   */
+  setItemNutrientsGlobally: (entryId: string, itemId: string, contribution: Nutrients) => boolean;
   removeItem: (entryId: string, itemId: string) => void;
   addItemToEntry: (entryId: string, item: ExtractedItem) => void;
   removeEntry: (entryId: string) => void;
@@ -768,6 +775,37 @@ export const useStore = create<AppState>()(
                 },
           ),
         })),
+
+      setItemNutrientsGlobally: (entryId, itemId, contribution) => {
+        const s = get();
+        const item = s.entries.find((e) => e.id === entryId)?.items.find((it) => it.id === itemId);
+        const food = item?.foodId ? effectiveFoodById(item.foodId, s.customFoods) : null;
+        if (!item || !food) return false;
+
+        const n = per100g(contribution, item.grams);
+        const existing = s.customFoods.find((f) => f.id === food.id);
+        // Un aliment encore seulement dans le catalogue est d'abord copié dans
+        // ma banque : la correction devient personnelle, sans toucher au
+        // catalogue livré avec l'application.
+        const corrected = { ...(existing ?? adoptFromCatalog(food, todayStr())), n, aVerifier: undefined };
+        const customFoods = existing
+          ? s.customFoods.map((f) => (f.id === food.id ? corrected : f))
+          : [corrected, ...s.customFoods];
+        const entries = s.entries.map((e) =>
+          e.id !== entryId
+            ? e
+            : {
+                ...e,
+                items: e.items.map((it) => {
+                  if (it.id !== itemId) return it;
+                  const { customN: _drop, ...rest } = it;
+                  return rest;
+                }),
+              },
+        );
+        set({ customFoods, entries: resyncEntries(entries, customFoods) });
+        return true;
+      },
 
       removeItem: (entryId, itemId) =>
         set((s) => ({

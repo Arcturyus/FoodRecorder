@@ -285,6 +285,30 @@ describe('ajustement « pour cette fois » (setItemNutrients)', () => {
   });
 });
 
+describe('correction de la banque depuis un item', () => {
+  it('ramène la correction à 100 g, recalcule l’historique et enlève l’ajustement ponctuel de cet item', () => {
+    const firstId = useStore.getState().addFoodEntry(banane, 1, 'piece');
+    const secondId = useStore.getState().addFoodEntry(banane, 2, 'piece');
+    const first = useStore.getState().entries.find((e) => e.id === firstId)!.items[0];
+    useStore.getState().setItemNutrients(firstId, first.id, { ...first.nutrients, proteines: 12 });
+
+    expect(useStore.getState().setItemNutrientsGlobally(firstId, first.id, { ...first.nutrients, proteines: 12 })).toBe(true);
+
+    const [afterFirst] = useStore.getState().entries.find((e) => e.id === firstId)!.items;
+    const [afterSecond] = useStore.getState().entries.find((e) => e.id === secondId)!.items;
+    expect(afterFirst.customN).toBeUndefined();
+    expect(afterFirst.nutrients.proteines).toBeCloseTo(12, 5);
+    expect(afterSecond.nutrients.proteines).toBeCloseTo(24, 5);
+    expect(useStore.getState().customFoods.find((f) => f.id === 'banane')!.n.proteines).toBeCloseTo((12 * 100) / first.grams, 5);
+  });
+
+  it('refuse une correction globale pour un item sans aliment associé', () => {
+    const entryId = useStore.getState().addEntry('inconnu', [inconnuItem('truc sans base')], 'manuel');
+    const item = useStore.getState().entries.find((e) => e.id === entryId)!.items[0];
+    expect(useStore.getState().setItemNutrientsGlobally(entryId, item.id, item.nutrients)).toBe(false);
+  });
+});
+
 describe('renommage d’un aliment du journal (renameItem)', () => {
   it('renomme un aliment de la banque en gardant ses apports', () => {
     const entryId = useStore.getState().addFoodEntry(banane, 1, 'piece');
