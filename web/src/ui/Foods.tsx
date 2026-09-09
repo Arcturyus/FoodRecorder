@@ -58,7 +58,7 @@ const SUB_DETAIL_GROUPS: { total: keyof Nutrients; totalLabel: string; parts: { 
   },
 ];
 
-type Mode = 'liste' | 'classement' | 'consommation' | 'explorer' | 'comparer' | 'catalogue';
+type InsightMode = 'classement' | 'consommation' | 'explorer' | 'comparer';
 
 /** Au-delà, le curseur devient inutilisable ; les gros habitués se filtrent à la main. */
 const SLIDER_MAX = 30;
@@ -67,7 +67,7 @@ const SLIDER_MAX = 30;
 const EMPTY_IDS: ReadonlySet<string> = new Set();
 
 /** Modes qui travaillent sur la banque et respectent donc le filtre de fréquence. */
-const FILTRABLE: Mode[] = ['liste', 'classement', 'explorer', 'comparer'];
+const FILTRABLE: InsightMode[] = ['classement', 'explorer', 'comparer'];
 
 /**
  * Modes où l'on peut élargir au catalogue entier, aliments jamais mangés compris.
@@ -80,256 +80,31 @@ const FILTRABLE: Mode[] = ['liste', 'classement', 'explorer', 'comparer'];
  * d'édition de ses propres aliments, y mélanger du catalogue non consommé
  * inviterait à modifier des fiches sans rapport avec son historique.
  */
-const ELARGISSABLE: Mode[] = ['classement', 'explorer', 'comparer'];
+const ELARGISSABLE: InsightMode[] = ['classement', 'explorer', 'comparer'];
 
 /**
- * Onglet « Ma banque » : les aliments RÉELLEMENT consommés, seule matière des
- * stats. Un aliment y entre dès la première consommation, d'où qu'il vienne
- * (copie du catalogue, estimation d'IA, saisie manuelle). Six modes :
- *  - « Liste » : recherche/filtre, ajout, édition en place, fusion des doublons ;
- *  - « Classement » : aliments les plus riches en un nutriment choisi (pour 100 g) ;
- *  - « Consommation » : ce que vous mangez le plus (fréquences sur le journal) ;
- *  - « Explorer visuel » : atelier de visualisations D3 ;
- *  - « Comparer » : deux aliments face à face + carte ACP de la banque ;
- *  - « Catalogue » : les aliments de référence à piocher, hors statistiques.
+ * Catalogue unifié : les aliments réellement utilisés, les ajouts personnels et
+ * les références livrées avec l'application vivent dans la même liste. Leur
+ * origine reste visible sur chaque ligne, sans devenir une navigation séparée.
  */
 export function Foods() {
-  const [mode, setMode] = useState<Mode>('liste');
-  const [compareIds, setCompareIds] = useState<[string | null, string | null]>([null, null]);
-  const [minJours, setMinJours] = useState(0);
-  const [avecCatalogue, setAvecCatalogue] = useState(false);
   const bank = useEffectiveFoods();
   const usage = useBankUsage();
-
-  const maxJours = useMemo(
-    () => Math.min(SLIDER_MAX, bank.reduce((m, f) => Math.max(m, usage.get(f.id)?.jours ?? 0), 1)),
-    [bank, usage],
-  );
-
-  const elargissable = ELARGISSABLE.includes(mode);
-  /** Aliments du catalogue absents de la banque — ceux qu'on n'a jamais mangés. */
-  const jamaisManges = useMemo(() => {
+  const allFoods = useMemo(() => {
     const dansBanque = new Set(bank.map((f) => f.id));
-    return FOODS.filter((f) => !dansBanque.has(f.id) && f.categorie !== 'supplement');
+    return [...bank, ...FOODS.filter((f) => !dansBanque.has(f.id))];
   }, [bank]);
 
-  const foods = useMemo(() => {
-    // Le filtre de fréquence ne s'applique qu'à la banque : un aliment du catalogue
-    // est à 0 jour par construction, le lui appliquer le ferait disparaître dès le
-    // premier cran du curseur — soit exactement l'inverse de ce qu'on vient de demander.
-    const mangés = minJours <= 0 ? bank : bank.filter((f) => (usage.get(f.id)?.jours ?? 0) >= minJours);
-    return avecCatalogue && elargissable ? [...mangés, ...jamaisManges] : mangés;
-  }, [bank, usage, minJours, avecCatalogue, elargissable, jamaisManges]);
-
-  /** Vide tant que le catalogue n'est pas ajouté : les vues n'ont alors rien à distinguer. */
-  const idsNonManges = useMemo(
-    () => (avecCatalogue && elargissable ? new Set(jamaisManges.map((f) => f.id)) : new Set<string>()),
-    [avecCatalogue, elargissable, jamaisManges],
-  );
-
-  /** Depuis la liste : « comparer » charge l'aliment en emplacement A et bascule sur le mode. */
-  const startCompare = (id: string) => {
-    setCompareIds(([, b]) => [id, b === id ? null : b]);
-    setMode('comparer');
-  };
-
-  const aVerifier = bank.filter((f) => f.aVerifier).length;
-
   return (
     <>
       <div className="panel">
-        <h2>Ma banque ({bank.length})</h2>
+        <h2>Catalogue ({allFoods.length})</h2>
         <p className="small" style={{ marginTop: -6 }}>
-          Les aliments que vous avez déjà mangés — c'est eux, et eux seuls, que mesurent les statistiques. Valeurs pour
-          100 g, tout est modifiable.
-          {aVerifier > 0 && ` ${aVerifier} estimé(s) par l'IA restent à vérifier.`}
+          Tous vos aliments et les références livrées avec l'app, dans une même liste. 📚 indique une référence ; IA ou
+          perso indiquent un aliment hors catalogue. Seuls les aliments utilisés comptent dans les statistiques.
         </p>
-        <div className="row" style={{ gap: 6, flexWrap: 'wrap' }}>
-          <button className={`ghost small ${mode === 'liste' ? 'chip-active' : ''}`} onClick={() => setMode('liste')}>
-            Liste
-          </button>
-          <button
-            className={`ghost small ${mode === 'classement' ? 'chip-active' : ''}`}
-            onClick={() => setMode('classement')}
-          >
-            Classement par nutriment
-          </button>
-          <button
-            className={`ghost small ${mode === 'consommation' ? 'chip-active' : ''}`}
-            onClick={() => setMode('consommation')}
-          >
-            Ma consommation
-          </button>
-          <button
-            className={`ghost small ${mode === 'explorer' ? 'chip-active' : ''}`}
-            onClick={() => setMode('explorer')}
-          >
-            Explorer visuel
-          </button>
-          <button
-            className={`ghost small ${mode === 'comparer' ? 'chip-active' : ''}`}
-            onClick={() => setMode('comparer')}
-          >
-            ⚖️ Comparer
-          </button>
-          <button
-            className={`ghost small ${mode === 'catalogue' ? 'chip-active' : ''}`}
-            onClick={() => setMode('catalogue')}
-          >
-            📚 Catalogue
-          </button>
-        </div>
-
-        {FILTRABLE.includes(mode) && maxJours > 1 && (
-          <div className="row" style={{ marginTop: 12, gap: 10, alignItems: 'center', flexWrap: 'wrap' }}>
-            <label className="small" htmlFor="min-jours" style={{ whiteSpace: 'nowrap' }}>
-              Mangé au moins
-            </label>
-            <input
-              id="min-jours"
-              type="range"
-              min={0}
-              max={maxJours}
-              value={minJours}
-              onChange={(e) => setMinJours(Number(e.target.value))}
-              style={{ flex: '1 1 160px', maxWidth: 260 }}
-            />
-            <span className="small mono" style={{ whiteSpace: 'nowrap' }}>
-              {minJours <= 0 ? 'tout' : `${minJours} jour${minJours > 1 ? 's' : ''}`} · {foods.length} aliment
-              {foods.length > 1 ? 's' : ''}
-            </span>
-          </div>
-        )}
-
-        {elargissable && jamaisManges.length > 0 && (
-          <div className="row" style={{ marginTop: 10, gap: 8, alignItems: 'baseline', flexWrap: 'wrap' }}>
-            <label className="small row" style={{ gap: 6, alignItems: 'center', cursor: 'pointer' }}>
-              <input
-                type="checkbox"
-                checked={avecCatalogue}
-                onChange={(e) => setAvecCatalogue(e.target.checked)}
-              />
-              Ajouter les aliments du catalogue jamais mangés ({jamaisManges.length})
-            </label>
-            {avecCatalogue && (
-              <span className="small" style={{ color: 'var(--muted)' }}>
-                — repères de comparaison ; ils ne comptent toujours dans aucune statistique.
-              </span>
-            )}
-          </div>
-        )}
       </div>
-
-      {bank.length === 0 && mode !== 'catalogue' ? (
-        <div className="panel">
-          <div className="empty">
-            Votre banque est vide. Dictez un repas, ou piochez dans le{' '}
-            <button className="ghost small" onClick={() => setMode('catalogue')}>
-              📚 catalogue de référence
-            </button>
-            .
-          </div>
-        </div>
-      ) : (
-        <>
-          {mode === 'liste' && <FoodList foods={foods} usage={usage} onCompare={startCompare} />}
-          {mode === 'classement' && <NutrientRanking foods={foods} jamaisManges={idsNonManges} />}
-          {mode === 'consommation' && <FoodConsumption />}
-          {mode === 'explorer' && <FoodExplorer foods={foods} jamaisManges={idsNonManges} />}
-          {mode === 'comparer' && (
-            <FoodCompare foods={foods} ids={compareIds} setIds={setCompareIds} jamaisManges={idsNonManges} />
-          )}
-        </>
-      )}
-      {mode === 'catalogue' && <Catalogue bank={bank} />}
-    </>
-  );
-}
-
-// ---------------------------------------------------------------------------
-// Mode « Catalogue » : les aliments de référence, à piocher
-// ---------------------------------------------------------------------------
-
-/**
- * Catalogue de référence : les ~148 aliments courants livrés avec l'app
- * (approximations CIQUAL 2020 / USDA). Il ne compte dans AUCUNE statistique —
- * il sert à amorcer la banque sans dicter, et à éviter de payer un appel à l'IA
- * pour « une pomme ». Piocher un aliment le copie dans la banque, avec son id.
- */
-function Catalogue({ bank }: { bank: Food[] }) {
-  const adoptCatalogFood = useStore((s) => s.adoptCatalogFood);
-  const [query, setQuery] = useState('');
-  const [cat, setCat] = useState<FoodCategory | 'all'>('all');
-  const q = normalize(query);
-  const inBank = useMemo(() => new Set(bank.map((f) => f.id)), [bank]);
-
-  const filtered = useMemo(
-    () =>
-      FOODS.filter((f) => {
-        if (cat !== 'all' && f.categorie !== cat) return false;
-        if (!q) return true;
-        if (normalize(f.nom).includes(q)) return true;
-        if (f.aliases.some((a) => normalize(a).includes(q))) return true;
-        return f.categorie === 'supplement' && isSupplementQuery(q);
-      }),
-    [q, cat],
-  );
-
-  return (
-    <>
-      <div className="panel">
-        <h2>Catalogue de référence ({FOODS.length})</h2>
-        <p className="small" style={{ marginTop: -6 }}>
-          Aliments courants livrés avec l'app. Ils ne comptent dans aucune statistique tant que vous ne les avez pas
-          mangés : ajoutez-en un à votre banque pour le suivre.
-        </p>
-        <input
-          value={query}
-          onChange={(e) => setQuery(e.target.value)}
-          placeholder="Rechercher dans le catalogue…"
-          style={{ width: '100%' }}
-        />
-        <div className="row" style={{ marginTop: 10, gap: 6, flexWrap: 'wrap' }}>
-          <button className={`ghost small ${cat === 'all' ? 'chip-active' : ''}`} onClick={() => setCat('all')}>
-            Tout
-          </button>
-          {CATEGORY_LABELS.map((c) => (
-            <button key={c.key} className={`ghost small ${cat === c.key ? 'chip-active' : ''}`} onClick={() => setCat(c.key)}>
-              {c.label}
-            </button>
-          ))}
-        </div>
-      </div>
-
-      <div className="panel">
-        {filtered.length === 0 ? (
-          <div className="empty">Aucun aliment ne correspond{query ? ` à « ${query} »` : ''}.</div>
-        ) : (
-          filtered.map((f) => (
-            <div className="item-row" key={f.id} style={{ gridTemplateColumns: '1fr auto' }}>
-              <div className="item-name">
-                <span>
-                  {f.nom}
-                  {inBank.has(f.id) && <span className="badge est">dans ma banque</span>}
-                </span>
-                <span className="kcal">
-                  {fmt(f.n.kcal)} kcal · P {fmt(f.n.proteines, 1)} · G {fmt(f.n.glucides, 1)} · L {fmt(f.n.lipides, 1)}
-                  /100 g{portionLabel(f)}
-                </span>
-              </div>
-              {inBank.has(f.id) ? (
-                <span className="small" style={{ color: 'var(--muted)' }}>
-                  ✓
-                </span>
-              ) : (
-                <button className="ghost small" onClick={() => adoptCatalogFood(f)}>
-                  + Ajouter
-                </button>
-              )}
-            </div>
-          ))
-        )}
-      </div>
+      <FoodList foods={allFoods} bankFoods={bank} usage={usage} />
     </>
   );
 }
@@ -340,12 +115,12 @@ function Catalogue({ bank }: { bank: Food[] }) {
 
 function FoodList({
   foods,
+  bankFoods,
   usage,
-  onCompare,
 }: {
   foods: Food[];
+  bankFoods: Food[];
   usage: Map<string, BankUsage>;
-  onCompare: (id: string) => void;
 }) {
   const [query, setQuery] = useState('');
   const [cat, setCat] = useState<FoodCategory | 'all'>('all');
@@ -355,6 +130,7 @@ function FoodList({
   const [selected, setSelected] = useState<string[]>([]);
   const [showDoublons, setShowDoublons] = useState(false);
   const q = normalize(query);
+  const bankIds = useMemo(() => new Set(bankFoods.map((f) => f.id)), [bankFoods]);
 
   const filtered = useMemo(
     () =>
@@ -378,7 +154,7 @@ function FoodList({
     [filtered],
   );
 
-  const doubtCount = foods.filter((f) => f.aVerifier).length;
+  const doubtCount = bankFoods.filter((f) => f.aVerifier).length;
   const toggle = (id: string) =>
     setSelected((prev) => (prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id]));
 
@@ -439,10 +215,10 @@ function FoodList({
         </div>
       </div>
 
-      <EntretienPanel foods={foods} />
-      {showDoublons && <DoublonsPanel foods={foods} usage={usage} />}
+      <EntretienPanel foods={bankFoods} />
+      {showDoublons && <DoublonsPanel foods={bankFoods} usage={usage} />}
       {selected.length > 0 && (
-        <MergeBar selected={selected} foods={foods} usage={usage} onDone={() => setSelected([])} />
+        <MergeBar selected={selected} foods={bankFoods} usage={usage} onDone={() => setSelected([])} />
       )}
 
       {groups.length === 0 ? (
@@ -456,7 +232,9 @@ function FoodList({
               {LABEL_BY_KEY.get(g.key)} <span className="small">({g.foods.length})</span>
             </h2>
             {g.foods.map((f) =>
-              editId === f.id ? (
+              !bankIds.has(f.id) ? (
+                <ReferenceFoodRow key={f.id} food={f} />
+              ) : editId === f.id ? (
                 <FoodForm key={f.id} food={f} submitLabel="Enregistrer" onDone={() => setEditId(null)} />
               ) : (
                 <FoodRow
@@ -466,7 +244,6 @@ function FoodList({
                   selected={selected.includes(f.id)}
                   onSelect={() => toggle(f.id)}
                   onEdit={() => setEditId(f.id)}
-                  onCompare={() => onCompare(f.id)}
                 />
               ),
             )}
@@ -568,21 +345,19 @@ function FoodRow({
   selected,
   onSelect,
   onEdit,
-  onCompare,
 }: {
   food: Food;
   usage?: BankUsage;
   selected: boolean;
   onSelect: () => void;
   onEdit: () => void;
-  onCompare: () => void;
 }) {
   const removeCustomFood = useStore((s) => s.removeCustomFood);
   const resetFood = useStore((s) => s.resetFood);
   const verifyFood = useStore((s) => s.verifyFood);
   const f = food;
   return (
-    <div className="item-row" style={{ gridTemplateColumns: 'auto 1fr auto auto auto' }}>
+    <div className="item-row" style={{ gridTemplateColumns: 'auto 1fr auto auto' }}>
       <input
         type="checkbox"
         checked={selected}
@@ -593,7 +368,9 @@ function FoodRow({
       <div className="item-name">
         <span>
           {f.nom}
+          {f.origine === 'catalogue' && <span className="badge">📚 référence</span>}
           {f.origine === 'ia' && <span className="badge est">IA</span>}
+          {f.origine === 'manuel' && <span className="badge est">perso</span>}
           {f.aVerifier && <span className="badge doubt">à vérifier</span>}
         </span>
         <span className="kcal">
@@ -601,13 +378,9 @@ function FoodRow({
           {f.n.fibres ? ` · Fibres ${fmt(f.n.fibres, 1)}` : ''} /100 g{portionLabel(f)} · {usageLabel(usage)}
         </span>
       </div>
-      {f.aVerifier ? (
+      {f.aVerifier && (
         <button className="ghost small" onClick={() => verifyFood(f.id)} data-tip="Valider ces valeurs estimées">
           ✓
-        </button>
-      ) : (
-        <button className="ghost small" onClick={onCompare} data-tip="Comparer cet aliment">
-          ⚖️
         </button>
       )}
       <button className="ghost small" onClick={onEdit}>
@@ -630,6 +403,27 @@ function FoodRow({
           ✕
         </button>
       )}
+    </div>
+  );
+}
+
+/** Référence encore absente de la banque : visible et ajoutable dans la même liste. */
+function ReferenceFoodRow({ food }: { food: Food }) {
+  const adoptCatalogFood = useStore((s) => s.adoptCatalogFood);
+  return (
+    <div className="item-row" style={{ gridTemplateColumns: '1fr auto' }}>
+      <div className="item-name">
+        <span>
+          {food.nom} <span className="badge">📚 référence</span>
+        </span>
+        <span className="kcal">
+          {fmt(food.n.kcal)} kcal · P {fmt(food.n.proteines, 1)} · G {fmt(food.n.glucides, 1)} · L {fmt(food.n.lipides, 1)}
+          /100 g{portionLabel(food)} · jamais mangé
+        </span>
+      </div>
+      <button className="ghost small" onClick={() => adoptCatalogFood(food)}>
+        + Ajouter
+      </button>
     </div>
   );
 }
@@ -939,6 +733,72 @@ function FoodForm({ food, submitLabel, onDone }: { food?: Food; submitLabel: str
         </button>
       </div>
     </div>
+  );
+}
+
+/** Analyses transversales des aliments, affichées dans Stats. */
+export function FoodInsights() {
+  const [mode, setMode] = useState<InsightMode>('classement');
+  const [compareIds, setCompareIds] = useState<[string | null, string | null]>([null, null]);
+  const [minJours, setMinJours] = useState(0);
+  const [avecCatalogue, setAvecCatalogue] = useState(false);
+  const bank = useEffectiveFoods();
+  const usage = useBankUsage();
+  const maxJours = useMemo(
+    () => Math.min(SLIDER_MAX, bank.reduce((m, f) => Math.max(m, usage.get(f.id)?.jours ?? 0), 1)),
+    [bank, usage],
+  );
+  const elargissable = ELARGISSABLE.includes(mode);
+  const jamaisManges = useMemo(() => {
+    const dansBanque = new Set(bank.map((f) => f.id));
+    return FOODS.filter((f) => !dansBanque.has(f.id) && f.categorie !== 'supplement');
+  }, [bank]);
+  const foods = useMemo(() => {
+    const manges = minJours <= 0 ? bank : bank.filter((f) => (usage.get(f.id)?.jours ?? 0) >= minJours);
+    return avecCatalogue && elargissable ? [...manges, ...jamaisManges] : manges;
+  }, [bank, usage, minJours, avecCatalogue, elargissable, jamaisManges]);
+  const idsNonManges = useMemo(
+    () => (avecCatalogue && elargissable ? new Set(jamaisManges.map((f) => f.id)) : EMPTY_IDS),
+    [avecCatalogue, elargissable, jamaisManges],
+  );
+
+  return (
+    <>
+      <div className="panel">
+        <h2>Analyse des aliments</h2>
+        <div className="row" style={{ gap: 6, flexWrap: 'wrap' }}>
+          <button className={`ghost small ${mode === 'classement' ? 'chip-active' : ''}`} onClick={() => setMode('classement')}>
+            Classement par nutriment
+          </button>
+          <button className={`ghost small ${mode === 'consommation' ? 'chip-active' : ''}`} onClick={() => setMode('consommation')}>
+            Ma consommation
+          </button>
+          <button className={`ghost small ${mode === 'explorer' ? 'chip-active' : ''}`} onClick={() => setMode('explorer')}>
+            Explorer visuel
+          </button>
+          <button className={`ghost small ${mode === 'comparer' ? 'chip-active' : ''}`} onClick={() => setMode('comparer')}>
+            ⚖️ Comparer
+          </button>
+        </div>
+        {FILTRABLE.includes(mode) && maxJours > 1 && (
+          <div className="row" style={{ marginTop: 12, gap: 10, alignItems: 'center', flexWrap: 'wrap' }}>
+            <label className="small" htmlFor="min-jours">Mangé au moins</label>
+            <input id="min-jours" type="range" min={0} max={maxJours} value={minJours} onChange={(e) => setMinJours(Number(e.target.value))} style={{ flex: '1 1 160px', maxWidth: 260 }} />
+            <span className="small mono">{minJours <= 0 ? 'tout' : `${minJours} jour${minJours > 1 ? 's' : ''}`} · {foods.length} aliment{foods.length > 1 ? 's' : ''}</span>
+          </div>
+        )}
+        {elargissable && jamaisManges.length > 0 && (
+          <label className="small row" style={{ marginTop: 10, gap: 6, alignItems: 'center', cursor: 'pointer' }}>
+            <input type="checkbox" checked={avecCatalogue} onChange={(e) => setAvecCatalogue(e.target.checked)} />
+            Inclure les références jamais mangées ({jamaisManges.length})
+          </label>
+        )}
+      </div>
+      {mode === 'classement' && <NutrientRanking foods={foods} jamaisManges={idsNonManges} />}
+      {mode === 'consommation' && <FoodConsumption />}
+      {mode === 'explorer' && <FoodExplorer foods={foods} jamaisManges={idsNonManges} />}
+      {mode === 'comparer' && <FoodCompare foods={foods} ids={compareIds} setIds={setCompareIds} jamaisManges={idsNonManges} />}
+    </>
   );
 }
 

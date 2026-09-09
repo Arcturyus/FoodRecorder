@@ -48,7 +48,7 @@ const PRIMARY_TABS: TabMeta[] = [
 
 /** Onglets secondaires : regroupés derrière « Plus » sur mobile. Réglages au fond. */
 const SECONDARY_TABS: TabMeta[] = [
-  { id: 'aliments', label: 'Banque d\'aliments', short: 'Banque', icon: '🥗' },
+  { id: 'aliments', label: 'Catalogue', short: 'Catalogue', icon: '🥗' },
   { id: 'nutriments', label: 'Nutriments', short: 'Nutriments', icon: '🧬' },
   { id: 'reglages', label: 'Réglages', short: 'Réglages', icon: '⚙️' },
 ];
