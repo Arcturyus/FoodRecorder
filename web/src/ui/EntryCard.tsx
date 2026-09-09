@@ -461,6 +461,7 @@ const SPLIT_CHECKS: { parent: NutrientKey; parts: NutrientKey[]; label: string }
  */
 function ItemDetail({ entryId, item }: { entryId: string; item: JournalItem }) {
   const setItemNutrients = useStore((s) => s.setItemNutrients);
+  const setItemNutrientsGlobally = useStore((s) => s.setItemNutrientsGlobally);
   const targets = useTargets();
   const byKey = useMemo(() => new Map(targets.map((t) => [t.key, t])), [targets]);
 
@@ -472,8 +473,13 @@ function ItemDetail({ entryId, item }: { entryId: string; item: JournalItem }) {
     setEditing(true);
   };
 
-  const save = () => {
+  const saveThisTime = () => {
     setItemNutrients(entryId, item.id, draftToContribution(item.nutrients, draft));
+    setEditing(false);
+  };
+
+  const saveGlobally = () => {
+    setItemNutrientsGlobally(entryId, item.id, draftToContribution(item.nutrients, draft));
     setEditing(false);
   };
 
@@ -498,9 +504,18 @@ function ItemDetail({ entryId, item }: { entryId: string; item: JournalItem }) {
               <button className="ghost small" onClick={() => setEditing(false)}>
                 Annuler
               </button>
-              <button className="primary small" onClick={save}>
-                Enregistrer
+              <button className="primary small" onClick={saveThisTime}>
+                Enregistrer cette fois
               </button>
+              {item.foodId && (
+                <button
+                  className="ghost small"
+                  data-tip="Corrige cet aliment dans votre banque et recalcule les consommations déjà enregistrées"
+                  onClick={saveGlobally}
+                >
+                  Enregistrer pour tout le temps
+                </button>
+              )}
             </>
           ) : (
             <>
@@ -514,7 +529,7 @@ function ItemDetail({ entryId, item }: { entryId: string; item: JournalItem }) {
                 </button>
               )}
               <button className="ghost small" onClick={startEdit}>
-                ✎ Ajuster pour cette fois
+                ✎ Ajuster
               </button>
             </>
           )}
@@ -522,9 +537,10 @@ function ItemDetail({ entryId, item }: { entryId: string; item: JournalItem }) {
       </div>
       {editing && (
         <p className="small item-detail-hint">
-          Corrigez ce que cet aliment a réellement apporté cette fois (ex. un pain plus protéiné). Les valeurs
-          rescalent si vous changez la quantité, et l'aliment de la base n'est pas modifié. Les lignes « ↳ » sont un
-          détail de la ligne au-dessus (ex. C16+C14 dans les AG saturés) : elles ne s'ajoutent pas au total.
+          Corrigez ce que cet aliment a réellement apporté (ex. un pain plus protéiné). « Enregistrer cette fois »
+          garde la correction sur ce repas ; « pour tout le temps » corrige l'aliment de votre banque et recalcule
+          l'historique. Les valeurs rescalent si vous changez la quantité. Les lignes « ↳ » sont un détail de la ligne
+          au-dessus (ex. C16+C14 dans les AG saturés) : elles ne s'ajoutent pas au total.
         </p>
       )}
       {splitWarnings.length > 0 && (
