@@ -37,7 +37,7 @@ Le reste ressemble à ce que font les autres applis. Ladifférence est dans ces 
 
 ## Démarrer
 
-### En ligne, sans rien installer
+### Démo en ligne, sans rien installer
 
 **→ [arcturyus.github.io/FoodRecorder](https://arcturyus.github.io/FoodRecorder/)**
 
@@ -45,9 +45,9 @@ Le site est redéployé à chaque push sur `main` par GitHub Actions
 ([`.github/workflows/deploy.yml`](.github/workflows/deploy.yml) : install, tests, build, publication sur
 GitHub Pages — si les tests cassent, rien ne part).
 
-Tout marche sauf deux choses, qui ont besoin du serveur de dev local : le **pont Claude Code** et les
+Tout marche sauf deux choses, qui ont besoin du serveur de dev local : le **pont CLI** et les
 sauvegardes automatiques sur disque. En ligne, l'extraction se fait donc au parseur à règles, ou avec une
-**clé API Claude** collée dans Réglages.
+**clé API** d'un fournisseur compatible, collée dans Réglages.
 
 ### En local
 
@@ -58,6 +58,12 @@ npm run dev      # http://localhost:5173
 npm test         # 33 fichiers de tests (matching, parseur, calculs, sync…)
 npm run build    # build de production
 ```
+
+> ⚠️ C'est une démo : l'instance déployée pointe sur **mon** projet Supabase (URL et clé anonyme injectées
+> au build par des secrets GitHub). Créer un profil dessus écrit donc sur ma base gratuite. Pour un usage
+> réel, il faut cloner le repo, connecter son propre projet Supabase en mettant `VITE_SUPABASE_URL` et
+> `VITE_SUPABASE_ANON_KEY` dans `web/.env.local`. Sans ces deux variables, le client n'est simplement pas
+> construit : la synchro disparaît de l'interface et l'app fonctionne en 100 % local.
 
 ### Créer son profil (sauvegarde et synchro)
 
@@ -85,31 +91,26 @@ Deux choses à savoir :
 - Il est attaché **au profil, pas à l'appareil** : tous les appareils d'un même profil partagent le même.
   Le changer déconnecte donc tout le monde — ce qui est aussi la façon de révoquer un appareil perdu.
 
-> ⚠️ L'instance déployée pointe sur **mon** projet Supabase (URL et clé anonyme injectées au build par des
-> secrets GitHub). Créer un profil dessus écrit donc sur ma base gratuite... Pour un usage, il faut cloner le repo et
-> mets tes propres `VITE_SUPABASE_URL` / `VITE_SUPABASE_ANON_KEY` dans `web/.env.local`. Sans ces deux
-> variables, le client n'est simplement pas construit : la synchro disparaît de l'interface et l'app
-> fonctionne en 100 % local.
-
 ### Quelle IA brancher
 
 Les fonctionnalités LLM (comprendre une phrase dictée, lire une photo de repas, estimer un aliment inconnu,
-relire une fiche nutritionnelle) marchent avec Claude, de deux façons :
+relire une fiche nutritionnelle) peuvent utiliser une clé API ou un pont vers un CLI local :
 
 | Mode | Ce qu'il faut | Où ça marche |
 |---|---|---|
-| **Pont Claude Code** *(recommandé)* | le CLI `claude` installé et **déjà connecté** à votre compte (abonnement Pro/Max) — aucune clé à saisir | ordinateur qui exécute `npm run dev` |
-| **API Claude** | une clé API Anthropic, collée dans Réglages | partout, y compris mobile |
+| **Clé API** *(recommandé)* | une clé API payante, collée dans Réglages ; Claude (Anthropic), Gemini (Google), GPT (OpenAI), Mistral, OpenRouter ou Groq | partout, y compris mobile |
+| **Pont CLI** | le CLI `claude` ou `codex` installé et **déjà connecté** à votre compte — aucune clé API à saisir | ordinateur qui exécute `npm run dev` |
 
 Le pont réutilise simplement la session du CLI : le navigateur appelle un middleware Vite local
-([`web/vite-plugin-claude-code.ts`](web/vite-plugin-claude-code.ts)) qui lance `claude` à sa place, et
+([`web/vite-plugin-claude-code.ts`](web/vite-plugin-claude-code.ts)) qui lance le CLI choisi à sa place, et
 archive chaque appel (prompt, raisonnement, coût, tokens) dans `response/` pour pouvoir relire après coup
 ce que le modèle a compris.
 
 Deux autres modes existent — un **parseur à règles** en français, 100 % hors-ligne, qui sert de défaut et de
 filet de sécurité quand le LLM échoue, et une **IA locale open source** (WebLLM / WebGPU). Le parseur à
-règles fait très bien son travail sur les phrases simples. L'IA locale, en revanche, n'est pas au niveau
-pour cet usage : je la garde par curiosité, pas comme une vraie option.
+règles reste limité, même sur des phrases simples ; il est surtout là comme solution gratuite et hors-ligne.
+L'IA locale, elle non plus, n'est pas au niveau pour cet usage : je la garde par curiosité, pas comme une
+vraie option.
 
 ### Depuis le téléphone
 
