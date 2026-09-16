@@ -409,8 +409,6 @@ header.app-head .sub { color: var(--muted); font-size: 13px; }
 }
 .panel h2 { font-size: 15px; margin: 0 0 12px; }
 
-.mic-row { display: flex; gap: 10px; align-items: stretch; }
-.mic-row textarea { flex: 1; min-height: 54px; resize: vertical; }
 .record-btn { min-width: 130px; font-weight: 600; }
 .record-btn.rec { background: var(--danger); border-color: var(--danger); color: #fff; animation: pulse 1.2s infinite; }
 @keyframes pulse { 0%,100% { opacity: 1; } 50% { opacity: 0.6; } }
@@ -1079,21 +1077,6 @@ button.heat-cell:hover { box-shadow: 0 0 0 1.5px var(--accent); }
   .heat { --heat-cell: 14px; --heat-gap: 3px; }
 }
 
-/* ---- Puces de séries (tendance multi-nutriments, Stats) ---- */
-.chip-series {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  padding: 3px 9px;
-  font-size: 12px;
-  border: 1px solid var(--border);
-  border-radius: 999px;
-  background: var(--panel-2);
-  color: var(--text);
-  cursor: pointer;
-}
-.chip-series > i { width: 9px; height: 9px; border-radius: 50%; display: inline-block; }
-
 /* ---- Sélecteur d'éléments de la tendance (nutriments + rapports) ---- */
 /* ---- Sélecteur des séries de la tendance ----
    Une seule ligne : ce qui est tracé, puis un champ de recherche pour ajouter.
@@ -1270,7 +1253,6 @@ button.heat-cell:hover { box-shadow: 0 0 0 1.5px var(--accent); }
 
 /* ---- Info-bulle riche réutilisable (HoverCard) ---- */
 .hovercard { position: relative; display: inline-flex; align-items: center; outline: none; cursor: help; }
-.cov-cell.hovercard { min-width: 0; cursor: pointer; }
 .hovercard-pop {
   position: absolute;
   bottom: calc(100% + 9px);

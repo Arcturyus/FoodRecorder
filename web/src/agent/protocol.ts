@@ -13,11 +13,6 @@ export interface AgentToolResult {
   content: string;
 }
 
-export type AgentMessage =
-  | { role: 'user'; text: string }
-  | { role: 'assistant'; text: string; calls: AgentToolCall[] }
-  | { role: 'tool'; results: AgentToolResult[] };
-
 export interface AgentUsage {
   inputTokens?: number;
   outputTokens?: number;
@@ -31,12 +26,6 @@ export interface AgentUsage {
   stopReason?: string;
   latencyMs?: number;
   raw?: Record<string, unknown>;
-}
-
-export interface AgentModelReply {
-  text: string;
-  calls: AgentToolCall[];
-  usage?: AgentUsage;
 }
 
 export interface AgentTool<T> {

@@ -154,13 +154,6 @@ export const SURPLUS_DEFAULT = 10;
 export const DEFICIT_BOUNDS = { min: 5, max: 30, safeMax: 25 } as const;
 export const SURPLUS_BOUNDS = { min: 3, max: 25, safeMax: 20 } as const;
 
-export const ACTIVITY_LABELS: Record<Activity, string> = {
-  sedentaire: 'Sédentaire',
-  modere: 'Modéré (3-4 séances/sem.)',
-  sportif: 'Sportif (5-6 séances/sem.)',
-  intense: 'Intense / compétition',
-};
-
 export const OBJECTIVE_LABELS: Record<Objective, string> = {
   maintien: 'Maintien',
   perte: 'Perte de poids',

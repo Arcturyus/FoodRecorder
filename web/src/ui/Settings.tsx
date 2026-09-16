@@ -253,8 +253,11 @@ export function Settings() {
 
             <div className="hint" style={{ color: 'var(--warn)' }}>
               Attention : ce mode envoie le texte de vos repas et votre clé à {info.label} — ce n’est plus 100 %
-              local. La clé est stockée en clair dans ce navigateur (localStorage). N’utilisez ce mode que sur un
-              appareil de confiance. Chaque fournisseur garde sa propre clé : en changer n’efface pas les autres.
+              local. La clé est stockée en clair dans ce navigateur (localStorage) et peut être consultée dans ses
+              outils de développement. Utilisez uniquement votre propre clé, sur un appareil de confiance, et
+              surveillez les limites de facturation de votre fournisseur. Certains fournisseurs proposent un palier
+              API gratuit, pratique pour tester, mais les quotas et conditions varient. Chaque fournisseur garde sa
+              propre clé : en changer n’efface pas les autres.
             </div>
           </div>
         )}
