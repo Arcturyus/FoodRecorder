@@ -9,7 +9,7 @@ import { BodyMeasurementsHistory } from './BodyMeasurementsHistory';
 
 /**
  * Onglet « Poids ». L'ordre suit ce qu'on vient y faire : d'abord ENREGISTRER une
- * pesée (dictée ou formulaire), puis la voir dans la courbe, puis — rarement —
+ * pesée dans le formulaire, puis la voir dans la courbe, puis — rarement —
  * relire l'historique ou retoucher le profil qui pilote les cibles.
  *
  * L'onglet s'appelait « Profil » et s'ouvrait sur le formulaire de profil : un

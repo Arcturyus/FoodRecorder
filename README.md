@@ -98,13 +98,18 @@ relire une fiche nutritionnelle) peuvent utiliser une clé API ou un pont vers u
 
 | Mode | Ce qu'il faut | Où ça marche |
 |---|---|---|
-| **Clé API** *(recommandé)* | une clé API payante, collée dans Réglages ; Claude (Anthropic), Gemini (Google), GPT (OpenAI), Mistral, OpenRouter ou Groq | partout, y compris mobile |
+| **Clé API** *(recommandé)* | une clé API personnelle, collée dans Réglages ; certains fournisseurs proposent un palier gratuit pour tester, avec des quotas et conditions variables ; Claude (Anthropic), Gemini (Google), GPT (OpenAI), Mistral, OpenRouter ou Groq | partout, y compris mobile |
 | **Pont CLI** | le CLI `claude` ou `codex` installé et **déjà connecté** à votre compte — aucune clé API à saisir | ordinateur qui exécute `npm run dev` |
 
 Le pont réutilise simplement la session du CLI : le navigateur appelle un middleware Vite local
 ([`web/vite-plugin-claude-code.ts`](web/vite-plugin-claude-code.ts)) qui lance le CLI choisi à sa place, et
 archive chaque appel (prompt, raisonnement, coût, tokens) dans `response/` pour pouvoir relire après coup
 ce que le modèle a compris.
+
+Attention : avec une clé API, les appels partent directement de votre navigateur vers le fournisseur choisi.
+Votre clé API est conservée localement dans ce navigateur et peut être visible dans ses outils de développement.
+Utilisez uniquement votre propre clé, sur un appareil de confiance, et surveillez les limites de facturation de
+votre fournisseur. Aucun compte Supabase n'est nécessaire si vous utilisez l'application sur un seul appareil.
 
 Deux autres modes existent — un **parseur à règles** en français, 100 % hors-ligne, qui sert de défaut et de
 filet de sécurité quand le LLM échoue, et une **IA locale open source** (WebLLM / WebGPU). Le parseur à

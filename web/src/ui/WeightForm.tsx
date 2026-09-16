@@ -1,9 +1,8 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useMemo, useState } from 'react';
 import { useStore, todayStr, nowTime } from '../store/store';
 import { computeWeight } from '../weight/compute';
 import { WEIGHT_METRICS } from '../weight/types';
 import type { WeightEntry, WeightMetricKey } from '../weight/types';
-import type { WeightPatch } from '../extraction/weight';
 import { fmt } from './format';
 import { SuggestedNumberField } from './SuggestedNumberField';
 
@@ -28,11 +27,10 @@ function toNum(s: string): number | undefined {
 }
 
 /**
- * Formulaire d'enregistrement d'une pesée. `prefill` (issu de la dictée/LLM)
- * pré-remplit les champs quand son `nonce` change. Affiche en direct les
- * champs dérivés et permet d'éditer les constantes personnelles.
+ * Formulaire d'enregistrement d'une pesée. Affiche en direct les champs
+ * dérivés et permet d'éditer les constantes personnelles.
  */
-export function WeightForm({ prefill }: { prefill?: { patch: WeightPatch; nonce: number } | null }) {
+export function WeightForm() {
   const addWeightEntry = useStore((s) => s.addWeightEntry);
   const weightEntries = useStore((s) => s.weightEntries);
   const weightConfig = useStore((s) => s.weightConfig);
@@ -51,36 +49,6 @@ export function WeightForm({ prefill }: { prefill?: { patch: WeightPatch; nonce:
     () => [...weightEntries].sort((a, b) => `${a.date} ${a.heure}`.localeCompare(`${b.date} ${b.heure}`)).at(-1),
     [weightEntries],
   );
-
-  // Applique un pré-remplissage venant de la dictée.
-  useEffect(() => {
-    if (!prefill) return;
-    const p = prefill.patch;
-    setDraft((d) => {
-      const next = { ...d };
-      for (const { key } of NUM_FIELDS) {
-        const v = p[key];
-        if (v != null) next[key] = String(v);
-      }
-      return next;
-    });
-    setAcceptedFields((current) => new Set([...current, ...NUM_FIELDS.filter(({ key }) => p[key] != null).map(({ key }) => key)]));
-    if (p.aJeun != null) setAJeun(p.aJeun);
-    if (p.nu != null) setNu(p.nu);
-    if (p.date && p.date <= todayStr()) setDate(p.date);
-    if (p.heure) setHeure(p.heure);
-    if (p.remarque) setRemarque(p.remarque);
-    setFlash(
-      p.date && p.date <= todayStr()
-        ? `Pré-rempli depuis la dictée (date comprise : ${new Date(`${p.date}T00:00:00`).toLocaleDateString('fr-FR', {
-            weekday: 'long',
-            day: 'numeric',
-            month: 'long',
-          })}) — vérifiez, la date reste modifiable ci-dessus.`
-        : 'Pré-rempli depuis la dictée — vérifiez puis enregistrez.',
-    );
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [prefill?.nonce]);
 
   const poids = toNum(draft.poids);
   const computed = useMemo(
