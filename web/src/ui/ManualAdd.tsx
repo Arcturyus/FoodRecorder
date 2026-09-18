@@ -8,6 +8,7 @@ import { toGrams, scaleNutrients } from '../nutrition/compute';
 import { fmt, UNIT_LABELS } from './format';
 import { NumberField } from './NumberField';
 import { useBankUsage, derniereFoisLabel } from './useBankUsage';
+import type { BankUsageOccurrence } from './useBankUsage';
 
 /**
  * Ajout manuel « à la carte » : on cherche un aliment, on choisit la quantité
@@ -17,6 +18,13 @@ import { useBankUsage, derniereFoisLabel } from './useBankUsage';
  */
 /** Résultats affichés par groupe : au-delà, la liste déborde de l'écran. */
 const MAX_RESULTS = 8;
+
+function recentUsageLabel(recent: BankUsageOccurrence): string {
+  const quantity = recent.quantite != null && recent.unite
+    ? `${fmt(recent.quantite, 2)} ${UNIT_LABELS[recent.unite]} `
+    : '';
+  return `${quantity}${derniereFoisLabel(recent.date)}`;
+}
 
 export function ManualAdd({
   date,
@@ -164,6 +172,14 @@ export function ManualAdd({
                   <span className="kcal">
                     {fmt(f.n.kcal)} kcal/100 g{f.pieceGrams ? ` · 1 pièce ≈ ${fmt(f.pieceGrams)} g` : ''}
                     {u ? ` · dernière fois ${derniereFoisLabel(u.derniere)} (${u.jours} j)` : ''}
+                    {u?.recent.length ? (
+                      <> · dernières fois : {u.recent.map((recent, index) => (
+                        <span key={`${recent.date}-${index}`}>
+                          {index > 0 && ' · '}
+                          {recentUsageLabel(recent)}
+                        </span>
+                      ))}</>
+                    ) : null}
                   </span>
                 </div>
                 <span />
