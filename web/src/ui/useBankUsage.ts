@@ -10,7 +10,18 @@
 
 import { useMemo } from 'react';
 import { useStore } from '../store/store';
+import type { JournalEntry } from '../store/store';
 import { foodFrequencies } from '../nutrition/frequency';
+import type { Unit } from '../nutrition/types';
+
+export interface BankUsageOccurrence {
+  /** Date de consommation (YYYY-MM-DD). */
+  date: string;
+  /** Quantité enregistrée, absente pour les anciennes lignes incomplètes. */
+  quantite?: number;
+  /** Unité enregistrée, absente pour les anciennes lignes incomplètes. */
+  unite?: Unit;
+}
 
 export interface BankUsage {
   /** Nombre d'items de journal (deux fois dans la même journée = 2). */
@@ -19,24 +30,56 @@ export interface BankUsage {
   jours: number;
   /** Dernière consommation (YYYY-MM-DD). */
   derniere: string;
+  /** Trois dernières occurrences, de la plus récente à la plus ancienne. */
+  recent: BankUsageOccurrence[];
 }
 
 /** Toute la période : `foodFrequencies` filtre sur une plage inclusive de dates ISO. */
 const TOUT = { start: '0000-01-01', end: '9999-12-31' };
 
 /** Usage par foodId sur tout l'historique. Mémoïsé : il relit tout le journal. */
+export function buildBankUsage(entries: JournalEntry[]): Map<string, BankUsage> {
+  const map = new Map<string, BankUsage>();
+  for (const f of foodFrequencies(entries, TOUT)) {
+    // Les aliments non résolus (clé `nom:…`) n'ont pas d'aliment de banque à
+    // décrire : ils sont comptés ailleurs, dans « Ma consommation ».
+    if (!f.foodId) continue;
+    map.set(f.foodId, { occurrences: f.occurrences, jours: f.jours, derniere: f.derniere, recent: [] });
+  }
+
+  const recentByFood = new Map<string, (BankUsageOccurrence & { createdAt: number; itemIndex: number })[]>();
+  for (const entry of entries) {
+    for (const [itemIndex, item] of entry.items.entries()) {
+      if (!item.foodId) continue;
+      const recent = recentByFood.get(item.foodId) ?? [];
+      const occurrence: BankUsageOccurrence & { createdAt: number; itemIndex: number } = {
+        date: entry.date,
+        createdAt: entry.createdAt,
+        itemIndex,
+      };
+      // Des lignes très anciennes peuvent ne pas avoir ces champs après une
+      // migration. Ne rien afficher dans ce cas plutôt que d'inventer une dose.
+      if (typeof item.quantite === 'number' && Number.isFinite(item.quantite) && item.unite) {
+        occurrence.quantite = item.quantite;
+        occurrence.unite = item.unite;
+      }
+      recent.push(occurrence);
+      recentByFood.set(item.foodId, recent);
+    }
+  }
+
+  for (const [foodId, usage] of map) {
+    usage.recent = (recentByFood.get(foodId) ?? [])
+      .sort((a, b) => b.date.localeCompare(a.date) || b.createdAt - a.createdAt || b.itemIndex - a.itemIndex)
+      .slice(0, 3)
+      .map(({ date, quantite, unite }) => ({ date, ...(quantite != null ? { quantite } : {}), ...(unite ? { unite } : {}) }));
+  }
+  return map;
+}
+
 export function useBankUsage(): Map<string, BankUsage> {
   const entries = useStore((s) => s.entries);
-  return useMemo(() => {
-    const map = new Map<string, BankUsage>();
-    for (const f of foodFrequencies(entries, TOUT)) {
-      // Les aliments non résolus (clé `nom:…`) n'ont pas d'aliment de banque à
-      // décrire : ils sont comptés ailleurs, dans « Ma consommation ».
-      if (!f.foodId) continue;
-      map.set(f.foodId, { occurrences: f.occurrences, jours: f.jours, derniere: f.derniere });
-    }
-    return map;
-  }, [entries]);
+  return useMemo(() => buildBankUsage(entries), [entries]);
 }
 
 /** Nombre de jours entre une date ISO et aujourd'hui (0 = aujourd'hui). */
