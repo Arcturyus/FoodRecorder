@@ -1,6 +1,7 @@
 import { z } from 'zod';
 import { EMPTY_NUTRIENTS, UNITS, type ExtractedItem, type Food, type FoodCategory, type NutrientKey } from '../nutrition/types';
 import { RDA, nutrientLabelOf } from '../nutrition/rda';
+import { normalizeForMatch } from '../nutrition/normalize';
 import type { Profile, TargetOverride } from '../nutrition/targets';
 import { AGENT_SECTIONS, AGENT_TABS, useNavigation } from './navigation';
 import { isDayCounted, resyncEntries, useStore } from '../store/store';
@@ -67,13 +68,23 @@ const noteArgs = z.object({ date, note: z.string().max(3000) });
 const navigateArgs = z.object({ onglet: z.enum(AGENT_TABS), date: date.optional(), section: z.enum(AGENT_SECTIONS).optional() });
 const targetArgs = z.object({ nutriment: z.enum(nutrientKeys as [NutrientKey, ...NutrientKey[]]), ajr: z.number().min(0).optional(), optimal: z.number().min(0).optional(), perKg: z.boolean().optional() }).refine((v) => v.ajr != null || v.optimal != null || v.perKg != null, 'Au moins un réglage est requis.');
 const profileArgs = z.object({ sexe: z.enum(['homme', 'femme']).optional(), poids: z.number().positive().max(500).optional(), activite: z.enum(['sedentaire', 'modere', 'sportif', 'intense']).optional(), objectif: z.enum(['maintien', 'perte', 'muscle']).optional(), deficitPct: z.number().min(0).max(50).optional(), surplusPct: z.number().min(0).max(50).optional(), protParKg: z.number().min(0).max(10).optional() }).refine((v) => Object.keys(v).length > 0, 'Au moins un champ est requis.');
+const aliasesSchema = z.array(z.string().trim().min(1).max(120)).max(50);
 const foodModification = z.object({
   id: z.string().min(1),
   nom: z.string().trim().min(1).optional(),
+  /** Replaces the complete alias list, so removing an alias is unambiguous. */
+  aliases: aliasesSchema.optional(),
   categorie: foodCategorySchema.optional(),
   pieceGrams: z.number().positive().optional(),
   nutriments: z.record(z.enum(nutrientKeys as [NutrientKey, ...NutrientKey[]]), z.number().min(0)).optional(),
-}).refine((value) => value.nom != null || value.categorie != null || value.pieceGrams != null || value.nutriments != null, 'Au moins une correction est requise.');
+}).superRefine((value, ctx) => {
+  if (value.nom == null && value.aliases == null && value.categorie == null && value.pieceGrams == null && value.nutriments == null) {
+    ctx.addIssue({ code: z.ZodIssueCode.custom, message: 'Au moins une correction est requise.' });
+  }
+  if (value.aliases && new Set(value.aliases.map(normalizeForMatch)).size !== value.aliases.length) {
+    ctx.addIssue({ code: z.ZodIssueCode.custom, message: 'Les alias doivent être uniques.', path: ['aliases'] });
+  }
+});
 const editFoodArgs = foodModification;
 const editFoodsArgs = z.object({
   modifications: z.array(foodModification).min(1).max(100),
@@ -103,6 +114,29 @@ const countedDayArgs = z.object({ date, compte: z.boolean() });
 
 type FoodModification = z.infer<typeof foodModification>;
 
+const completeNutrients = z.object(Object.fromEntries(
+  nutrientKeys.map((key) => [key, z.number().min(0)]),
+) as Record<NutrientKey, z.ZodNumber>);
+const foodCreation = z.object({
+  nom: z.string().trim().min(1).max(120),
+  aliases: aliasesSchema.default([]),
+  categorie: foodCategorySchema,
+  pieceGrams: z.number().positive().optional(),
+  unitGrams: z.record(units, z.number().positive()).optional(),
+  nutriments: completeNutrients,
+}).superRefine((value, ctx) => {
+  const names = [value.nom, ...value.aliases].map(normalizeForMatch);
+  if (new Set(names).size !== names.length) ctx.addIssue({ code: z.ZodIssueCode.custom, message: 'Le nom et les alias doivent être distincts.', path: ['aliases'] });
+});
+const createFoodArgs = foodCreation;
+type FoodCreation = z.input<typeof foodCreation>;
+const completeNutrientsJsonSchema = {
+  type: 'object',
+  properties: Object.fromEntries(nutrientKeys.map((key) => [key, { type: 'number', minimum: 0 }])),
+  required: nutrientKeys,
+  additionalProperties: false,
+};
+
 function foodChanges(modifications: FoodModification[]): AgentActionPreviewGroup[] {
   const bank = useStore.getState().customFoods;
   return modifications.map((change) => {
@@ -110,6 +144,7 @@ function foodChanges(modifications: FoodModification[]): AgentActionPreviewGroup
     if (!food) throw new Error(`Aliment introuvable : ${change.id}.`);
     const fields: AgentActionPreviewGroup['fields'] = [];
     if (change.nom != null && change.nom !== food.nom) fields.push({ key: 'nom', label: 'Nom', before: food.nom, after: change.nom });
+    if (change.aliases != null && stable(change.aliases) !== stable(food.aliases)) fields.push({ key: 'aliases', label: 'Alias', before: food.aliases.join(', ') || '—', after: change.aliases.join(', ') || '—' });
     if (change.categorie != null && change.categorie !== food.categorie) fields.push({ key: 'categorie', label: 'Catégorie', before: food.categorie, after: change.categorie });
     if (change.pieceGrams != null && change.pieceGrams !== food.pieceGrams) fields.push({ key: 'pieceGrams', label: 'Poids par pièce', before: food.pieceGrams ?? null, after: change.pieceGrams, unit: 'g' });
     for (const [key, after] of Object.entries(change.nutriments ?? {}) as [NutrientKey, number][]) {
@@ -134,6 +169,7 @@ function applyFoodModifications(modifications: FoodModification[]): Food[] {
       const next: Food = {
         ...food,
         ...(change.nom != null ? { nom: change.nom } : {}),
+        ...(change.aliases != null ? { aliases: change.aliases } : {}),
         ...(change.categorie != null ? { categorie: change.categorie } : {}),
         ...(change.pieceGrams != null ? { pieceGrams: change.pieceGrams } : {}),
         n: { ...food.n, ...(change.nutriments ?? {}) },
@@ -148,6 +184,46 @@ function applyFoodModifications(modifications: FoodModification[]): Food[] {
   return changedFoods;
 }
 
+function createBankFood(creation: FoodCreation): Food {
+  const current = useStore.getState();
+  const occupiedNames = new Set(current.customFoods.flatMap((food) => [food.nom, ...food.aliases]).map(normalizeForMatch));
+  for (const name of [creation.nom, ...(creation.aliases ?? [])]) {
+    if (occupiedNames.has(normalizeForMatch(name))) throw new Error(`Le nom ou alias « ${name} » est déjà utilisé par une fiche existante.`);
+  }
+  const food: Food = {
+    id: `custom-${crypto.randomUUID()}`,
+    nom: creation.nom,
+    aliases: creation.aliases ?? [],
+    categorie: creation.categorie,
+    ...(creation.pieceGrams != null ? { pieceGrams: creation.pieceGrams } : {}),
+    ...(creation.unitGrams != null ? { unitGrams: creation.unitGrams } : {}),
+    n: creation.nutriments,
+    custom: true,
+    origine: 'ia',
+    aVerifier: true,
+    ajouteLe: new Date().toISOString().slice(0, 10),
+  };
+  useStore.setState((state) => ({ customFoods: [food, ...state.customFoods] }));
+  return food;
+}
+
+function foodCreationChanges(food: FoodCreation): AgentActionPreviewGroup[] {
+  return [{
+    id: 'new-food',
+    label: food.nom,
+    fields: [
+      { key: 'nom', label: 'Nom', before: null, after: food.nom },
+      { key: 'aliases', label: 'Alias', before: null, after: (food.aliases ?? []).join(', ') || '—' },
+      { key: 'categorie', label: 'Catégorie', before: null, after: food.categorie },
+      ...(food.pieceGrams != null ? [{ key: 'pieceGrams', label: 'Poids par pièce', before: null, after: food.pieceGrams, unit: 'g' }] : []),
+      ...nutrientKeys.map((key) => {
+        const meta = nutrientMeta.get(key);
+        return { key, label: meta?.label ?? nutrientLabelOf(key), before: null, after: food.nutriments[key], unit: `${meta?.unit ?? ''}/100 g` };
+      }),
+    ],
+  }];
+}
+
 function dataFingerprint(tool: string, args: any): unknown {
   const s = useStore.getState();
   switch (tool) {
@@ -159,6 +235,7 @@ function dataFingerprint(tool: string, args: any): unknown {
     case 'modifier_profil': return Object.fromEntries(Object.keys(args).map((key) => [key, (s.profile as any)[key] ?? null]));
     case 'modifier_aliment_global': return s.customFoods.find((f) => f.id === args.id) ?? null;
     case 'modifier_aliments_banque': return args.modifications.map((change: FoodModification) => s.customFoods.find((f) => f.id === change.id) ?? null);
+    case 'creer_aliment_banque': return stable(s.customFoods);
     case 'fusionner_aliments': return { source: s.customFoods.find((f) => f.id === args.sourceId) ?? null, target: s.customFoods.find((f) => f.id === args.targetId) ?? null, entryCount: s.entries.length };
     case 'resynchroniser_historique': return { foods: stable(s.customFoods), entries: stable(s.entries) };
     case 'modifier_repas':
@@ -198,6 +275,8 @@ export async function executeAction(p: AgentActionPlan): Promise<{ content: unkn
     } else if (p.tool === 'modifier_aliments_banque') {
       preimage = args.modifications.map((change: FoodModification) => s.customFoods.find((food) => food.id === change.id));
       const foods = applyFoodModifications(args.modifications); result = { foods, modifiedCount: foods.length };
+    } else if (p.tool === 'creer_aliment_banque') {
+      const food = createBankFood(args); createdIds = [food.id]; result = { food };
     } else if (p.tool === 'fusionner_aliments') {
       preimage = dataFingerprint(p.tool, args); const count = s.mergeFoods(args.sourceId, args.targetId); result = { itemsRepointes: count };
     } else if (p.tool === 'resynchroniser_historique') {
@@ -264,6 +343,11 @@ export function undoActivity(id: string): { ok: boolean; message: string } {
       });
     }
   }
+  else if (a.tool === 'creer_aliment_banque') {
+    const createdFood = (a.result as any)?.food as Food | undefined;
+    safe = !!createdFood && stable(s.customFoods.find((row) => row.id === createdFood.id)) === stable(createdFood);
+    if (safe && createdFood) useStore.setState((state) => ({ customFoods: state.customFoods.filter((food) => food.id !== createdFood.id) }));
+  }
   else if (a.tool === 'modifier_repas') {
     safe = stable(s.entries.find((entry) => entry.id === args.id)) === stable((a.result as any)?.entry);
     if (safe) useStore.setState((state) => ({ entries: state.entries.map((entry) => entry.id === args.id ? a.preimage as any : entry) }));
@@ -324,19 +408,23 @@ export const ACTION_TOOLS: AgentTool<unknown>[] = [
   confirmedTool('noter_jour', 'Prépare l’ajout ou le remplacement de la note d’un jour.', noteArgs, { type: 'object', properties: { date: { type: 'string' }, note: { type: 'string' } }, required: ['date', 'note'], additionalProperties: false }, (a) => ({ text: `${a.note.trim() ? 'Remplacer' : 'Effacer'} la note du ${a.date}${a.note.trim() ? ` par « ${a.note.trim()} »` : ''}.`, impact: '1 note de jour.' })),
   confirmedTool('modifier_objectif_nutriment', 'Modifie globalement une cible nutritionnelle.', targetArgs, { type: 'object', properties: { nutriment: { type: 'string', enum: nutrientKeys }, ajr: { type: 'number' }, optimal: { type: 'number' }, perKg: { type: 'boolean' } }, required: ['nutriment'], additionalProperties: false }, (a) => ({ text: `Modifier la cible globale ${RDA.find((r) => r.key === a.nutriment)?.label ?? a.nutriment}.`, impact: 'Tous les bilans, couvertures et recommandations futurs utilisant cette cible.' })),
   confirmedTool('modifier_profil', 'Modifie des champs du profil personnel.', profileArgs, { type: 'object', properties: { sexe: { type: 'string' }, poids: { type: 'number' }, activite: { type: 'string' }, objectif: { type: 'string' }, deficitPct: { type: 'number' }, surplusPct: { type: 'number' }, protParKg: { type: 'number' } }, additionalProperties: false }, (a) => ({ text: `Modifier le profil : ${Object.entries(a).map(([k, v]) => `${k}=${v}`).join(', ')}.`, impact: 'Recalcul global des objectifs et recommandations dépendant du profil.' })),
-  confirmedTool('modifier_aliment_global', 'Modifie le nom, la catégorie, le poids par pièce ou certains nutriments d’une fiche. Les nutriments non fournis restent strictement inchangés.', editFoodArgs, { type: 'object', properties: { id: { type: 'string' }, nom: { type: 'string' }, categorie: { type: 'string', enum: foodCategories }, pieceGrams: { type: 'number' }, nutriments: { type: 'object', additionalProperties: { type: 'number', minimum: 0 } } }, required: ['id'], additionalProperties: false }, (a) => {
+  confirmedTool('modifier_aliment_global', 'Modifie le nom, les alias, la catégorie, le poids par pièce ou certains nutriments d’une fiche. Le champ aliases remplace toute la liste, ce qui permet une suppression explicite. Les nutriments non fournis restent strictement inchangés.', editFoodArgs, { type: 'object', properties: { id: { type: 'string' }, nom: { type: 'string' }, aliases: { type: 'array', items: { type: 'string' } }, categorie: { type: 'string', enum: foodCategories }, pieceGrams: { type: 'number' }, nutriments: { type: 'object', additionalProperties: { type: 'number', minimum: 0 } } }, required: ['id'], additionalProperties: false }, (a) => {
     const changes = foodChanges([a]);
     if (!changes.length) throw new Error('Aucune modification effective.');
     const s = useStore.getState(); const n = s.entries.flatMap((e) => e.items).filter((i) => i.foodId === a.id).length;
     return { text: `Modifier la fiche ${changes[0].label}.`, impact: `${changes[0].fields.length} champ(s) ; ${n} item(s) d’historique seront recalculés.`, changes };
   }),
-  confirmedTool('modifier_aliments_banque', 'Modifie atomiquement jusqu’à 100 aliments déjà adoptés : catégories et/ou valeurs nutritionnelles partielles. Une seule confirmation affiche tous les avant/après ; soit tout est appliqué, soit rien.', editFoodsArgs, { type: 'object', properties: { modifications: { type: 'array', minItems: 1, maxItems: 100, items: { type: 'object', properties: { id: { type: 'string' }, nom: { type: 'string' }, categorie: { type: 'string', enum: foodCategories }, pieceGrams: { type: 'number' }, nutriments: { type: 'object', additionalProperties: { type: 'number', minimum: 0 } } }, required: ['id'], additionalProperties: false } } }, required: ['modifications'], additionalProperties: false }, (a) => {
+  confirmedTool('modifier_aliments_banque', 'Modifie atomiquement jusqu’à 100 aliments déjà adoptés : nom, alias, catégorie et/ou valeurs nutritionnelles partielles. aliases remplace la liste complète, pour pouvoir retirer des synonymes. Une seule confirmation affiche tous les avant/après ; soit tout est appliqué, soit rien.', editFoodsArgs, { type: 'object', properties: { modifications: { type: 'array', minItems: 1, maxItems: 100, items: { type: 'object', properties: { id: { type: 'string' }, nom: { type: 'string' }, aliases: { type: 'array', items: { type: 'string' } }, categorie: { type: 'string', enum: foodCategories }, pieceGrams: { type: 'number' }, nutriments: { type: 'object', additionalProperties: { type: 'number', minimum: 0 } } }, required: ['id'], additionalProperties: false } } }, required: ['modifications'], additionalProperties: false }, (a) => {
     const changes = foodChanges(a.modifications);
     if (!changes.length) throw new Error('Aucune modification effective.');
     const ids = new Set(changes.map((row) => row.id));
     const historyItems = useStore.getState().entries.flatMap((entry) => entry.items).filter((item) => item.foodId && ids.has(item.foodId)).length;
     const fieldCount = changes.reduce((sum, group) => sum + group.fields.length, 0);
     return { text: `Modifier ${changes.length} aliment(s) de la banque en une seule opération.`, impact: `${fieldCount} champ(s) ; ${historyItems} item(s) d’historique seront recalculés.`, changes };
+  }),
+  confirmedTool('creer_aliment_banque', 'Crée une fiche alimentaire estimée par l’agent dans la banque personnelle. Évalue les nutriments pour 100 g, même lorsque l’utilisateur ne les donne pas tous ; les valeurs fournies servent d’indications à vérifier, pas d’instructions à recopier. La fiche reste marquée à vérifier. Le nom et les alias ne doivent pas déjà exister.', createFoodArgs, { type: 'object', properties: { nom: { type: 'string' }, aliases: { type: 'array', items: { type: 'string' } }, categorie: { type: 'string', enum: foodCategories }, pieceGrams: { type: 'number', exclusiveMinimum: 0 }, unitGrams: { type: 'object', additionalProperties: { type: 'number', exclusiveMinimum: 0 } }, nutriments: completeNutrientsJsonSchema }, required: ['nom', 'categorie', 'nutriments'], additionalProperties: false }, (a) => {
+    const changes = foodCreationChanges(a);
+    return { text: `Créer la fiche ${a.nom} dans la banque.`, impact: '1 fiche estimée et marquée à vérifier sera ajoutée sans modifier l’historique existant.', changes };
   }),
   confirmedTool('fusionner_aliments', 'Fusionne deux aliments et repointe tout l’historique.', mergeArgs, { type: 'object', properties: { sourceId: { type: 'string' }, targetId: { type: 'string' } }, required: ['sourceId', 'targetId'], additionalProperties: false }, (a) => { const s = useStore.getState(); const n = s.entries.flatMap((e) => e.items).filter((i) => i.foodId === a.sourceId).length; return { text: `Fusionner ${a.sourceId} dans ${a.targetId}.`, impact: `${n} item(s) repointés ; la fiche source sera supprimée.`, undoable: false }; }),
   confirmedTool('resynchroniser_historique', 'Recalcule tout l’historique depuis la banque actuelle.', resyncArgs, { type: 'object', properties: { confirmerToutesLesEntrees: { const: true } }, required: ['confirmerToutesLesEntrees'], additionalProperties: false }, () => ({ text: 'Recalculer toutes les entrées depuis les fiches actuelles de la banque.', impact: `${useStore.getState().entries.length} entrée(s) potentiellement touchée(s).`, undoable: false })),
