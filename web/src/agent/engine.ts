@@ -7,7 +7,11 @@ import type { AgentLimits, AgentToolCall, AgentToolResult, AgentUsage } from './
 import { ALL_TOOLS } from './tools';
 
 export interface ScratchStep { call: AgentToolCall; result: AgentToolResult }
-export type EngineReply = { kind: 'answer'; text: string; usage: AgentUsage } | { kind: 'tool'; calls: AgentToolCall[]; text: string; usage: AgentUsage };
+export type EngineReply =
+  | { kind: 'answer'; text: string; usage: AgentUsage }
+  | { kind: 'tool'; calls: AgentToolCall[]; text: string; usage: AgentUsage }
+  /** Le modèle a répondu, mais sa réponse de protocole est inutilisable. La boucle lui renvoie le diagnostic. */
+  | { kind: 'recoverable-error'; error: string; usage: AgentUsage };
 
 const SYSTEM = `Tu es l'agent de FoodRecorder. Réponds dans la langue de l'utilisateur à partir des données de l'application.
 Tu ne connais aucune donnée personnelle avant d'appeler un outil. N'invente jamais une valeur manquante.
@@ -77,9 +81,16 @@ async function cliTurn(turns: ChatTurn[], scratch: ScratchStep[], limits: AgentL
   const start = performance.now();
   const tools = ALL_TOOLS.map((t) => `- ${t.name}: ${t.description}\n${JSON.stringify(t.jsonSchema)}`).join('\n');
   const prompt = [`${SYSTEM}\nRéponds uniquement par {"outil":"nom","args":{...}} ou {"reponse":"..."}. Réponse finale concise, plafond demandé : ${limits.maxOutputTokens} tokens.\n${tools}`, ...turns.map((t) => `\n${t.role}: ${t.content}`), ...scratch.map((s) => `\noutil ${s.call.name} ${JSON.stringify(s.call.args)}\nrésultat: ${s.result.content}`)].join('\n');
-  const raw = await callBridge({ prompt, label: 'agent', timeoutMs: 180_000, signal }); const obj = extractObject(raw);
+  const raw = await callBridge({ prompt, label: 'agent', timeoutMs: 180_000, signal });
   const cli = currentCli();
   const usage: AgentUsage = { provider: cli, model: currentCliModel() ?? `${cli} (défaut CLI)`, transport: 'cli-json', inputTokens: Math.ceil(prompt.length / 4), outputTokens: Math.ceil(raw.length / 4), latencyMs: Math.round(performance.now() - start), estimated: true, stopReason: 'cli_complete' };
+  let obj: Record<string, unknown>;
+  try {
+    obj = extractObject(raw);
+  } catch (error) {
+    const detail = error instanceof Error ? error.message : String(error);
+    return { kind: 'recoverable-error', error: `Réponse JSON invalide du CLI : ${detail}. Réponse reçue : ${raw}`, usage };
+  }
   if (typeof obj.reponse === 'string') return { kind: 'answer', text: obj.reponse, usage };
   if (typeof obj.outil === 'string') return { kind: 'tool', text: '', calls: [{ id: crypto.randomUUID(), name: obj.outil, args: obj.args ?? {} }], usage };
   throw new Error('Le CLI n’a fourni ni réponse ni appel d’outil.');

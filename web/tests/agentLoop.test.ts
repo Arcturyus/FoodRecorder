@@ -55,6 +55,19 @@ describe('boucle agentique', () => {
     expect(events).toHaveLength(2);
   });
 
+  it('relance le modèle après une réponse CLI JSON invalide, sans consommer un appel d’outil', async () => {
+    mockedEngine
+      .mockResolvedValueOnce({ kind: 'recoverable-error', error: "Réponse JSON invalide du CLI : Expected ',' or '}' after property value in JSON at position 22.", usage: usage(10, 3) })
+      .mockResolvedValueOnce({ kind: 'tool', text: '', calls: [{ id: 'fixed', name: 'lire_profil_objectifs', args: {} }], usage: usage(20, 5, 'tool_calls') })
+      .mockResolvedValueOnce({ kind: 'answer', text: 'Reprise terminée.', usage: usage(30, 8) });
+    const events: unknown[] = [];
+    const result = await runAgent([{ role: 'user', content: 'Mes objectifs ?' }], DEFAULT_AGENT_LIMITS, (event) => events.push(event));
+    const recoveredScratch = mockedEngine.mock.calls[1][1];
+    expect(recoveredScratch[0].result.content).toContain("Expected ',' or '}'");
+    expect(result).toMatchObject({ text: 'Reprise terminée.', toolCalls: 1, turns: 3 });
+    expect(events).toHaveLength(3);
+  });
+
   it('bloque un tool dont la politique est absente au lieu de l’exécuter', async () => {
     const tool = (await import('../src/agent/tools')).findTool('lire_profil_objectifs')!;
     const original = tool.policy;
