@@ -115,6 +115,31 @@ describe('écritures confirmées de l’agent', () => {
     expect(useStore.getState().customFoods[0].n.vitC).toBe(3);
   });
 
+  it('retire des alias puis crée et annule des fiches distinctes', async () => {
+    useStore.setState({ customFoods: [{
+      id: 'salade', nom: 'Salade verte', aliases: ['Laitue', 'Batavia', 'Mâche', 'Roquette'], categorie: 'legume',
+      n: { ...EMPTY_NUTRIENTS, vitC: 12 }, origine: 'catalogue',
+    }] });
+    const correction = await executeAction(await prepare('modifier_aliments_banque', {
+      modifications: [{ id: 'salade', nom: 'Laitue, crue', aliases: ['Laitue', 'Salade verte'] }],
+    }));
+    expect(correction.activity.undoable).toBe(true);
+    expect(useStore.getState().customFoods[0].aliases).toEqual(['Laitue', 'Salade verte']);
+
+    const invalid = findTool('creer_aliment_banque')!.schema.safeParse({ nom: 'Batavia, crue', categorie: 'legume', nutriments: { vitC: 4.4 } });
+    expect(invalid.success).toBe(false);
+
+    const created = await executeAction(await prepare('creer_aliment_banque', {
+      nom: 'Batavia, crue', aliases: ['Batavia'], categorie: 'legume',
+      nutriments: { ...EMPTY_NUTRIENTS, proteines: 1.2, fibres: 1, calcium: 26, magnesium: 8.7, potassium: 200, fer: 0.39, vitC: 4.4, vitB9: 65.6, vitK1: 20.6 },
+    }));
+    expect(created.activity.createdIds).toHaveLength(1);
+    expect((created.content as { food: { aVerifier?: boolean; origine?: string } }).food).toMatchObject({ origine: 'ia', aVerifier: true });
+    expect(useStore.getState().customFoods.map((food) => food.nom)).toContain('Batavia, crue');
+    expect(undoActivity(created.activity.id).ok).toBe(true);
+    expect(useStore.getState().customFoods.map((food) => food.nom)).not.toContain('Batavia, crue');
+  });
+
   it('refuse tout le lot si un aliment a changé après l’aperçu', async () => {
     useStore.setState({ customFoods: [
       { id: 'raisin', nom: 'Raisin', aliases: [], categorie: 'autre', n: { ...EMPTY_NUTRIENTS }, origine: 'catalogue' },
