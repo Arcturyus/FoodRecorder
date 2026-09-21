@@ -85,4 +85,15 @@ describe('autres transports agent', () => {
     expect(body).toMatchObject({ cli: 'codex', label: 'agent' });
     expect(body.prompt).toContain('lire_profil_objectifs');
   });
+
+  it('renvoie une erreur récupérable si la réponse JSON du CLI est invalide', async () => {
+    useStore.setState({ extractionMode: 'claudecode', cliBridge: 'codex' });
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(new Response(JSON.stringify({ text: '{"outil":"lire_poids","args":{"debut":"2026-01-01" "fin":"2026-01-31"}}' }), { status: 200, headers: { 'Content-Type': 'application/json' } })));
+
+    const reply = await askAgentEngine([{ role: 'user', content: 'Mon poids ?' }], [], DEFAULT_AGENT_LIMITS);
+    expect(reply.kind).toBe('recoverable-error');
+    if (reply.kind !== 'recoverable-error') throw new Error('erreur récupérable attendue');
+    expect(reply.error).toContain("Expected ',' or '}'");
+    expect(reply.error).toContain('lire_poids');
+  });
 });

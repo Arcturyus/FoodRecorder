@@ -66,6 +66,13 @@ export async function runAgent(
     modelCalls.push(reply.usage);
     usage = addUsage(usage, reply.usage);
     progress('tools', turn);
+    if (reply.kind === 'recoverable-error') {
+      const call: AgentToolCall = { id: crypto.randomUUID(), name: 'réponse_modèle', args: {} };
+      const summary = `ERREUR réponse du modèle : ${reply.error}`;
+      scratchpad.push({ call, result: { callId: call.id, name: call.name, ok: false, content: summary } });
+      onEvent({ type: 'tool-result', call, summary, ok: false });
+      continue;
+    }
     if (reply.kind === 'answer') {
       const limited = reply.usage.stopReason === 'max_tokens' || reply.usage.stopReason === 'length';
       const text = limited
