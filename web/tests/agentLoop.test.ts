@@ -42,6 +42,19 @@ describe('boucle agentique', () => {
     expect(scratch[0].result.content).toContain('arguments invalides');
   });
 
+  it('renvoie au modèle le diagnostic JSON exact afin qu’il puisse corriger l’appel suivant', async () => {
+    mockedEngine
+      .mockResolvedValueOnce({ kind: 'tool', text: '', calls: [{ id: 'bad-json', name: 'lire_poids', args: {}, rawArgs: '{"debut":"2026-01-01" "fin":"2026-01-31"}', parseError: "Expected ',' or '}' after property value in JSON at position 22" }], usage: usage(10, 3, 'tool_calls') })
+      .mockResolvedValueOnce({ kind: 'answer', text: 'Je corrige l’appel.', usage: usage(20, 5) });
+    const events: unknown[] = [];
+    const result = await runAgent([{ role: 'user', content: 'Mon poids ?' }], DEFAULT_AGENT_LIMITS, (event) => events.push(event));
+    const scratch = mockedEngine.mock.calls[1][1];
+    expect(result.text).toBe('Je corrige l’appel.');
+    expect(scratch[0].result).toMatchObject({ ok: false, name: 'lire_poids' });
+    expect(scratch[0].result.content).toContain("Expected ',' or '}'");
+    expect(events).toHaveLength(2);
+  });
+
   it('bloque un tool dont la politique est absente au lieu de l’exécuter', async () => {
     const tool = (await import('../src/agent/tools')).findTool('lire_profil_objectifs')!;
     const original = tool.policy;

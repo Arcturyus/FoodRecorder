@@ -87,6 +87,13 @@ export async function runAgent(
       onEvent({ type: 'tool-result', call, summary, ok: false });
       continue;
     }
+    if (call.parseError) {
+      const raw = call.rawArgs === undefined ? '' : ` Arguments reçus : ${call.rawArgs}`;
+      const summary = `ERREUR ${tool.name}: JSON d’arguments invalide: ${call.parseError}.${raw}`;
+      scratchpad.push({ call, result: { callId: call.id, name: tool.name, ok: false, content: summary } });
+      onEvent({ type: 'tool-result', call, summary, ok: false });
+      continue;
+    }
     const parsed = tool.schema.safeParse(call.args);
     if (!parsed.success) {
       const summary = `ERREUR ${tool.name}: arguments invalides: ${parsed.error.issues.map((i) => i.message).join('; ')}`;
