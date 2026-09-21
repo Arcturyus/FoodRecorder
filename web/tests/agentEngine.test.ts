@@ -36,6 +36,26 @@ describe('transport function calling OpenAI-compatible', () => {
     expect(body.tools.length).toBeGreaterThanOrEqual(9);
     expect(body.tools[0]).toMatchObject({ type: 'function', function: { name: 'lire_repas' } });
   });
+
+  it('préserve le diagnostic quand le fournisseur renvoie des arguments JSON mal formés', async () => {
+    useStore.setState({
+      extractionMode: 'cloud', cloudProvider: 'openai',
+      cloudApiKeys: { openai: 'test-key' }, cloudModels: { openai: 'gpt-test' },
+    });
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(new Response(JSON.stringify({
+      choices: [{ finish_reason: 'tool_calls', message: { tool_calls: [{ id: 'bad-json', type: 'function', function: { name: 'lire_poids', arguments: '{"debut":"2026-01-01" "fin":"2026-01-31"}' } }] } }],
+      usage: {},
+    }), { status: 200, headers: { 'Content-Type': 'application/json' } })));
+
+    const reply = await askAgentEngine([{ role: 'user', content: 'Mon poids ?' }], [], DEFAULT_AGENT_LIMITS);
+    expect(reply.kind).toBe('tool');
+    if (reply.kind !== 'tool') throw new Error('appel tool attendu');
+    expect(reply.calls[0]).toMatchObject({
+      id: 'bad-json', name: 'lire_poids', args: {},
+      rawArgs: '{"debut":"2026-01-01" "fin":"2026-01-31"}',
+    });
+    expect(reply.calls[0].parseError).toMatch(/Expected ',' or '}'/);
+  });
 });
 
 describe('autres transports agent', () => {

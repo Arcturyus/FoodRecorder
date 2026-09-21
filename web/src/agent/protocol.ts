@@ -4,6 +4,10 @@ export interface AgentToolCall {
   id: string;
   name: string;
   args: unknown;
+  /** Erreur de décodage des arguments renvoyés par le fournisseur, avant validation Zod. */
+  parseError?: string;
+  /** Arguments bruts, conservés pour expliquer une erreur au modèle et dans l’UI. */
+  rawArgs?: string;
 }
 
 export interface AgentToolResult {
