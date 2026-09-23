@@ -52,6 +52,7 @@ async function openAITurn(turns: ChatTurn[], scratch: ScratchStep[], limits: Age
   if (!info.baseUrl) throw new Error(`${info.label} n'utilise pas le protocole OpenAI.`);
   const tokenField = cfg.provider === 'openai' ? 'max_completion_tokens' : 'max_tokens';
   const body: Record<string, unknown> = { model: cfg.model, messages: openAIMessages(turns, scratch), tools: openAITools(), tool_choice: 'auto', [tokenField]: limits.maxOutputTokens };
+  if (/(?:^|\/)gpt-6-(?:luna|sol)(?:-|$)/.test(cfg.model)) body.reasoning_effort = 'none';
   if (cfg.provider !== 'openai') body.temperature = 0;
   const res = await fetch(`${info.baseUrl}/chat/completions`, { method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${cfg.apiKey}`, ...(cfg.provider === 'openrouter' ? { 'X-Title': 'FoodRecorder' } : {}) }, body: JSON.stringify(body), signal });
   const data = await res.json().catch(() => ({})) as any;

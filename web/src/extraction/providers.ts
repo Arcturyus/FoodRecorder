@@ -62,9 +62,10 @@ export const PROVIDERS: Record<CloudProvider, ProviderInfo> = {
     vision: 'oui',
     freeTier: 'Pas de palier gratuit : le compte doit être crédité.',
     models: [
-      { id: 'claude-opus-4-8', label: 'Claude Opus 4.8', hint: 'le plus précis' },
-      { id: 'claude-sonnet-5', label: 'Claude Sonnet 5', hint: 'bon compromis' },
-      { id: 'claude-haiku-4-5', label: 'Claude Haiku 4.5', hint: 'le plus rapide et le moins cher' },
+      { id: 'claude-opus-5-5', label: 'Claude Opus 5.5', hint: 'recommandé' },
+      { id: 'claude-fable-5-1', label: 'Claude Fable 5.1', hint: 'raisonnement le plus poussé' },
+      { id: 'claude-sonnet-5', label: 'Claude Sonnet 5', hint: 'plus rapide, meilleur compromis' },
+      { id: 'claude-haiku-4-5', label: 'Claude Haiku 4.5', hint: 'le plus rapide' },
     ],
   },
   gemini: {
@@ -75,14 +76,10 @@ export const PROVIDERS: Record<CloudProvider, ProviderInfo> = {
     keyUrl: 'https://aistudio.google.com/apikey',
     vision: 'oui',
     freeTier:
-      'Gratuit sans carte bancaire (de l’ordre de 1 000 requêtes/jour sur Flash-Lite, 250/jour sur ' +
-      'Flash, 100/jour sur Pro — le chiffre exact de votre compte est dans AI Studio). En contrepartie, ' +
-      'Google annonce se servir des données du palier gratuit pour améliorer ses produits.',
+      'Palier gratuit disponible avec des quotas qui dépendent du modèle et du compte. Vérifiez les limites ' +
+      'actuelles dans AI Studio. Google peut utiliser les données du palier gratuit pour améliorer ses produits.',
     models: [
-      { id: 'gemini-3.7-flash', label: 'Gemini 3.7 Flash', hint: 'recommandé' },
-      { id: 'gemini-2.5-pro', label: 'Gemini 2.5 Pro', hint: 'le plus précis, quota gratuit le plus serré' },
-      { id: 'gemini-2.5-flash', label: 'Gemini 2.5 Flash', hint: 'bon compromis' },
-      { id: 'gemini-2.5-flash-lite', label: 'Gemini 2.5 Flash-Lite', hint: 'le moins cher, plus gros quota' },
+      { id: 'gemini-3.8-flash', label: 'Gemini 3.8 Flash', hint: 'dernier modèle stable' },
     ],
   },
   openai: {
@@ -94,9 +91,8 @@ export const PROVIDERS: Record<CloudProvider, ProviderInfo> = {
     vision: 'oui',
     freeTier: 'Pas de palier gratuit : le compte doit être crédité.',
     models: [
-      { id: 'gpt-5-mini', label: 'GPT-5 mini', hint: 'recommandé' },
-      { id: 'gpt-5.6-sol', label: 'GPT-5.6 Sol', hint: 'le plus précis' },
-      { id: 'gpt-5-nano', label: 'GPT-5 nano', hint: 'le moins cher' },
+      { id: 'gpt-6-luna', label: 'GPT-6 Luna', hint: 'par défaut, rapide et économe' },
+      { id: 'gpt-6-sol', label: 'GPT-6 Sol', hint: 'plus puissant' },
     ],
   },
   mistral: {
@@ -108,10 +104,8 @@ export const PROVIDERS: Record<CloudProvider, ProviderInfo> = {
     vision: 'selon-modele',
     freeTier: 'Le plan Free annonce 10 $/mois de crédits API — très au-dessus de ce que consomme l’app.',
     models: [
-      { id: 'mistral-large-latest', label: 'Mistral Large', hint: 'recommandé' },
-      { id: 'mistral-medium-latest', label: 'Mistral Medium', hint: 'bon compromis' },
-      { id: 'mistral-small-latest', label: 'Mistral Small', hint: 'le moins cher' },
-      { id: 'ministral-8b-latest', label: 'Ministral 8B', hint: 'très léger, moins fiable ici' },
+      { id: 'mistral-medium-3-5', label: 'Mistral Medium 3.5', hint: 'recommandé, multimodal' },
+      { id: 'mistral-small-2603', label: 'Mistral Small 4', hint: 'plus rapide et économique' },
     ],
   },
   openrouter: {
@@ -125,12 +119,14 @@ export const PROVIDERS: Record<CloudProvider, ProviderInfo> = {
       '50 requêtes/jour sans carte (1 000/jour après un achat unique de 10 $). Les modèles « :free » ' +
       'passent en dernier dans la file et peuvent être refusés aux heures chargées.',
     models: [
-      { id: 'google/gemini-2.5-flash', label: 'Gemini 2.5 Flash', hint: 'recommandé' },
-      { id: 'anthropic/claude-sonnet-5', label: 'Claude Sonnet 5', hint: 'le plus précis' },
-      { id: 'openai/gpt-5-mini', label: 'GPT-5 mini', hint: 'bon compromis' },
+      { id: 'openai/gpt-6-luna', label: 'GPT-6 Luna', hint: 'rapide et économe' },
+      { id: 'openai/gpt-6-sol', label: 'GPT-6 Sol', hint: 'plus puissant' },
+      { id: 'anthropic/claude-opus-5.5', label: 'Claude Opus 5.5', hint: 'raisonnement avancé' },
+      { id: 'google/gemini-3.8-flash', label: 'Gemini 3.8 Flash', hint: 'multimodal et rapide' },
+      { id: 'qwen/qwen3.8-max-0902', label: 'Qwen 3.8 Max (0902)', hint: 'multimodal, outils' },
       {
-        id: 'nvidia/nemotron-3.5-lightning:free',
-        label: 'Nemotron 3.5 Lightning (gratuit)',
+        id: 'nvidia/nemotron-3-ultra-550b-a55b:free',
+        label: 'Nemotron 3 Ultra (gratuit)',
         hint: 'sans frais, sans garantie',
       },
     ],
@@ -141,20 +137,20 @@ export const PROVIDERS: Record<CloudProvider, ProviderInfo> = {
     baseUrl: 'https://api.groq.com/openai/v1',
     keyPlaceholder: 'gsk_…',
     keyUrl: 'https://console.groq.com/keys',
-    vision: 'non',
+    vision: 'selon-modele',
     freeTier:
-      'Gratuit sans carte (14 400 requêtes/jour, 30/minute) MAIS plafonné à 6 000 tokens/minute : le ' +
-      'prompt de l’app en fait à lui seul près de 5 000, ce qui limite en pratique à une saisie par minute.',
+      'Palier gratuit avec limites variables selon le modèle et le compte. Vérifiez les quotas actuels dans la console Groq.',
     models: [
+      { id: 'qwen/qwen3.8-27b', label: 'Qwen 3.8 27B', hint: 'dernier modèle, outils' },
       { id: 'openai/gpt-oss-120b', label: 'GPT-OSS 120B', hint: 'recommandé' },
-      { id: 'qwen/qwen3.6-27b', label: 'Qwen 3.6 27B', hint: 'plus léger' },
+      { id: 'openai/gpt-oss-20b', label: 'GPT-OSS 20B', hint: 'plus rapide et léger' },
     ],
   },
 };
 
-export const DEFAULT_CLOUD_PROVIDER: CloudProvider = 'anthropic';
+export const DEFAULT_CLOUD_PROVIDER: CloudProvider = 'openai';
 
-/** Un fournisseur inconnu (persisté par une version future) retombe sur Anthropic. */
+/** Un fournisseur inconnu (persisté par une version future) retombe sur OpenAI. */
 export function providerInfo(provider: CloudProvider): ProviderInfo {
   return PROVIDERS[provider] ?? PROVIDERS[DEFAULT_CLOUD_PROVIDER];
 }
@@ -164,8 +160,49 @@ export function defaultModelFor(provider: CloudProvider): string {
   return providerInfo(provider).models[0].id;
 }
 
-/** Ce fournisseur peut-il analyser une photo ? */
-export function supportsVision(provider: CloudProvider): boolean {
+const MODEL_ID_MIGRATIONS: Partial<Record<CloudProvider, Record<string, string>>> = {
+  anthropic: {
+    'claude-opus-4-8': 'claude-opus-5-5',
+    'claude-opus-5': 'claude-opus-5-5',
+  },
+  gemini: {
+    'gemini-3.7-flash': 'gemini-3.8-flash',
+    'gemini-2.5-pro': 'gemini-3.8-flash',
+    'gemini-2.5-flash': 'gemini-3.8-flash',
+    'gemini-2.5-flash-lite': 'gemini-3.8-flash',
+  },
+  openai: {
+    'gpt-5-mini': 'gpt-6-luna',
+    'gpt-5-nano': 'gpt-6-luna',
+    'gpt-5.6-luna': 'gpt-6-luna',
+    'gpt-5.6-terra': 'gpt-6-luna',
+    'gpt-5.6-sol': 'gpt-6-sol',
+  },
+  mistral: {
+    'mistral-large-latest': 'mistral-medium-3-5',
+    'mistral-medium-latest': 'mistral-medium-3-5',
+    'mistral-small-latest': 'mistral-small-2603',
+    'ministral-8b-latest': 'mistral-small-2603',
+  },
+  openrouter: {
+    'google/gemini-2.5-flash': 'google/gemini-3.8-flash',
+    'openai/gpt-5-mini': 'openai/gpt-6-luna',
+    'nvidia/nemotron-3.5-lightning:free': 'nvidia/nemotron-3-ultra-550b-a55b:free',
+  },
+  groq: {
+    'qwen/qwen3.6-27b': 'qwen/qwen3.8-27b',
+  },
+};
+
+/** Remplace les identifiants historiques que la liste intégrée ne propose plus. */
+export function migrateCloudModelId(provider: CloudProvider, model: string): string {
+  return MODEL_ID_MIGRATIONS[provider]?.[model] ?? model;
+}
+
+/** Ce fournisseur et ce modèle peuvent-ils analyser une photo ? */
+export function supportsVision(provider: CloudProvider, model?: string): boolean {
+  // Groq ne propose la vision que sur certains modèles (dont Qwen 3.8 27B).
+  if (provider === 'groq' && /^(?:openai\/)?gpt-oss-/.test(model ?? '')) return false;
   return providerInfo(provider).vision !== 'non';
 }
 

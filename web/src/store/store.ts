@@ -23,6 +23,7 @@ import { DEFAULT_LLM_MODEL } from '../extraction/llm';
 import {
   DEFAULT_CLOUD_PROVIDER,
   defaultModelFor,
+  migrateCloudModelId,
   type CloudConfig,
   type CloudProvider,
   type ExtractionSource,
@@ -1179,6 +1180,23 @@ function mergePersisted(persisted: unknown, current: AppState): AppState {
   // et il ne doit pas être re-persisté par le spread de `p` plus bas.
   const { foodOverrides, ...p } = (persisted ?? {}) as Partial<AppState> & { foodOverrides?: FoodOverrides };
   const favoriteMeals = p.favoriteMeals ?? [];
+  const cloudApiKeys = p.cloudApiKeys ?? (p.cloudApiKey ? { anthropic: p.cloudApiKey } : {});
+  const storedCloudModels = p.cloudModels ?? (p.cloudModel ? { anthropic: p.cloudModel } : {});
+  const cloudModels = Object.fromEntries(
+    Object.entries(storedCloudModels).map(([provider, model]) => [
+      provider,
+      typeof model === 'string' ? migrateCloudModelId(provider as CloudProvider, model) : model,
+    ]),
+  ) as Partial<Record<CloudProvider, string>>;
+  const hasCloudApiKey = Object.values(cloudApiKeys).some((key) => typeof key === 'string' && key.trim() !== '');
+  const hasCustomCloudModel = Object.entries(cloudModels).some(
+    ([provider, model]) => typeof model === 'string' && model !== defaultModelFor(provider as CloudProvider),
+  );
+  // Les anciennes installations qui n'avaient jamais configuré de fournisseur
+  // Cloud adoptent le nouveau défaut OpenAI ; les clés et modèles choisis restent intacts.
+  const cloudProvider = p.cloudProvider === 'anthropic' && !hasCloudApiKey && !hasCustomCloudModel
+    ? DEFAULT_CLOUD_PROVIDER
+    : p.cloudProvider ?? current.cloudProvider;
   const stored = (p.customFoods ?? []).map((food) => ({ ...food, n: normalizeNutrients(food.n) }));
 
   // Migration unique vers la banque personnelle : les aliments du catalogue
@@ -1210,14 +1228,22 @@ function mergePersisted(persisted: unknown, current: AppState): AppState {
     weightEntries: p.weightEntries ?? current.weightEntries,
     bodyMeasurements: p.bodyMeasurements ?? [],
     weightConfig: { ...current.weightConfig, ...(p.weightConfig ?? {}) },
+    cloudProvider,
     // Reprise de l'ancien réglage mono-fournisseur : la clé et le modèle
     // Anthropic déjà saisis deviennent le casier « anthropic ». Recopie, pas
     // déplacement — `cloudApiKey`/`cloudModel` restent en place (cf. AppState).
-    cloudApiKeys: p.cloudApiKeys ?? (p.cloudApiKey ? { anthropic: p.cloudApiKey } : {}),
-    cloudModels: p.cloudModels ?? (p.cloudModel ? { anthropic: p.cloudModel } : {}),
+    cloudApiKeys,
+    cloudModels,
     // Réglage additif : les anciennes sauvegardes continuent avec le modèle
     // par défaut de chaque CLI, sans migration des données nutritionnelles.
-    cliModels: p.cliModels ?? {},
+    cliModels: {
+      ...(p.cliModels ?? {}),
+      ...(p.cliModels?.codex === 'gpt-5.6-terra' ? { codex: 'gpt-6-luna' } : {}),
+      ...(p.cliModels?.codex === 'gpt-5.6-sol' ? { codex: 'gpt-6-sol' } : {}),
+      ...(p.cliModels?.claude === 'claude-opus-4-8' || p.cliModels?.claude === 'claude-opus-5'
+        ? { claude: 'claude-opus-5-5' }
+        : {}),
+    },
     mutedDays: p.mutedDays ?? {},
     dayNotes: p.dayNotes ?? {},
     nutrientImportance: p.nutrientImportance ?? {},
