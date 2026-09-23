@@ -301,7 +301,7 @@ export function Settings() {
                 <input
                   value={cliModels.codex ?? ''}
                   onChange={(e) => setCliModel('codex', e.target.value)}
-                  placeholder="gpt-5.6-terra"
+                  placeholder="gpt-6-luna"
                   autoComplete="off"
                 />
                 <span className="small">Laisser vide pour utiliser le modèle configuré par Codex.</span>
@@ -311,7 +311,7 @@ export function Settings() {
                 <input
                   value={cliModels.claude ?? ''}
                   onChange={(e) => setCliModel('claude', e.target.value)}
-                  placeholder="claude-sonnet-5"
+                  placeholder="claude-opus-5-5"
                   autoComplete="off"
                 />
                 <span className="small">Laisser vide pour utiliser le modèle configuré par Claude Code.</span>

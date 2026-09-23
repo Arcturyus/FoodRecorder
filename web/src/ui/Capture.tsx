@@ -408,7 +408,7 @@ export function Capture({ date, title }: { date?: string; title?: string } = {})
   }
 
   const photoSupported =
-    extractionMode === 'claudecode' || (extractionMode === 'cloud' && supportsVision(cloud.provider));
+    extractionMode === 'claudecode' || (extractionMode === 'cloud' && supportsVision(cloud.provider, cloud.model));
 
   return (
     <div className="panel capture">
