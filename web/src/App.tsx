@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { todayStr } from './store/store';
+import { todayStr, useStore } from './store/store';
 import { isSyncConfigured } from './sync/supabase';
 import { runSyncTick } from './sync/poller';
 import { runProfileSyncTick, restoreSession } from './sync/profileSync';
@@ -68,6 +68,7 @@ const ALL_TABS: TabMeta[] = [...PRIMARY_TABS, CHAT_TAB, ...SECONDARY_TABS];
 const WIDE_TABS = new Set<Tab>(['stats', 'aliments', 'nutriments', 'historique', 'chat']);
 
 export function App() {
+  const workerSetupMode = new URLSearchParams(window.location.search).get('foodrecorderWorkerSetup') === '1';
   const tab = useNavigation((s) => s.tab);
   const dayDate = useNavigation((s) => s.dayDate);
   const section = useNavigation((s) => s.section);
@@ -111,6 +112,48 @@ export function App() {
     });
     return () => cancelAnimationFrame(frame);
   }, [navNonce, section, consumeSection]);
+
+  // Le navigateur dédié s'ouvre directement dans Réglages pour la première
+  // connexion ou une reconnexion après expiration du profil.
+  useEffect(() => {
+    if (!workerSetupMode) return;
+    // Ce profil Chrome dédié ne sert qu'au worker Codex. Fixe son moteur ici afin
+    // que la session Cloud restaurée puisse basculer automatiquement en headless.
+    const app = useStore.getState();
+    if (app.extractionMode !== 'claudecode') app.setExtractionMode('claudecode');
+    if (app.cliBridge !== 'codex') app.setCliBridge('codex');
+    navigate('reglages');
+  }, [workerSetupMode, navigate]);
+
+  // Le pont local utilise ce rapport pour savoir si le profil de service est prêt
+  // et pour repasser automatiquement en headless après une reconnexion manuelle.
+  useEffect(() => {
+    if (!workerSetupMode) return;
+    const report = () => {
+      const sync = useSyncStore.getState();
+      const app = useStore.getState();
+      void fetch('/api/background-worker', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          action: 'report',
+          role: 'setup',
+          syncConfigured: isSyncConfigured(),
+          profileId: sync.profileId,
+          profileName: sync.profileName,
+          sessionExpired: sync.sessionExpired,
+          extractionMode: app.extractionMode,
+          cliBridge: app.cliBridge,
+        }),
+      }).catch(() => undefined);
+    };
+    const first = window.setTimeout(report, 1_500);
+    const interval = window.setInterval(report, 5_000);
+    return () => {
+      window.clearTimeout(first);
+      window.clearInterval(interval);
+    };
+  }, [workerSetupMode]);
 
   // Suit les changements locaux pour la sync par profil (no-op tant qu'aucun profil n'est joint).
   useEffect(() => {
@@ -161,7 +204,10 @@ export function App() {
   return (
     <div className={`app${WIDE_TABS.has(tab) ? ' wide' : ''}`}>
       <header className="app-head">
-        <h1>🍽️ FoodRecorder</h1>
+        <h1>
+          <img className="app-logo" src={`${import.meta.env.BASE_URL}foodrecorder-icon.svg`} alt="" />
+          FoodRecorder
+        </h1>
       </header>
 
       {/* Barre d'onglets du haut : ordinateur (masquée sur mobile via CSS). */}

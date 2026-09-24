@@ -10,6 +10,7 @@ import { STT_MODELS } from '../stt/whisper';
 import { isNativeSttSupported } from '../stt/webspeech';
 import { ProfileSyncPanel } from './ProfileSync';
 import { AgentActivity } from './AgentActivity';
+import { BackgroundWorkerSettings } from './BackgroundWorkerSettings';
 
 /**
  * Réglages : connexion au compte de synchro, sauvegarde des données, choix du
@@ -109,6 +110,7 @@ export function Settings() {
   return (
     <>
       <ProfileSyncPanel />
+      <BackgroundWorkerSettings />
       <BackupPanel />
       <AgentActivity />
 
