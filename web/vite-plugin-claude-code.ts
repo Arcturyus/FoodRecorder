@@ -66,6 +66,18 @@ type Cli = 'claude' | 'codex';
 
 const CLI_LABEL: Record<Cli, string> = { claude: 'Claude Code', codex: 'Codex' };
 
+/**
+ * Codex CLI resolves its user configuration via HOME on Windows. A logon task
+ * provides USERPROFILE but may omit HOME, so pass the user's existing profile
+ * directory only to the Codex child process (no credentials are copied).
+ */
+function spawnCli(cli: Cli, args: string[]) {
+  const env = cli === 'codex' && !process.env.HOME && process.env.USERPROFILE
+    ? { ...process.env, HOME: process.env.USERPROFILE }
+    : undefined;
+  return spawn(cli, args, { shell: true, ...(env ? { env } : {}) });
+}
+
 interface BridgeModel {
   id: string;
   label: string;
@@ -125,7 +137,7 @@ function runCli(
         ? ['exec', '--sandbox', 'read-only', '--color', 'never', ...(outputLastPath ? ['--output-last-message', outputLastPath] : []), ...(model ? ['-m', model] : []), ...(imagePath ? ['-i', imagePath] : []), '-']
         : ['-p', '--output-format', 'stream-json', '--verbose', ...(model ? ['--model', model] : [])];
     // shell:true pour résoudre « claude(.cmd) » / « codex(.cmd) » via le PATH sous Windows.
-    const child = spawn(cli, args, { shell: true });
+    const child = spawnCli(cli, args);
 
     const limite = Math.min(Math.max(timeoutMs ?? CLI_TIMEOUT_MS, CLI_TIMEOUT_MS), CLI_TIMEOUT_MAX_MS);
     let stdout = '';
@@ -218,7 +230,7 @@ function parseStream(stdout: string): CliRun {
 
 function checkCli(cli: Cli): Promise<{ available: boolean; version?: string; error?: string }> {
   return new Promise((resolve) => {
-    const child = spawn(cli, ['--version'], { shell: true });
+    const child = spawnCli(cli, ['--version']);
     let out = '';
     child.stdout.on('data', (d) => (out += d));
     child.on('error', (e) => resolve({ available: false, error: e.message }));
@@ -230,7 +242,7 @@ function checkCli(cli: Cli): Promise<{ available: boolean; version?: string; err
 
 function captureCli(cli: Cli, args: string[], timeoutMs = 15_000): Promise<{ stdout: string; stderr: string }> {
   return new Promise((resolve, reject) => {
-    const child = spawn(cli, args, { shell: true });
+    const child = spawnCli(cli, args);
     let stdout = '';
     let stderr = '';
     let settled = false;
@@ -260,7 +272,7 @@ function captureCli(cli: Cli, args: string[], timeoutMs = 15_000): Promise<{ std
 /** Catalogue réellement renvoyé par le compte authentifié au Codex app-server. */
 function listCodexModels(): Promise<ModelListResult> {
   return new Promise((resolve, reject) => {
-    const child = spawn('codex', ['app-server', '--listen', 'stdio://'], { shell: true });
+    const child = spawnCli('codex', ['app-server', '--listen', 'stdio://']);
     let buffer = '';
     let stderr = '';
     let settled = false;
