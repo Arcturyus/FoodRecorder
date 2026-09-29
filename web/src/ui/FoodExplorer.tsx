@@ -1,6 +1,6 @@
 import { createContext, useContext, useEffect, useMemo, useRef, useState } from 'react';
 import { scaleLinear, scaleLog, scaleSqrt } from 'd3-scale';
-import { extent, max as d3max, mean as d3mean, quantile } from 'd3-array';
+import { extent, max as d3max, mean as d3mean } from 'd3-array';
 import { symbol, symbolCircle, symbolDiamond, symbolSquare, symbolTriangle } from 'd3-shape';
 import type { SymbolType } from 'd3-shape';
 import { RDA } from '../nutrition/rda';
@@ -38,6 +38,8 @@ const C = {
   panel2: '#242019', // = --panel-2
 };
 
+const SUPPLEMENT_COLOR = '#b084f5';
+
 /** Couleur par catégorie d'aliment (encodage constant sur toutes les vues). */
 export const CATS: { key: FoodCategory; label: string; color: string }[] = [
   { key: 'fruit', label: 'Fruits', color: '#ef6f6f' },
@@ -51,15 +53,12 @@ export const CATS: { key: FoodCategory; label: string; color: string }[] = [
   { key: 'boisson', label: 'Boissons', color: '#4dc9d0' },
   { key: 'plat', label: 'Plats', color: '#a58bff' },
   { key: 'autre', label: 'Autres', color: '#9aa2b1' },
+  { key: 'supplement', label: 'Suppléments', color: SUPPLEMENT_COLOR },
 ];
-const SUPPLEMENT_COLOR = '#b084f5';
-export const COLOR_BY_CAT = new Map<FoodCategory, string>([
-  ...CATS.map((c) => [c.key, c.color] as const),
-  ['supplement', SUPPLEMENT_COLOR],
-]);
+export const COLOR_BY_CAT = new Map<FoodCategory, string>(CATS.map((c) => [c.key, c.color]));
 
 /**
- * Forme par catégorie, en plus de la couleur. Onze catégories ne tiennent pas
+ * Forme par catégorie, en plus de la couleur. Douze catégories ne tiennent pas
  * dans une palette où chacune se distingue au premier coup d'œil : Fruits
  * (#ef6f6f), Viandes (#c8603f) et Sucré/snacks (#d16ba5) sont trois rouges
  * voisins, Légumes et Matières grasses deux verts. La répartition ci-dessous
@@ -111,7 +110,8 @@ export function CatIcon({ cat, size = 13 }: { cat: FoodCategory; size?: number }
 /**
  * Aliments explorables fournis par le parent (banque avec overrides + perso),
  * partagés aux sous-vues via un contexte pour éviter de tout re-câbler en props.
- * Les compléments sont retirés en amont (voir provider dans FoodExplorer).
+ * Les compléments sont retirés de ce jeu de base, puis ajoutés au nuage derrière
+ * le filtre de catégorie « Suppléments ».
  */
 const ExplorableCtx = createContext<Food[]>([]);
 const useExplorable = () => useContext(ExplorableCtx);
@@ -403,8 +403,8 @@ function ScatterView() {
   const [pareto, setPareto] = useState(true);
   const [xGoal, setXGoal] = useState<'min' | 'max'>('min');
   const [yGoal, setYGoal] = useState<'min' | 'max'>('max');
-  const [hideCats, setHideCats] = useState<Set<FoodCategory>>(new Set());
-  const [includeSupplements, setIncludeSupplements] = useState(false);
+  const [hideCats, setHideCats] = useState<Set<FoodCategory>>(new Set<FoodCategory>(['supplement']));
+  const [selectedPointId, setSelectedPointId] = useState<string | null>(null);
   const [search, setSearch] = useState('');
 
   const W = 680;
@@ -414,8 +414,8 @@ function ScatterView() {
   const [hover, setHover] = useState<{ i: number; px: number; py: number } | null>(null);
   const explorable = useExplorable();
   const chartFoods = useMemo(
-    () => includeSupplements ? [...explorable, ...supplements] : explorable,
-    [explorable, supplements, includeSupplements],
+    () => [...explorable, ...supplements],
+    [explorable, supplements],
   );
   const searchableFoods = useMemo(() => [...explorable, ...supplements], [explorable, supplements]);
   const normalizedSearch = normalizeForMatch(search);
@@ -435,7 +435,7 @@ function ScatterView() {
   useEffect(() => {
     setZoomX(ZOOM_IDENTITY);
     setZoomY(ZOOM_IDENTITY);
-  }, [xk, yk, sizeK, hideCats, logX, logY, includeSupplements]);
+  }, [xk, yk, sizeK, hideCats, logX, logY]);
 
   function zoomAt(factor: number, px: number, py: number) {
     setZoomX((z) => {
@@ -537,6 +537,7 @@ function ScatterView() {
       .map((f) => ({ f, x: val(f, xk), y: val(f, yk), s: sizeK === 'none' ? 0 : val(f, sizeK) }))
       .filter((p) => Number.isFinite(p.x) && Number.isFinite(p.y) && Number.isFinite(p.s) && (p.x > 0 || p.y > 0));
   }, [chartFoods, xk, yk, sizeK, hideCats]);
+  const selectedPoint = selectedPointId ? points.find((p) => p.f.id === selectedPointId) ?? null : null;
   const searchCandidates = useMemo(
     () => normalizedSearch ? searchableFoods.filter((f) => normalizeForMatch(f.nom).includes(normalizedSearch)) : [],
     [searchableFoods, normalizedSearch],
@@ -611,11 +612,40 @@ function ScatterView() {
   const xTicks = vxs.ticks(logX ? 4 : 6);
   const yTicks = vys.ticks(6);
 
-  // Médianes → repères de « quadrant valeur ».
-  const medX = quantile(points.map((p) => p.x).sort((a, b) => a - b), 0.5) ?? 0;
-  const medY = quantile(points.map((p) => p.y).sort((a, b) => a - b), 0.5) ?? 0;
-
   const frontierPath = frontier.map((p, i) => `${i === 0 ? 'M' : 'L'} ${cx(p.x)} ${cy(p.y)}`).join(' ');
+
+  const ratioCurvePath = (ratio: number, throughX?: number) => {
+    if (!Number.isFinite(ratio) || ratio < 0) return '';
+    const plotLeft = logX && hasZeroX ? m.left + ZERO_LANE : m.left;
+    const plotRight = W - m.right;
+    const sampleXs = Array.from({ length: 81 }, (_, i) => plotLeft + (plotRight - plotLeft) * i / 80);
+    if (throughX != null && Number.isFinite(throughX)) {
+      const selectedPx = cx(throughX);
+      if (selectedPx >= plotLeft && selectedPx <= plotRight) sampleXs.push(selectedPx);
+    }
+    sampleXs.sort((a, b) => a - b);
+
+    let path = '';
+    let segmentStarted = false;
+    for (const px of sampleXs) {
+      const x = vxs.invert(px);
+      const y = ratio * x;
+      if (!Number.isFinite(x) || !Number.isFinite(y) || x < 0 || (logX && x <= 0) || (logY && y < 0)) {
+        segmentStarted = false;
+        continue;
+      }
+      path += `${segmentStarted ? 'L' : 'M'} ${cx(x)} ${cy(y)} `;
+      segmentStarted = true;
+    }
+    return path.trim();
+  };
+  const oneToOnePath = ratioCurvePath(1);
+  const selectedRatio = selectedPoint && selectedPoint.x > 0 ? selectedPoint.y / selectedPoint.x : null;
+  const selectedRatioPath = selectedRatio != null
+    ? ratioCurvePath(selectedRatio, selectedPoint?.x)
+    : selectedPoint && selectedPoint.x === 0 && selectedPoint.y > 0
+      ? `M ${cx(0)} ${m.top} L ${cx(0)} ${H - m.bottom}`
+      : '';
 
   // Noms des aliments de la frontière. Recalculés à chaque rendu parce qu'ils
   // suivent le zoom et le déplacement du nuage.
@@ -635,15 +665,6 @@ function ScatterView() {
           <NutSelect label="Axe X" value={xk} onChange={(k) => setXk(k as ChartKey)} />
           <NutSelect label="Axe Y" value={yk} onChange={(k) => setYk(k as ChartKey)} />
           <NutSelect label="Taille des bulles" value={sizeK} onChange={setSizeK} allowNone />
-          <label className="small" style={{ display: 'inline-flex', alignItems: 'center', gap: 7, cursor: 'pointer' }}>
-            <input
-              type="checkbox"
-              checked={includeSupplements}
-              onChange={(e) => setIncludeSupplements(e.target.checked)}
-            />
-            <CatIcon cat="supplement" />
-            Inclure les suppléments ({supplements.length})
-          </label>
         </div>
         {(tx || ty) && <div className="row small" style={{ gap: 14, marginTop: 8 }}>
           <span><i className="ref-legend ajr" /> AJR (100 g qui couvre le besoin du jour)</span>
@@ -707,8 +728,8 @@ function ScatterView() {
                 {searchMatches.length === 0
                   ? searchCandidates.length === 0
                     ? 'Aucun aliment trouvé.'
-                    : !includeSupplements && searchCandidates.every((f) => f.categorie === 'supplement')
-                      ? `${searchCandidates.length} supplément${searchCandidates.length > 1 ? 's' : ''} trouvé${searchCandidates.length > 1 ? 's' : ''} · cochez « Inclure les suppléments » pour ${searchCandidates.length > 1 ? 'les' : 'le'} tracer.`
+                    : searchCandidates.every((f) => f.categorie === 'supplement') && hideCats.has('supplement')
+                      ? `${searchCandidates.length} supplément${searchCandidates.length > 1 ? 's' : ''} trouvé${searchCandidates.length > 1 ? 's' : ''} · activez la catégorie « Suppléments » pour ${searchCandidates.length > 1 ? 'les' : 'le'} tracer.`
                       : `${searchCandidates.length} résultat${searchCandidates.length > 1 ? 's' : ''} trouvé${searchCandidates.length > 1 ? 's' : ''}, mais pas traçable${searchCandidates.length > 1 ? 's' : ''} avec les axes ou filtres actuels.`
                   : `${searchMatches.length} résultat${searchMatches.length > 1 ? 's' : ''} · ${visibleSearchMatches.length} dans la zone affichée`}
               </span>
@@ -732,7 +753,7 @@ function ScatterView() {
               }
             >
               <CatIcon cat={c.key} />
-              {c.label}
+              {c.key === 'supplement' ? `${c.label} (${supplements.length})` : c.label}
             </button>
           ))}
           {points.some((p) => neverEaten.has(p.f.id)) && (
@@ -784,10 +805,6 @@ function ScatterView() {
               </>
             )}
 
-            {/* médianes */}
-            <line x1={cx(medX)} x2={cx(medX)} y1={m.top} y2={H - m.bottom} stroke={C.muted} strokeWidth={1} strokeDasharray="2 4" opacity={0.6} />
-            <line x1={m.left} x2={W - m.right} y1={cy(medY)} y2={cy(medY)} stroke={C.muted} strokeWidth={1} strokeDasharray="2 4" opacity={0.6} />
-
             {/*
               Repères AJR / optimal (profil utilisateur) : à quelle valeur pour 100 g
               cet axe atteint le besoin du jour. Un aliment situé au-delà de ce repère
@@ -830,6 +847,10 @@ function ScatterView() {
 
             {/* frontière + points : clippés au cadre du graphique (zoom/pan peut les déplacer hors cadre) */}
             <g clipPath="url(#scatter-clip)">
+              <path d={oneToOnePath} fill="none" stroke={C.muted} strokeWidth={1.5} strokeDasharray="2 4" opacity={0.7} />
+              {selectedRatioPath && (
+                <path d={selectedRatioPath} fill="none" stroke={C.accent} strokeWidth={2.5} opacity={0.95} />
+              )}
               {pareto && frontier.length > 1 && (
                 <path d={frontierPath} fill="none" stroke={C.accent2} strokeWidth={2} strokeDasharray="5 4" opacity={0.9} />
               )}
@@ -837,6 +858,7 @@ function ScatterView() {
                 const onFront = pareto && frontierSet.has(p.f.id);
                 const isHover = hover?.i === i;
                 const isSearchMatch = searchMatchIds.has(p.f.id);
+                const isSelected = selectedPointId === p.f.id;
                 const jamais = neverEaten.has(p.f.id);
                 const r = radius(p.s);
                 // Zone de tap agrandie et invisible : sur mobile, les bulles réelles (souvent
@@ -866,8 +888,8 @@ function ScatterView() {
                       // frontière — c'est justement là qu'il faut voir d'un coup d'œil
                       // si le meilleur compromis est un aliment habituel ou une piste.
                       fillOpacity={jamais ? 0.34 : onFront ? 0.95 : 0.72}
-                      stroke={isSearchMatch ? C.text : onFront ? C.accent2 : isHover ? C.text : jamais ? C.muted : 'none'}
-                      strokeWidth={isSearchMatch ? 2 : onFront ? 2 : isHover ? 1.5 : jamais ? 1.5 : 0}
+                      stroke={isSearchMatch || isSelected ? C.text : onFront ? C.accent2 : isHover ? C.text : jamais ? C.muted : 'none'}
+                      strokeWidth={isSearchMatch || isSelected ? 2.5 : onFront ? 2 : isHover ? 1.5 : jamais ? 1.5 : 0}
                       strokeDasharray={jamais ? '3 2' : undefined}
                       pointerEvents="none"
                     />
@@ -885,6 +907,7 @@ function ScatterView() {
                       }}
                       onClick={(e) => {
                         e.stopPropagation();
+                        setSelectedPointId((id) => id === p.f.id ? null : p.f.id);
                         if (svgRef.current) {
                           const v = toViewBox(e, svgRef.current, W, H);
                           setHover((h) => (h?.i === i ? null : { i, px: v.px, py: v.py }));
@@ -1017,10 +1040,17 @@ function ScatterView() {
             qui portent un nom sur le graphe
             {frontierLabels.length < frontier.length &&
               ` (${frontier.length - frontierLabels.length} sur ${frontier.length} restent anonymes, faute de place : zoomez pour les lire)`}
-            {' '}— au téléphone, l'écran est trop étroit pour les afficher, le nom reste au toucher. Pointillés
-            gris = médianes, clairs = AJR, verts = optimal (100 g qui couvrent le besoin du jour, selon votre profil).
+            {' '}— au téléphone, l'écran est trop étroit pour les afficher, le nom reste au toucher. Les repères clairs
+            indiquent les AJR et les verts la cible optimale (100 g qui couvrent le besoin du jour, selon votre profil).
           </p>
         )}
+        <p className="small" style={{ marginTop: pareto ? 8 : 0, marginBottom: 0 }}>
+          Pointillés gris : rapport 1:1. {selectedPoint
+            ? selectedPoint.x === 0 && selectedPoint.y === 0
+              ? <>Le rapport X/Y de <strong>{selectedPoint.f.nom}</strong> est indéfini, ses deux valeurs sont nulles.</>
+              : <>Courbe bleue : même rapport X/Y que <strong>{selectedPoint.f.nom}</strong>. Cliquez à nouveau sur ce point pour retirer la courbe.</>
+            : 'Cliquez sur un point pour garder sa courbe de rapport X/Y affichée.'}
+        </p>
       </div>
     </>
   );
