@@ -108,12 +108,14 @@ function extractJson(text: string): unknown | null {
 export async function extractImageWithCli(
   imageBase64: string,
   mediaType: string,
+  options: { archive?: boolean } = {},
 ): Promise<{ items: ExtractedItem[]; source: CliSource }> {
   try {
     const text = await callBridge({
       prompt: `${IMAGE_SYSTEM_PROMPT}\n\nJSON :`,
       label: 'photo',
       image: { data: imageBase64, mediaType },
+      archive: options.archive,
     });
     const items = validateExtraction(extractJson(text));
     return { items: items ?? [], source: cliSource() };
@@ -124,9 +126,10 @@ export async function extractImageWithCli(
 
 export async function extractWithCli(
   transcript: string,
+  options: { archive?: boolean } = {},
 ): Promise<{ items: ExtractedItem[]; source: CliSource | 'rules' }> {
   try {
-    const text = await callBridge({ prompt: buildPrompt(transcript), label: 'repas' });
+    const text = await callBridge({ prompt: buildPrompt(transcript), label: 'repas', archive: options.archive });
     const items = validateExtraction(extractJson(text));
     if (items && items.length > 0) return { items, source: cliSource() };
   } catch (e) {

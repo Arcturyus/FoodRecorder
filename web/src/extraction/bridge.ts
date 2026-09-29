@@ -41,6 +41,8 @@ export interface BridgeRequest {
   label?: string;
   /** Relève le délai d'attente pour un appel lourd assumé par l'utilisateur. */
   timeoutMs?: number;
+  /** Désactive l'archive locale pour les traitements automatiques en arrière-plan. */
+  archive?: boolean;
   image?: { data: string; mediaType: string };
   /** Permet au chat agent d'interrompre un tour long. */
   signal?: AbortSignal;

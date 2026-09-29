@@ -23,6 +23,7 @@ import {
   type FavoriteMeal,
 } from '../store/store';
 import type { Food } from '../nutrition/types';
+import { enrichBankPrices } from '../nutrition/priceSeed';
 import type { WeightEntry } from '../weight/types';
 import { normalizeCreme, type SunExposure } from '../sun/vitaminD';
 import { exportJsonFile } from '../store/backup';
@@ -129,7 +130,7 @@ function kvUpdates(rows: DbRow[]): Partial<StoreState> {
 
 /** Recalcule les nutriments et normalise, exactement comme `mergePersisted`. */
 function normalizeCustomFoods(foods: Food[]): Food[] {
-  return foods.map((f) => ({ ...f, n: normalizeNutrients(f.n) }));
+  return enrichBankPrices(foods.map((f) => ({ ...f, n: normalizeNutrients(f.n) })));
 }
 
 function normalizeSun(exposures: SunExposure[]): SunExposure[] {

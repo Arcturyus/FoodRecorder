@@ -4,6 +4,7 @@ import { useSyncStore } from './sync/syncStore';
 import { runSyncTick } from './sync/poller';
 import { useQueueStatus, pendingTotal } from './sync/queueStatus';
 import { isSyncConfigured } from './sync/supabase';
+import type { BackgroundWorkerActivity } from './sync/workerActivity';
 import { useStore } from './store/store';
 
 const SYNC_INTERVAL_MS = 30_000;
@@ -11,6 +12,23 @@ const BUSY_INTERVAL_MS = 8_000;
 const REPORT_INTERVAL_MS = 5_000;
 
 let busyInterval: number | null = null;
+let activityWrites = Promise.resolve();
+
+function reportActivity(activity: BackgroundWorkerActivity): void {
+  activityWrites = activityWrites
+    .then(async () => {
+      const response = await fetch('/api/background-worker', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action: 'activity', activity }),
+      });
+      if (!response.ok) throw new Error(`HTTP ${response.status}`);
+    })
+    .catch((error: unknown) => {
+      const message = error instanceof Error ? error.message : 'erreur inconnue';
+      console.warn(`[worker] journal d’activité indisponible : ${message}`);
+    });
+}
 
 function reportState(): void {
   const sync = useSyncStore.getState();
@@ -37,7 +55,7 @@ function tick(): void {
     reportState();
     return;
   }
-  void runSyncTick();
+  void runSyncTick(reportActivity);
   void runProfileSyncTick();
   reportState();
 }
@@ -62,7 +80,7 @@ export async function startBackgroundWorker(): Promise<void> {
   const refreshBusyLoop = () => {
     if (syncBusy() && busyInterval === null) {
       busyInterval = window.setInterval(() => {
-        if (syncBusy()) void runSyncTick();
+        if (syncBusy()) void runSyncTick(reportActivity);
       }, BUSY_INTERVAL_MS);
     } else if (!syncBusy() && busyInterval !== null) {
       window.clearInterval(busyInterval);

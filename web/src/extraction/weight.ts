@@ -254,8 +254,8 @@ async function extractCloud(transcript: string, cloud: CloudConfig): Promise<Wei
   return validate(extractJson(text));
 }
 
-async function extractBridge(transcript: string): Promise<WeightPatch | null> {
-  const text = await callBridge({ prompt: `${systemPrompt()}\n\nPhrase : "${transcript}"\nJSON :`, label: 'pesee' });
+async function extractBridge(transcript: string, archive?: boolean): Promise<WeightPatch | null> {
+  const text = await callBridge({ prompt: `${systemPrompt()}\n\nPhrase : "${transcript}"\nJSON :`, label: 'pesee', archive });
   return validate(extractJson(text));
 }
 
@@ -273,6 +273,7 @@ export async function extractWeight(
   transcript: string,
   mode: ExtractionMode,
   cloud: CloudConfig,
+  options: { archive?: boolean } = {},
 ): Promise<{ patch: WeightPatch; source: WeightSource }> {
   const clean = transcript.trim();
   if (!clean) return { patch: {}, source: 'rules' };
@@ -285,7 +286,7 @@ export async function extractWeight(
       const patch = await extractCloud(clean, cloud);
       if (patch) return { patch: withDate(patch), source: cloud.provider };
     } else if (mode === 'claudecode') {
-      const patch = await extractBridge(clean);
+      const patch = await extractBridge(clean, options.archive);
       if (patch) return { patch: withDate(patch), source: 'claudecode' };
     } else if (mode === 'local') {
       const patch = await extractLocal(clean);

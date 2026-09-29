@@ -281,8 +281,8 @@ async function extractCloud(transcript: string, cloud: CloudConfig): Promise<Sun
   return validate(extractJson(text));
 }
 
-async function extractBridge(transcript: string): Promise<SunPatch[] | null> {
-  const text = await callBridge({ prompt: `${systemPrompt()}\n\nPhrase : "${transcript}"\nJSON :`, label: 'soleil' });
+async function extractBridge(transcript: string, archive?: boolean): Promise<SunPatch[] | null> {
+  const text = await callBridge({ prompt: `${systemPrompt()}\n\nPhrase : "${transcript}"\nJSON :`, label: 'soleil', archive });
   return validate(extractJson(text));
 }
 
@@ -301,6 +301,7 @@ export async function extractSun(
   transcript: string,
   mode: ExtractionMode,
   cloud: CloudConfig,
+  options: { archive?: boolean } = {},
 ): Promise<{ sorties: SunPatch[]; source: SunSource }> {
   const clean = transcript.trim();
   if (!clean) return { sorties: [], source: 'rules' };
@@ -328,7 +329,7 @@ export async function extractSun(
       const sorties = await extractCloud(clean, cloud);
       if (sorties) return { sorties: withRules(sorties), source: cloud.provider };
     } else if (mode === 'claudecode') {
-      const sorties = await extractBridge(clean);
+      const sorties = await extractBridge(clean, options.archive);
       if (sorties) return { sorties: withRules(sorties), source: 'claudecode' };
     } else if (mode === 'local') {
       const sorties = await extractLocal(clean);

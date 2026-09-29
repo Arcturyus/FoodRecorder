@@ -1,8 +1,9 @@
 import type { Plugin } from 'vite';
 import type { IncomingMessage } from 'node:http';
 import { spawn } from 'node:child_process';
-import { mkdir, readFile, writeFile } from 'node:fs/promises';
-import { resolve } from 'node:path';
+import { mkdir, mkdtemp, readFile, rmdir, unlink, writeFile } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join, resolve } from 'node:path';
 
 /**
  * Plugin de dev Vite : pont HTTP local vers un CLI d'IA installé sur la machine
@@ -17,19 +18,20 @@ import { resolve } from 'node:path';
  * Le nom du module et la route `/api/claude-code` sont d'époque, quand Claude
  * Code était le seul CLI supporté ; ils désignent aujourd'hui le pont en général.
  *
- * Chaque appel est archivé en entier dans `response/` (cf. writeResponseLog) :
- * prompt complet, raisonnement (thinking), texte de sortie, modèle, coût, tokens
- * et flux brut du CLI — pour analyser après coup ce que le modèle a compris.
+ * Par défaut, chaque appel est archivé en entier dans `response/` : prompt
+ * complet, raisonnement, réponse et flux brut. Les traitements de la file mobile
+ * peuvent passer `archive:false` : leurs fichiers temporaires sont supprimés et
+ * les CLI sont lancés sans persistance de session.
  *
  * Endpoints :
  *   GET  /api/claude-code  → { available, version?, error? }  (santé)
  *   POST /api/claude-code  → { text } | { error }             (extraction)
- *     body : { prompt, model?, label?, timeoutMs?, image?: { data: base64, mediaType } }
+ *     body : { prompt, model?, label?, timeoutMs?, archive?, image?: { data: base64, mediaType } }
  *     `timeoutMs` relève le délai d'attente du CLI (borné, cf. CLI_TIMEOUT_MAX_MS)
  *     pour les appels lourds où l'utilisateur attend sciemment.
- *     `label` nomme le fichier d'archive (photo/repas/verify/soleil…). L'image
- *     éventuelle est écrite dans `response/` (conservée comme input du modèle),
- *     et son chemin est donné au CLI (qui sait lire les images).
+ *     `label` nomme le fichier d'archive (photo/repas/verify/soleil…). Sans
+ *     `archive:false`, l'image est conservée dans `response/`; sinon elle est
+ *     placée temporairement dans le dossier système et supprimée après l'appel.
  */
 
 /**
@@ -111,9 +113,9 @@ interface CliRun {
 
 /**
  * Lance le CLI en `stream-json --verbose` : contrairement à `--output-format
- * json`, ce format émet CHAQUE message (dont les blocs `thinking`), ce qui nous
- * permet d'archiver le raisonnement du modèle. On reconstitue ensuite le texte
- * final et le raisonnement à partir du flux.
+ * json`, ce format émet CHAQUE message (dont les blocs `thinking`), ce qui permet
+ * de conserver le raisonnement pour les appels archivés. On reconstitue ensuite
+ * le texte final et le raisonnement à partir du flux.
  */
 function runCli(
   cli: Cli,
@@ -122,6 +124,7 @@ function runCli(
   timeoutMs?: number,
   imagePath?: string | null,
   outputLastPath?: string | null,
+  ephemeral = false,
 ): Promise<CliRun> {
   return new Promise((resolve, reject) => {
     // Deux CLI, deux protocoles :
@@ -134,8 +137,8 @@ function runCli(
     //    car c'est lui qui garantit qu'aucune approbation ne sera demandée.
     const args =
       cli === 'codex'
-        ? ['exec', '--sandbox', 'read-only', '--color', 'never', ...(outputLastPath ? ['--output-last-message', outputLastPath] : []), ...(model ? ['-m', model] : []), ...(imagePath ? ['-i', imagePath] : []), '-']
-        : ['-p', '--output-format', 'stream-json', '--verbose', ...(model ? ['--model', model] : [])];
+        ? ['exec', ...(ephemeral ? ['--ephemeral'] : []), '--sandbox', 'read-only', '--color', 'never', ...(outputLastPath ? ['--output-last-message', outputLastPath] : []), ...(model ? ['-m', model] : []), ...(imagePath ? ['-i', imagePath] : []), '-']
+        : ['-p', ...(ephemeral ? ['--no-session-persistence'] : []), '--output-format', 'stream-json', '--verbose', ...(model ? ['--model', model] : [])];
     // shell:true pour résoudre « claude(.cmd) » / « codex(.cmd) » via le PATH sous Windows.
     const child = spawnCli(cli, args);
 
@@ -402,8 +405,8 @@ export function claudeCodeBridge(): Plugin {
     name: 'claude-code-bridge',
     configureServer(server) {
       const dir = responseDir(server.config.root);
-      // Affiché au démarrage : on sait où retrouver les réponses archivées.
-      server.config.logger.info(`[claude-code] réponses archivées → ${dir}`);
+      // Les appels archivés manuellement sont retrouvables dans response/.
+      server.config.logger.info(`[claude-code] archives des appels conservés → ${dir}`);
 
       server.middlewares.use('/api/claude-code', async (req, res) => {
         res.setHeader('Content-Type', 'application/json');
@@ -421,6 +424,7 @@ export function claudeCodeBridge(): Plugin {
               model?: unknown;
               label?: unknown;
               timeoutMs?: unknown;
+              archive?: unknown;
               image?: { data?: unknown; mediaType?: unknown };
             };
             const prompt = typeof body.prompt === 'string' ? body.prompt : '';
@@ -433,7 +437,7 @@ export function claudeCodeBridge(): Plugin {
             const hasImage = Boolean(body.image && typeof body.image.data === 'string');
             const label = typeof body.label === 'string' && body.label.trim() ? body.label : hasImage ? 'photo' : 'text';
             const base = `${stamp()}-${safeLabel(label)}`;
-            const outputLastPath = resolve(dir, `${base}-final.txt`);
+            const shouldArchive = body.archive !== false;
             const model = typeof body.model === 'string' ? body.model : undefined;
             if (model && !/^[A-Za-z0-9._:/-]{1,128}$/.test(model)) {
               res.statusCode = 400;
@@ -441,61 +445,78 @@ export function claudeCodeBridge(): Plugin {
               return;
             }
             const cli: Cli = body.cli === 'codex' ? 'codex' : 'claude';
-            await mkdir(dir, { recursive: true });
+            if (shouldArchive) await mkdir(dir, { recursive: true });
+            const temporaryDirectory = shouldArchive ? null : await mkdtemp(join(tmpdir(), 'foodrecorder-cli-'));
+            const requestDir = temporaryDirectory ?? dir;
+            let temporaryImagePath: string | null = null;
+            let temporaryOutputPath: string | null = null;
 
-            // Photo éventuelle : écrite dans response/ (conservée comme input du
-            // modèle, pas supprimée), et son chemin est donné au CLI qui la lit.
-            let imageMeta: { file: string; mediaType: string; bytes: number } | null = null;
-            let imagePath: string | null = null;
-            if (hasImage) {
-              const mediaType = String(body.image!.mediaType);
-              const buffer = Buffer.from(body.image!.data as string, 'base64');
-              const imageFile = `${base}.${EXT[mediaType] ?? 'jpg'}`;
-              imagePath = resolve(dir, imageFile);
-              await writeFile(imagePath, buffer);
-              imageMeta = { file: imageFile, mediaType, bytes: buffer.length };
-            }
-
-            const fullPrompt = imagePath
-              ? `${prompt}\n\nLa photo du repas à analyser est ce fichier image : ${imagePath}\nLis ce fichier, puis réponds UNIQUEMENT avec le JSON demandé.`
-              : prompt;
-
-            const startedAt = new Date().toISOString();
-            let run: CliRun | null = null;
-            let error: string | null = null;
             try {
-              run = await runCli(
-                cli,
-                fullPrompt,
-                model,
-                typeof body.timeoutMs === 'number' ? body.timeoutMs : undefined,
-                imagePath,
-                cli === 'codex' ? outputLastPath : null,
-              );
-            } catch (e) {
-              error = (e as Error).message;
-            }
+              const outputLastPath = resolve(requestDir, `${base}-final.txt`);
+              if (temporaryDirectory) temporaryOutputPath = outputLastPath;
+              let imageMeta: { file: string; mediaType: string; bytes: number } | null = null;
+              let imagePath: string | null = null;
+              if (hasImage) {
+                const mediaType = String(body.image!.mediaType);
+                const buffer = Buffer.from(body.image!.data as string, 'base64');
+                const imageFile = `${base}.${EXT[mediaType] ?? 'jpg'}`;
+                imagePath = resolve(requestDir, imageFile);
+                if (temporaryDirectory) temporaryImagePath = imagePath;
+                await writeFile(imagePath, buffer);
+                imageMeta = { file: imageFile, mediaType, bytes: buffer.length };
+              }
 
-            // Archive complète de l'appel, quel que soit son sort (réussi ou non).
-            await writeFile(
-              resolve(dir, `${base}.json`),
-              JSON.stringify({ startedAt, cli, label, model: model ?? '(défaut)', prompt: fullPrompt, image: imageMeta, response: run, error }, null, 2),
-              'utf8',
-            );
-            server.config.logger.info(`[claude-code] réponse archivée : ${base}.json`);
+              const fullPrompt = imagePath
+                ? `${prompt}\n\nLa photo du repas à analyser est ce fichier image : ${imagePath}\nLis ce fichier, puis réponds UNIQUEMENT avec le JSON demandé.`
+                : prompt;
 
-            if (error) {
-              res.statusCode = 500;
-              res.end(JSON.stringify({ error }));
+              const startedAt = new Date().toISOString();
+              let run: CliRun | null = null;
+              let error: string | null = null;
+              try {
+                run = await runCli(
+                  cli,
+                  fullPrompt,
+                  model,
+                  typeof body.timeoutMs === 'number' ? body.timeoutMs : undefined,
+                  imagePath,
+                  cli === 'codex' ? outputLastPath : null,
+                  !shouldArchive,
+                );
+              } catch (e) {
+                error = (e as Error).message;
+              }
+
+              if (shouldArchive) {
+                // Les appels manuels gardent leur archive historique. Le worker
+                // transmet archive:false et n'écrit rien de sensible dans response/.
+                await writeFile(
+                  resolve(dir, `${base}.json`),
+                  JSON.stringify({ startedAt, cli, label, model: model ?? '(défaut)', prompt: fullPrompt, image: imageMeta, response: run, error }, null, 2),
+                  'utf8',
+                );
+                server.config.logger.info(`[claude-code] réponse archivée : ${base}.json`);
+              }
+
+              if (error) {
+                res.statusCode = 500;
+                res.end(JSON.stringify({ error }));
+                return;
+              }
+              if (run!.isError) {
+                res.statusCode = 500;
+                res.end(JSON.stringify({ error: run!.text }));
+                return;
+              }
+              res.end(JSON.stringify({ text: run!.text }));
               return;
+            } finally {
+              if (temporaryDirectory) {
+                if (temporaryImagePath) await unlink(temporaryImagePath).catch(() => undefined);
+                if (temporaryOutputPath) await unlink(temporaryOutputPath).catch(() => undefined);
+                await rmdir(temporaryDirectory).catch(() => undefined);
+              }
             }
-            if (run!.isError) {
-              res.statusCode = 500;
-              res.end(JSON.stringify({ error: run!.text }));
-              return;
-            }
-            res.end(JSON.stringify({ text: run!.text }));
-            return;
           }
           res.statusCode = 405;
           res.end(JSON.stringify({ error: 'Méthode non supportée.' }));
