@@ -5,6 +5,7 @@ import type { RdaEntry } from '../nutrition/rda';
 import { useTargets } from './useTargets';
 import { useStore, useEffectiveFoods, useCloudConfig } from '../store/store';
 import { EMPTY_NUTRIENTS } from '../nutrition/types';
+import { PRICE_NOTE } from '../nutrition/price';
 import type { Food, FoodCategory, NutrientKey, Nutrients } from '../nutrition/types';
 import { FOODS } from '../nutrition/foods';
 import { findDuplicates } from '../nutrition/bank';
@@ -376,6 +377,7 @@ function FoodRow({
         <span className="kcal">
           {fmt(f.n.kcal)} kcal · P {fmt(f.n.proteines, 1)} · G {fmt(f.n.glucides, 1)} · L {fmt(f.n.lipides, 1)}
           {f.n.fibres ? ` · Fibres ${fmt(f.n.fibres, 1)}` : ''} /100 g{portionLabel(f)} · {usageLabel(usage)}
+          {' · '}{f.price ? `${fmt(f.price.eurPerKg, 2)} €/kg · confiance ${f.price.confidence}` : 'prix inconnu'}
         </span>
       </div>
       {f.aVerifier && (
@@ -419,6 +421,7 @@ function ReferenceFoodRow({ food }: { food: Food }) {
         <span className="kcal">
           {fmt(food.n.kcal)} kcal · P {fmt(food.n.proteines, 1)} · G {fmt(food.n.glucides, 1)} · L {fmt(food.n.lipides, 1)}
           /100 g{portionLabel(food)} · jamais mangé
+          {' · '}{food.price ? `${fmt(food.price.eurPerKg, 2)} €/kg · confiance ${food.price.confidence}` : 'prix inconnu'}
         </span>
       </div>
       <button className="ghost small" onClick={() => adoptCatalogFood(food)}>
@@ -616,6 +619,9 @@ function FoodForm({ food, submitLabel, onDone }: { food?: Food; submitLabel: str
   const [nom, setNom] = useState(food?.nom ?? '');
   const [aliases, setAliases] = useState(food?.aliases.join(', ') ?? '');
   const [piece, setPiece] = useState(food?.pieceGrams != null ? String(food.pieceGrams) : '');
+  const [prix, setPrix] = useState(food?.price ? String(food.price.eurPerKg) : '');
+  const [confiancePrix, setConfiancePrix] = useState<'faible' | 'moyenne' | 'forte'>(food?.price?.confidence ?? 'moyenne');
+  const [prixOrigine, setPrixOrigine] = useState<'ia' | 'manuel'>('manuel');
   const [categorie, setCategorie] = useState<FoodCategory>(food?.categorie ?? 'autre');
   const [n, setN] = useState<Partial<Nutrients>>(food ? { ...food.n } : {});
   const [showMicros, setShowMicros] = useState(false);
@@ -623,7 +629,8 @@ function FoodForm({ food, submitLabel, onDone }: { food?: Food; submitLabel: str
   const setField = (key: keyof Nutrients, v: string) =>
     setN((prev) => ({ ...prev, [key]: v === '' ? undefined : parseFloat(v.replace(',', '.')) }));
 
-  const canSave = nom.trim().length >= 2 && (n.kcal ?? 0) >= 0;
+  const priceNumber = prix.trim() === '' ? null : Number(prix.replace(',', '.'));
+  const canSave = nom.trim().length >= 2 && (n.kcal ?? 0) >= 0 && (priceNumber === null || (Number.isFinite(priceNumber) && priceNumber > 0));
 
   const save = () => {
     if (!canSave) return;
@@ -633,6 +640,9 @@ function FoodForm({ food, submitLabel, onDone }: { food?: Food; submitLabel: str
       pieceGrams: piece ? parseFloat(piece) : undefined,
       categorie,
       n: { ...EMPTY_NUTRIENTS, ...n },
+      ...(food && priceNumber === (food.price?.eurPerKg ?? null) && confiancePrix === (food.price?.confidence ?? 'moyenne')
+        ? {}
+        : { price: priceNumber === null ? null : { eurPerKg: priceNumber, confidence: confiancePrix, date: new Date().toISOString().slice(0, 10), origin: prixOrigine } }),
     };
     if (food) {
       editFood(food.id, patch);
@@ -671,6 +681,21 @@ function FoodForm({ food, submitLabel, onDone }: { food?: Food; submitLabel: str
           </select>
         </label>
       </div>
+      <div className="row wrap-form" style={{ marginTop: 10 }}>
+        <label className="field">
+          Prix estimé (€/kg, optionnel)
+          <input value={prix} onChange={(e) => { setPrix(e.target.value); setPrixOrigine('manuel'); }} inputMode="decimal" placeholder="Ex. 8,50" />
+        </label>
+        <label className="field">
+          Confiance du prix
+          <select value={confiancePrix} onChange={(e) => { setConfiancePrix(e.target.value as typeof confiancePrix); setPrixOrigine('manuel'); }}>
+            <option value="faible">Faible</option>
+            <option value="moyenne">Moyenne</option>
+            <option value="forte">Forte</option>
+          </select>
+        </label>
+      </div>
+      <p className="small" style={{ marginTop: 4 }}>{PRICE_NOTE} · relevé initial du 29/09/2026. Un prix saisi ici reste modifiable.</p>
       <div className="row wrap-form" style={{ marginTop: 10 }}>
         <label className="field">
           Calories (kcal) *
@@ -719,6 +744,7 @@ function FoodForm({ food, submitLabel, onDone }: { food?: Food; submitLabel: str
             setN({ ...fiche.nutriments });
             if (fiche.grammesParPiece) setPiece(String(fiche.grammesParPiece));
             if (fiche.categorie) setCategorie(fiche.categorie);
+            if (fiche.prixEurKg) { setPrix(String(fiche.prixEurKg)); setConfiancePrix(fiche.confiancePrix ?? 'faible'); setPrixOrigine('ia'); }
             setShowMicros(true);
           }}
         />
@@ -812,32 +838,32 @@ function NutrientRanking({ foods, jamaisManges }: { foods: Food[]; jamaisManges?
   const targets = useTargets();
   const jamais = jamaisManges ?? EMPTY_IDS;
 
-  const [key, setKey] = useState<NutrientKey>('proteines');
-  const t = targets.find((r) => r.key === key)!;
-  const distinct = !t.upperLimit && t.optimal !== t.ajr;
+  const [key, setKey] = useState<NutrientKey | 'prix'>('proteines');
+  const t = key === 'prix' ? null : targets.find((r) => r.key === key)!;
+  const distinct = !!t && !t.upperLimit && t.optimal !== t.ajr;
 
   const ranked = useMemo(
     () =>
       // Les compléments (produits purs très concentrés) sont exclus : sinon un
       // comprimé de vitamine C écraserait tous les vrais aliments du classement.
-      foods
-        .filter((f) => f.categorie !== 'supplement' && f.n[key] > 0)
-        .sort((a, b) => b.n[key] - a.n[key])
+      foods.filter((f) => f.categorie !== 'supplement' && (key === 'prix' ? !!f.price : f.n[key] > 0))
+        .sort((a, b) => key === 'prix' ? a.price!.eurPerKg - b.price!.eurPerKg : b.n[key] - a.n[key])
         .slice(0, TOP_N),
     [foods, key],
   );
 
-  const maxFood = ranked.length ? ranked[0].n[key] : 0;
-  const scaleMax = Math.max(maxFood, t.ajr, t.optimal) || 1;
-  const ajrPos = (t.ajr / scaleMax) * 100;
-  const optPos = (t.optimal / scaleMax) * 100;
+  const maxFood = ranked.length ? (key === 'prix' ? ranked[ranked.length - 1].price!.eurPerKg : ranked[0].n[key]) : 0;
+  const scaleMax = Math.max(maxFood, t?.ajr ?? 0, t?.optimal ?? 0) || 1;
+  const ajrPos = ((t?.ajr ?? 0) / scaleMax) * 100;
+  const optPos = ((t?.optimal ?? 0) / scaleMax) * 100;
 
   return (
     <>
       <div className="panel">
         <label className="field" style={{ maxWidth: 340 }}>
-          Trouver les aliments les plus riches en…
-          <select value={key} onChange={(e) => setKey(e.target.value as NutrientKey)}>
+          Classer les aliments par…
+          <select value={key} onChange={(e) => setKey(e.target.value as NutrientKey | 'prix')}>
+            <option value="prix">Prix estimé (moins cher d'abord)</option>
             {RDA.map((r) => (
               <option key={r.key} value={r.key}>
                 {r.label} ({r.unit})
@@ -846,9 +872,9 @@ function NutrientRanking({ foods, jamaisManges }: { foods: Food[]; jamaisManges?
           </select>
         </label>
         <p className="small" style={{ marginBottom: 6 }}>
-          Top {ranked.length} · valeurs pour 100 g. La barre montre la part du besoin couverte par 100 g.
+          Top {ranked.length} · {key === 'prix' ? `${PRICE_NOTE}, en €/kg. Prix indicatifs.` : 'valeurs pour 100 g. La barre montre la part du besoin couverte par 100 g.'}
         </p>
-        <div className="row small" style={{ gap: 14 }}>
+        {t && <div className="row small" style={{ gap: 14 }}>
           <span>
             <i className="ref-legend ajr" /> AJR {fmt(t.ajr)} {t.unit}/j
           </span>
@@ -857,17 +883,17 @@ function NutrientRanking({ foods, jamaisManges }: { foods: Food[]; jamaisManges?
               <i className="ref-legend opti" /> Optimal sportif {fmt(t.optimal)} {t.unit}/j
             </span>
           )}
-        </div>
+        </div>}
       </div>
 
       <div className="panel">
         {ranked.length === 0 ? (
-          <div className="empty">Aucun aliment renseigné pour ce nutriment.</div>
+          <div className="empty">Aucun aliment renseigné pour cet élément.</div>
         ) : (
           ranked.map((f, i) => {
-            const value = f.n[key];
-            const pctAjr = t.ajr > 0 ? (value / t.ajr) * 100 : 0;
-            const pctOpt = t.optimal > 0 ? (value / t.optimal) * 100 : 0;
+            const value = key === 'prix' ? f.price!.eurPerKg : f.n[key];
+            const pctAjr = t && t.ajr > 0 ? (value / t.ajr) * 100 : 0;
+            const pctOpt = t && t.optimal > 0 ? (value / t.optimal) * 100 : 0;
             return (
               <div className="stat" key={f.id} style={{ marginBottom: 8 }}>
                 <div className="row" style={{ justifyContent: 'space-between', gap: 8 }}>
@@ -876,18 +902,20 @@ function NutrientRanking({ foods, jamaisManges }: { foods: Food[]; jamaisManges?
                     {jamais.has(f.id) && <span className="badge">jamais mangé</span>}
                   </span>
                   <span className="mono">
-                    {fmt(value, value < 10 ? 1 : 0)} {t.unit}
+                    {key === 'prix' ? `${fmt(value, 2)} €/kg` : `${fmt(value, value < 10 ? 1 : 0)} ${t!.unit}`}
                   </span>
                 </div>
-                <div className="bar good">
+                {t && <div className="bar good">
                   <span style={{ width: `${Math.min(100, (value / scaleMax) * 100)}%` }} />
                   <i className="mark ajr" style={{ left: `${ajrPos}%` }} data-tip={`AJR ${fmt(t.ajr)} ${t.unit}`} />
                   {distinct && (
                     <i className="mark opti" style={{ left: `${optPos}%` }} data-tip={`Optimal ${fmt(t.optimal)} ${t.unit}`} />
                   )}
-                </div>
+                </div>}
                 <div className="small mono">
+                  {key === 'prix' ? `Confiance ${f.price!.confidence} · ${f.price!.date}` : <>
                   {fmt(pctAjr)}% AJR{distinct ? ` · ${fmt(pctOpt)}% opti` : ''} / 100 g
+                  </>}
                 </div>
               </div>
             );

@@ -20,6 +20,8 @@ import { decayWeight, decayWindowDays } from '../nutrition/recommend';
 import { usePeriodNutrition } from './usePeriodNutrition';
 import { fmt } from './format';
 import { FoodInsights } from './Foods';
+import { useEffectiveFoods, useStore } from '../store/store';
+import { costOfDay, meanCompleteCosts } from '../nutrition/price';
 
 /** Toutes les clés de nutriments (moyennes par groupe de dates). */
 const NUT_KEYS = Object.keys(EMPTY_NUTRIENTS) as NutrientKey[];
@@ -110,6 +112,8 @@ function fmtVal(v: number): string {
  *  - Radar micros (moyenne/jour) et donut macros (moyenne/jour).
  */
 export function Stats() {
+  const entries = useStore((s) => s.entries);
+  const foods = useEffectiveFoods();
   // Chaîne « période → moyennes » partagée avec l'onglet Nutriments (état propre à Stats).
   const {
     period,
@@ -182,6 +186,22 @@ export function Stats() {
    */
   const buckets = useMemo(() => groupDates(recorded, gran), [recorded, gran]);
 
+  const priceByDate = useMemo(() => {
+    const excluded = new Set(excludeSupplements ? foods.filter((f) => f.categorie === 'supplement').map((f) => f.id) : []);
+    return new Map(recorded.map((date) => {
+      const day = entries.filter((entry) => entry.date === date).map((entry) => ({
+        ...entry,
+        items: entry.items.filter((item) => !excludeSupplements || (item.categorie !== 'supplement' && !excluded.has(item.foodId ?? ''))),
+      }));
+      return [date, costOfDay(day, foods)] as const;
+    }));
+  }, [recorded, entries, foods, excludeSupplements]);
+  const priceMean = useMemo(() => {
+    if (!recorded.length) return null;
+    const latest = dayMs(recorded[recorded.length - 1]);
+    return meanCompleteCosts(recorded.map((date) => ({ cost: priceByDate.get(date)!, weight: decayOn ? decayWeight((latest - dayMs(date)) / 86_400_000, halfLife) : 1 })));
+  }, [recorded, priceByDate, decayOn, halfLife]);
+
   /**
    * Apports MOYENS PAR JOUR de chaque groupe de dates : en granularité « jour »
    * c'est le total du jour lui-même, sinon la moyenne journalière de la semaine
@@ -222,6 +242,17 @@ export function Stats() {
           maPct,
         });
 
+        if (id === 'prix') {
+          const values = buckets.map((bucket) => {
+            const complete = bucket.dates.map((date) => priceByDate.get(date)!).filter((cost) => cost.complete);
+            return complete.length ? complete.reduce((sum, cost) => sum + cost.knownEur, 0) / complete.length : null;
+          });
+          const raws = values.map((value) => value != null && priceMean ? value / priceMean * 100 : null);
+          const ma = smooth(raws);
+          return { id, kind: 'price' as const, label: 'Prix estimé', unit: '€', color, objective: priceMean ?? 0,
+            points: values.map((value, k) => point(k, value, raws[k], ma[k])) };
+        }
+
         if (ratioDef) {
           // Rapport : calculé SUR les apports moyens du groupe (pas la moyenne des
           // rapports quotidiens), pour qu'un jour extrême ne domine pas la semaine.
@@ -258,7 +289,7 @@ export function Stats() {
           points: values.map((v, k) => point(k, v, raws[k], ma[k])),
         };
       }),
-    [selected, targetByKey, buckets, bucketAverages, smooth, refMode],
+    [selected, targetByKey, buckets, bucketAverages, smooth, refMode, priceByDate, priceMean],
   );
 
   const colorById = useMemo(() => new Map(series.map((s) => [s.id, s.color])), [series]);
@@ -405,8 +436,10 @@ export function Stats() {
           </div>
         </div>
         <p className="small" style={{ marginTop: 2 }}>
-          Chaque courbe = un élément (nutriment <em>ou</em> rapport) en <strong>% de sa cible</strong> (ligne 100 %),
-          pour comparer sur un seul axe. Survolez pour les valeurs réelles.
+          Nutriments et rapports sont en <strong>% de leur cible</strong>. Pour le prix, 100 % représente
+          le <strong>coût quotidien moyen de la période choisie</strong>, sans objectif de dépense.
+          Survolez pour les valeurs réelles en euros ou en unités nutritionnelles.
+          {selected.includes('prix') && ` ${[...priceByDate.values()].filter((cost) => !cost.complete).length} jour(s) au prix partiel sont exclus de la moyenne et du tracé.`}
           {selected.length === 1
             ? ' Un seul élément affiché : l’axe de droite donne directement les quantités.'
             : ' Les quantités réelles s’affichent sur un second axe dès qu’un seul élément est sélectionné — à plusieurs, leurs unités ne partagent aucune graduation.'}
@@ -478,7 +511,7 @@ function toViewBox(e: React.PointerEvent | React.MouseEvent, svg: SVGSVGElement,
  */
 type TrendSeries = {
   id: string;
-  kind: 'nutrient' | 'ratio';
+  kind: 'nutrient' | 'ratio' | 'price';
   label: string;
   color: string;
   objective: number;
@@ -503,7 +536,7 @@ function fmtRatio(v: number, suffix: string): string {
 
 /** Valeur réelle d'un point selon le type de série (apport ou rapport formaté). */
 function formatSeriesValue(s: TrendSeries, value: number): string {
-  return s.kind === 'ratio' ? fmtRatio(value, s.suffix ?? '') : `${fmtVal(value)} ${s.unit ?? ''}`.trim();
+  return s.kind === 'ratio' ? fmtRatio(value, s.suffix ?? '') : s.kind === 'price' ? `${fmt(value, 2)} €` : `${fmtVal(value)} ${s.unit ?? ''}`.trim();
 }
 
 function MultiTrend({
@@ -544,6 +577,9 @@ function MultiTrend({
 
   if (series.length === 0 || steps.length === 0) {
     return <div className="empty">Sélectionnez au moins un élément ci-dessous et enregistrez des jours sur la période.</div>;
+  }
+  if (series.every((s) => s.points.every((point) => point.pct == null))) {
+    return <div className="empty">Aucune série calculable sur cette période. Pour le prix, il faut au moins un jour complet avec un prix connu pour chaque aliment.</div>;
   }
 
   const xs = scaleLinear()
@@ -670,7 +706,7 @@ function MultiTrend({
         <text x={W - m.right} y={ys(100) - 5} fill={C.accent2} fontSize={10} textAnchor="end">
           {/* À une seule série, la cible est nommée en clair : les graduations de droite
               sont choisies par d3 et ne tombent pas forcément sur elle. */}
-          cible 100 %
+          {solo?.kind === 'price' ? 'moyenne 100 %' : series.some((s) => s.kind === 'price') ? 'repère 100 %' : 'cible 100 %'}
           {solo &&
             ` · ${solo.kind === 'ratio' ? fmtRatio(solo.objective, solo.suffix ?? '') : `${fmtVal(solo.objective)} ${solo.unit ?? ''}`.trim()}`}
         </text>
@@ -717,7 +753,7 @@ function MultiTrend({
               <div key={s.id} style={{ marginTop: 2 }}>
                 <i style={{ display: 'inline-block', width: 8, height: 8, borderRadius: 2, background: s.color, marginRight: 5 }} />
                 {s.label} : <strong>{p.value == null ? '—' : formatSeriesValue(s, p.value)}</strong>
-                {p.pct != null && <span style={{ color: p.pct >= 100 ? C.accent2 : C.warn }}> · {fmt(p.pct)} %</span>}
+                {p.pct != null && <span style={{ color: s.kind === 'price' ? C.muted : p.pct >= 100 ? C.accent2 : C.warn }}> · {fmt(p.pct)} % {s.kind === 'price' ? 'de la moyenne' : ''}</span>}
                 {maOn && p.maPct != null && <span style={{ color: C.muted }}> · lissé {fmt(p.maPct)} %</span>}
               </div>
             );
@@ -791,6 +827,7 @@ function SeriesPicker({
       group: 'Rapports',
       title: def.note,
     }));
+    out.unshift({ id: 'prix', label: 'Prix estimé', group: 'Prix', title: 'Coût quotidien estimé. 100 % = moyenne sur la période choisie.' });
     for (const g of PICKER_GROUPS) {
       for (const k of g.keys) {
         const t = targetByKey.get(k);
@@ -865,7 +902,7 @@ function SeriesPicker({
         <input
           type="search"
           value={query}
-          placeholder="+ ajouter un nutriment ou un rapport"
+          placeholder="+ ajouter un élément, dont le prix"
           onFocus={() => setOpen(true)}
           onChange={(e) => {
             setQuery(e.target.value);

@@ -7,6 +7,8 @@ import { portionGrams, effectiveImportance } from '../nutrition/recommend';
 import { pca2 } from '../nutrition/pca';
 import { tsne, mds } from '../nutrition/embed';
 import { normalize } from '../nutrition/normalize';
+import { cheaperAlternatives } from '../nutrition/cheaperAlternatives';
+import { validFoodPrice } from '../nutrition/price';
 import { useStore } from '../store/store';
 import type { Food, FoodCategory, NutrientKey } from '../nutrition/types';
 import { CATS, COLOR_BY_CAT, CatIcon, catSymbolPath, rescaleAxis } from './FoodExplorer';
@@ -258,7 +260,10 @@ export function FoodCompare({
       )}
 
       {(foodA || foodB) && (
-        <NeighborsPanel foods={foods} a={foodA} b={foodB} mode={mode} weightFor={weightFor} onPick={setSlot} />
+        <>
+          <CheaperAlternativesPanel foods={foods} a={foodA} b={foodB} onPick={setSlot} />
+          <NeighborsPanel foods={foods} a={foodA} b={foodB} mode={mode} weightFor={weightFor} onPick={setSlot} />
+        </>
       )}
 
       <PcaBiplot
@@ -273,6 +278,55 @@ export function FoodCompare({
         onPick={setSlot}
       />
     </>
+  );
+}
+
+function CheaperAlternativesPanel({ foods, a, b, onPick }: {
+  foods: Food[];
+  a: Food | null;
+  b: Food | null;
+  onPick: (slot: 0 | 1, id: string) => void;
+}) {
+  const [allCategories, setAllCategories] = useState(false);
+  const amount = (value: number) => fmt(value, value > 0 && value < 1 ? 3 : value < 10 ? 2 : 0);
+  const selected = [a ? { food: a, slot: 0 as const } : null, b ? { food: b, slot: 1 as const } : null]
+    .filter((item): item is { food: Food; slot: 0 | 1 } => item !== null);
+  return (
+    <div className="panel">
+      <div className="row" style={{ justifyContent: 'space-between', gap: 8, flexWrap: 'wrap', alignItems: 'center' }}>
+        <h2 style={{ margin: 0, fontSize: 15 }}>Alternatives moins chères</h2>
+        <button className="ghost small" onClick={() => setAllCategories((value) => !value)}>
+          {allCategories ? 'Même catégorie' : 'Élargir à toute la banque'}
+        </button>
+      </div>
+      <p className="small" style={{ color: C.muted }}>
+        Jusqu’à cinq aliments strictement moins chers par kg, classés selon leurs nutriments pour 100 g.
+        Le prix ne compte pas dans la proximité. Cliquez sur un aliment pour le comparer.
+      </p>
+      <div className="row" style={{ gap: 16, flexWrap: 'wrap', alignItems: 'flex-start' }}>
+        {selected.map(({ food, slot }) => {
+          const sourcePrice = validFoodPrice(food.price);
+          const alternatives = cheaperAlternatives(food, foods, !allCategories);
+          return <div key={slot} style={{ flex: '1 1 260px', minWidth: 240 }}>
+            <div className="small" style={{ color: SLOT_COLOR[slot], fontWeight: 600, marginBottom: 6 }}>
+              {food.nom}{sourcePrice ? ` · ${fmt(sourcePrice.eurPerKg, 2)} €/kg` : ' · prix inconnu'}
+            </div>
+            {!sourcePrice ? <div className="small">Ajoutez un prix à cet aliment pour chercher des alternatives.</div>
+              : alternatives.length === 0 ? <div className="small">Aucune alternative moins chère dans {allCategories ? 'la banque' : 'cette catégorie'}.</div>
+                : alternatives.map((alternative) => <button key={alternative.food.id} className="ghost" onClick={() => onPick(slot === 0 ? 1 : 0, alternative.food.id)}
+                  style={{ display: 'block', width: '100%', textAlign: 'left', marginBottom: 6, padding: '8px 10px' }}>
+                  <strong>{alternative.food.nom}</strong>
+                  <span className="small" style={{ display: 'block', color: C.accent2 }}>
+                    {fmt(validFoodPrice(alternative.food.price)!.eurPerKg, 2)} €/kg · économie {fmt(alternative.savingEurKg, 2)} €/kg ({fmt(alternative.savingPercent)} %)
+                  </span>
+                  <span className="small" style={{ display: 'block', color: C.muted }}>
+                    Principaux écarts : {alternative.differences.map((d) => `${NUT_LABEL.get(d.key) ?? d.key} ${amount(d.from)} → ${amount(d.to)} ${NUT_UNIT.get(d.key) ?? ''}`).join(' · ')}
+                  </span>
+                </button>)}
+          </div>;
+        })}
+      </div>
+    </div>
   );
 }
 

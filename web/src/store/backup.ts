@@ -10,6 +10,7 @@ import type { JournalEntry, FavoriteMeal, FoodOverrides, SttEngine, ExtractionMo
 import type { CloudProvider } from '../extraction/providers';
 import { migrateToPersonalBank } from '../nutrition/bank';
 import type { Food } from '../nutrition/types';
+import { enrichBankPrices } from '../nutrition/priceSeed';
 import type { Profile, TargetOverrides } from '../nutrition/targets';
 import type { BodyMeasurementEntry, WeightEntry, WeightConfig } from '../weight/types';
 import { WEIGHT_METRICS } from '../weight/types';
@@ -132,7 +133,7 @@ export function importBackup(text: string): string {
           foodOverrides: b.foodOverrides ?? {},
           favoriteMeals,
         });
-  const customFoods = migrated.customFoods;
+  const customFoods = enrichBankPrices(migrated.customFoods);
   useStore.setState({
     entries: resyncEntries(migrated.entries, effectiveFoods(customFoods)),
     customFoods,

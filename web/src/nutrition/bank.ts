@@ -15,7 +15,8 @@
  * migration unique depuis l'ancien modèle (catalogue en dur + overrides).
  */
 
-import type { ComputedItem, Food, FoodCategory, Nutrients } from './types';
+import type { ComputedItem, Food, FoodCategory, FoodPrice, Nutrients } from './types';
+import { estimatedPrice } from './price';
 import { FOOD_BY_ID } from './foods';
 import { normalizeNutrients, scaleNutrients, toGrams } from './compute';
 import { normalizeForMatch, trigramSimilarity } from './normalize';
@@ -84,7 +85,7 @@ export function adoptFromCatalog(food: Food, ajouteLe?: string): Food {
 export function foodFromEstimate(
   nom: string,
   n: Partial<Nutrients>,
-  opts: { categorie?: FoodCategory; pieceGrams?: number; ajouteLe?: string } = {},
+  opts: { categorie?: FoodCategory; pieceGrams?: number; ajouteLe?: string; prixEurKg?: number; confiancePrix?: FoodPrice['confidence'] } = {},
 ): Food {
   const g = opts.pieceGrams;
   return {
@@ -96,6 +97,7 @@ export function foodFromEstimate(
     // Une estimation venue d'un historique ancien peut manquer des nutriments
     // ajoutés depuis : sans complétion, ils ressortiraient en NaN.
     n: normalizeNutrients(n),
+    ...(opts.prixEurKg ? { price: estimatedPrice(opts.prixEurKg, opts.confiancePrix, opts.ajouteLe) } : {}),
     custom: true,
     origine: 'ia',
     aVerifier: true,
@@ -138,6 +140,8 @@ export function ingestEstimates(
       food = foodFromEstimate(nom, ci.extracted.nutriments, {
         categorie: ci.extracted.categorie,
         pieceGrams: ci.extracted.grammesParPiece,
+        prixEurKg: ci.extracted.prixEurKg,
+        confiancePrix: ci.extracted.confiancePrix,
         ajouteLe: jour,
       });
       // Un id déterministe peut déjà être pris par un aliment au nom différent

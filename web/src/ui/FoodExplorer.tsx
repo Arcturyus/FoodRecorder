@@ -1,11 +1,13 @@
 import { createContext, useContext, useEffect, useMemo, useRef, useState } from 'react';
 import { scaleLinear, scaleLog, scaleSqrt } from 'd3-scale';
 import { extent, max as d3max, mean as d3mean, quantile } from 'd3-array';
-import { symbol, symbolCircle, symbolSquare, symbolTriangle } from 'd3-shape';
+import { symbol, symbolCircle, symbolDiamond, symbolSquare, symbolTriangle } from 'd3-shape';
 import type { SymbolType } from 'd3-shape';
 import { RDA } from '../nutrition/rda';
+import { NUTRIENT_GROUPS } from '../nutrition/groups';
 import { useTargets } from './useTargets';
 import { portionGrams } from '../nutrition/recommend';
+import { normalizeForMatch } from '../nutrition/normalize';
 import type { Food, FoodCategory, NutrientKey } from '../nutrition/types';
 import { fmt } from './format';
 
@@ -50,7 +52,11 @@ export const CATS: { key: FoodCategory; label: string; color: string }[] = [
   { key: 'plat', label: 'Plats', color: '#a58bff' },
   { key: 'autre', label: 'Autres', color: '#9aa2b1' },
 ];
-export const COLOR_BY_CAT = new Map(CATS.map((c) => [c.key, c.color]));
+const SUPPLEMENT_COLOR = '#b084f5';
+export const COLOR_BY_CAT = new Map<FoodCategory, string>([
+  ...CATS.map((c) => [c.key, c.color] as const),
+  ['supplement', SUPPLEMENT_COLOR],
+]);
 
 /**
  * Forme par catégorie, en plus de la couleur. Onze catégories ne tiennent pas
@@ -72,6 +78,7 @@ const SHAPE_BY_CAT = new Map<FoodCategory, SymbolType>([
   ['sucre-snack', symbolTriangle],
   ['plat', symbolTriangle],
   ['autre', symbolTriangle],
+  ['supplement', symbolDiamond],
 ]);
 
 /**
@@ -108,6 +115,8 @@ export function CatIcon({ cat, size = 13 }: { cat: FoodCategory; size?: number }
  */
 const ExplorableCtx = createContext<Food[]>([]);
 const useExplorable = () => useContext(ExplorableCtx);
+const SupplementsCtx = createContext<Food[]>([]);
+const useSupplements = () => useContext(SupplementsCtx);
 
 /**
  * Ids des aliments présents pour la comparaison mais **jamais mangés** (catalogue
@@ -118,13 +127,18 @@ const useExplorable = () => useContext(ExplorableCtx);
 const NeverEatenCtx = createContext<ReadonlySet<string>>(new Set());
 const useNeverEaten = () => useContext(NeverEatenCtx);
 
-/** Nutriments sélectionnables (pilotés par la table RDA pour label + unité). */
-const NUT = RDA.map((r) => ({ key: r.key, label: r.label, unit: r.unit }));
+/** Le prix partage les graphiques avec les nutriments, mais n'a ni AJR ni cible de santé. */
+type ChartKey = NutrientKey | 'prix';
+const NUT: { key: ChartKey; label: string; unit: string }[] = [
+  { key: 'prix', label: 'Prix', unit: '€/kg' },
+  ...RDA.map((r) => ({ key: r.key, label: r.label, unit: r.unit })),
+];
 const NUT_LABEL = new Map(NUT.map((n) => [n.key, n.label]));
 const NUT_UNIT = new Map(NUT.map((n) => [n.key, n.unit]));
 
-const val = (f: Food, k: NutrientKey) => f.n[k];
-const axisTitle = (k: NutrientKey) => `${NUT_LABEL.get(k)} (${NUT_UNIT.get(k)}) /100 g`;
+const val = (f: Food, k: ChartKey) => k === 'prix' ? f.price?.eurPerKg ?? Number.NaN : f.n[k];
+const axisTitle = (k: ChartKey) => k === 'prix' ? 'Prix (€/kg)' : `${NUT_LABEL.get(k)} (${NUT_UNIT.get(k)}) /100 g`;
+const pointValue = (k: ChartKey, amount: number) => k === 'prix' ? `${fmt(amount, 2)} €/kg` : `${fmt(amount, amount < 10 ? 1 : 0)} ${NUT_UNIT.get(k)} /100 g`;
 
 export type ParetoPoint = { id: string; x: number; y: number };
 
@@ -140,7 +154,7 @@ export type ParetoPoint = { id: string; x: number; y: number };
  * explicitement : un point qui atteint la meilleure valeur possible d'un axe reste
  * toujours dans la frontière, quel que soit son score sur l'autre axe.
  */
-export function paretoFrontier<P extends ParetoPoint>(points: P[], xGoal: 'min' | 'max', yGoal: 'min' | 'max'): P[] {
+export function paretoFrontier<P extends ParetoPoint>(points: P[], xGoal: 'min' | 'max', yGoal: 'min' | 'max', includeAxisExtremes = true): P[] {
   if (points.length === 0) return [];
   const okX = (a: number, b: number) => (xGoal === 'max' ? a >= b : a <= b);
   const okY = (a: number, b: number) => (yGoal === 'max' ? a >= b : a <= b);
@@ -152,7 +166,7 @@ export function paretoFrontier<P extends ParetoPoint>(points: P[], xGoal: 'min' 
 
   const xBest = xGoal === 'max' ? Math.max(...points.map((p) => p.x)) : Math.min(...points.map((p) => p.x));
   const yBest = yGoal === 'max' ? Math.max(...points.map((p) => p.y)) : Math.min(...points.map((p) => p.y));
-  const atBest = points.filter((p) => p.x === xBest || p.y === yBest);
+  const atBest = includeAxisExtremes ? points.filter((p) => p.x === xBest || p.y === yBest) : [];
 
   const merged = new Map(standard.map((p) => [p.id, p]));
   for (const p of atBest) merged.set(p.id, p);
@@ -239,6 +253,7 @@ type View = 'nuage' | 'correlation';
 export function FoodExplorer({ foods, jamaisManges }: { foods: Food[]; jamaisManges?: ReadonlySet<string> }) {
   const [view, setView] = useState<View>('nuage');
   const explorable = useMemo(() => foods.filter((f) => f.categorie !== 'supplement'), [foods]);
+  const supplements = useMemo(() => foods.filter((f) => f.categorie === 'supplement'), [foods]);
   const neverEaten = useMemo(() => jamaisManges ?? new Set<string>(), [jamaisManges]);
   const nbNonManges = useMemo(
     () => explorable.reduce((n, f) => n + (neverEaten.has(f.id) ? 1 : 0), 0),
@@ -247,6 +262,7 @@ export function FoodExplorer({ foods, jamaisManges }: { foods: Food[]; jamaisMan
 
   return (
     <ExplorableCtx.Provider value={explorable}>
+      <SupplementsCtx.Provider value={supplements}>
       <NeverEatenCtx.Provider value={neverEaten}>
       <div className="panel">
         <p className="small" style={{ marginTop: 0, marginBottom: 8 }}>
@@ -278,6 +294,7 @@ export function FoodExplorer({ foods, jamaisManges }: { foods: Food[]; jamaisMan
       {view === 'nuage' && <ScatterView />}
       {view === 'correlation' && <CorrelationView />}
       </NeverEatenCtx.Provider>
+      </SupplementsCtx.Provider>
     </ExplorableCtx.Provider>
   );
 }
@@ -352,14 +369,14 @@ export function rescaleAxis<S extends { range(): number[]; invert(v: number): nu
 
 function NutSelect({ label, value, onChange, allowNone }: {
   label: string;
-  value: NutrientKey | 'none';
-  onChange: (k: NutrientKey | 'none') => void;
+  value: ChartKey | 'none';
+  onChange: (k: ChartKey | 'none') => void;
   allowNone?: boolean;
 }) {
   return (
     <label className="field" style={{ minWidth: 150 }}>
       {label}
-      <select value={value} onChange={(e) => onChange(e.target.value as NutrientKey | 'none')}>
+      <select value={value} onChange={(e) => onChange(e.target.value as ChartKey | 'none')}>
         {allowNone && <option value="none">— aucun —</option>}
         {NUT.map((n) => (
           <option key={n.key} value={n.key}>
@@ -377,15 +394,18 @@ function NutSelect({ label, value, onChange, allowNone }: {
 
 function ScatterView() {
   const neverEaten = useNeverEaten();
-  const [xk, setXk] = useState<NutrientKey>('kcal');
-  const [yk, setYk] = useState<NutrientKey>('proteines');
-  const [sizeK, setSizeK] = useState<NutrientKey | 'none'>('none');
-  const [logX, setLogX] = useState(true);
-  const [logY, setLogY] = useState(true);
+  const supplements = useSupplements();
+  const [xk, setXk] = useState<ChartKey>('prix');
+  const [yk, setYk] = useState<ChartKey>('proteines');
+  const [sizeK, setSizeK] = useState<ChartKey | 'none'>('none');
+  const [logX, setLogX] = useState(false);
+  const [logY, setLogY] = useState(false);
   const [pareto, setPareto] = useState(true);
   const [xGoal, setXGoal] = useState<'min' | 'max'>('min');
   const [yGoal, setYGoal] = useState<'min' | 'max'>('max');
   const [hideCats, setHideCats] = useState<Set<FoodCategory>>(new Set());
+  const [includeSupplements, setIncludeSupplements] = useState(false);
+  const [search, setSearch] = useState('');
 
   const W = 680;
   const H = 460;
@@ -393,6 +413,12 @@ function ScatterView() {
   const svgRef = useRef<SVGSVGElement>(null);
   const [hover, setHover] = useState<{ i: number; px: number; py: number } | null>(null);
   const explorable = useExplorable();
+  const chartFoods = useMemo(
+    () => includeSupplements ? [...explorable, ...supplements] : explorable,
+    [explorable, supplements, includeSupplements],
+  );
+  const searchableFoods = useMemo(() => [...explorable, ...supplements], [explorable, supplements]);
+  const normalizedSearch = normalizeForMatch(search);
   const targets = useTargets();
   const tx = targets.find((r) => r.key === xk);
   const ty = targets.find((r) => r.key === yk);
@@ -409,7 +435,7 @@ function ScatterView() {
   useEffect(() => {
     setZoomX(ZOOM_IDENTITY);
     setZoomY(ZOOM_IDENTITY);
-  }, [xk, yk, sizeK, hideCats, logX, logY]);
+  }, [xk, yk, sizeK, hideCats, logX, logY, includeSupplements]);
 
   function zoomAt(factor: number, px: number, py: number) {
     setZoomX((z) => {
@@ -506,15 +532,24 @@ function ScatterView() {
   // sans lien avec l'échelle log — sinon un aliment à 0 g sur un axe minimisé (ex.
   // AG saturés des légumes) disparaîtrait alors qu'il a une vraie valeur.
   const points = useMemo(() => {
-    return explorable
+    return chartFoods
       .filter((f) => !hideCats.has(f.categorie))
       .map((f) => ({ f, x: val(f, xk), y: val(f, yk), s: sizeK === 'none' ? 0 : val(f, sizeK) }))
-      .filter((p) => p.x > 0 || p.y > 0);
-  }, [explorable, xk, yk, sizeK, hideCats]);
+      .filter((p) => Number.isFinite(p.x) && Number.isFinite(p.y) && Number.isFinite(p.s) && (p.x > 0 || p.y > 0));
+  }, [chartFoods, xk, yk, sizeK, hideCats]);
+  const searchCandidates = useMemo(
+    () => normalizedSearch ? searchableFoods.filter((f) => normalizeForMatch(f.nom).includes(normalizedSearch)) : [],
+    [searchableFoods, normalizedSearch],
+  );
+  const searchMatches = useMemo(
+    () => normalizedSearch ? points.filter((p) => normalizeForMatch(p.f.nom).includes(normalizedSearch)) : [],
+    [points, normalizedSearch],
+  );
+  const searchMatchIds = useMemo(() => new Set(searchMatches.map((p) => p.f.id)), [searchMatches]);
 
   const frontier = useMemo(
-    () => paretoFrontier(points.map((p) => ({ ...p, id: p.f.id })), xGoal, yGoal),
-    [points, xGoal, yGoal],
+    () => paretoFrontier(points.map((p) => ({ ...p, id: p.f.id })), xGoal, yGoal, xk !== 'prix' && yk !== 'prix'),
+    [points, xGoal, yGoal, xk, yk],
   );
   const frontierSet = useMemo(() => new Set(frontier.map((p) => p.f.id)), [frontier]);
 
@@ -557,10 +592,21 @@ function ScatterView() {
   const zeroY = H - m.bottom - ZERO_LANE / 2;
   const cx = (x: number) => (logX && x <= 0 ? zeroX : vxs(x));
   const cy = (y: number) => (logY && y <= 0 ? zeroY : vys(y));
-
   const sMax = sizeK === 'none' ? 1 : d3max(points, (p) => p.s) || 1;
   const rs = scaleSqrt().domain([0, sMax]).range([3, 22]);
   const radius = (s: number) => (sizeK === 'none' ? 5 : Math.max(3, rs(s)));
+  const labelFrame = { left: m.left, right: W - m.right, top: m.top, bottom: H - m.bottom };
+  const visibleSearchMatches = searchMatches.filter((p) => {
+    const x = cx(p.x);
+    const y = cy(p.y);
+    return x >= labelFrame.left && x <= labelFrame.right && y >= labelFrame.top && y <= labelFrame.bottom;
+  });
+  const searchLabels = normalizedSearch
+    ? placeParetoLabels(
+        visibleSearchMatches.map((p) => ({ text: p.f.nom, x: cx(p.x), y: cy(p.y), r: radius(p.s) })),
+        labelFrame,
+      )
+    : [];
 
   const xTicks = vxs.ticks(logX ? 4 : 6);
   const yTicks = vys.ticks(6);
@@ -575,8 +621,10 @@ function ScatterView() {
   // suivent le zoom et le déplacement du nuage.
   const frontierLabels = pareto
     ? placeParetoLabels(
-        frontier.map((p) => ({ text: p.f.nom, x: cx(p.x), y: cy(p.y), r: radius(p.s) })),
-        { left: m.left, right: W - m.right, top: m.top, bottom: H - m.bottom },
+        frontier
+          .filter((p) => !visibleSearchMatches.some((match) => match.f.id === p.f.id))
+          .map((p) => ({ text: p.f.nom, x: cx(p.x), y: cy(p.y), r: radius(p.s) })),
+        labelFrame,
       )
     : [];
 
@@ -584,14 +632,23 @@ function ScatterView() {
     <>
       <div className="panel">
         <div className="row" style={{ gap: 12, flexWrap: 'wrap', alignItems: 'flex-end' }}>
-          <NutSelect label="Axe X" value={xk} onChange={(k) => setXk(k as NutrientKey)} />
-          <NutSelect label="Axe Y" value={yk} onChange={(k) => setYk(k as NutrientKey)} />
+          <NutSelect label="Axe X" value={xk} onChange={(k) => setXk(k as ChartKey)} />
+          <NutSelect label="Axe Y" value={yk} onChange={(k) => setYk(k as ChartKey)} />
           <NutSelect label="Taille des bulles" value={sizeK} onChange={setSizeK} allowNone />
+          <label className="small" style={{ display: 'inline-flex', alignItems: 'center', gap: 7, cursor: 'pointer' }}>
+            <input
+              type="checkbox"
+              checked={includeSupplements}
+              onChange={(e) => setIncludeSupplements(e.target.checked)}
+            />
+            <CatIcon cat="supplement" />
+            Inclure les suppléments ({supplements.length})
+          </label>
         </div>
-        <div className="row small" style={{ gap: 14, marginTop: 8 }}>
+        {(tx || ty) && <div className="row small" style={{ gap: 14, marginTop: 8 }}>
           <span><i className="ref-legend ajr" /> AJR (100 g qui couvre le besoin du jour)</span>
           <span><i className="ref-legend opti" /> Optimal (cible perf/santé)</span>
-        </div>
+        </div>}
         <div className="row" style={{ gap: 6, marginTop: 12, flexWrap: 'wrap' }}>
           <button className={`ghost small ${logX ? 'chip-active' : ''}`} onClick={() => setLogX((v) => !v)}>
             X log
@@ -633,6 +690,32 @@ function ScatterView() {
           chaque point. Le bouton porte la marque exacte du nuage (forme +
           couleur), donc il légende ce qu'il filtre.
         */}
+        <div className="row" style={{ gap: 8, marginBottom: 10, alignItems: 'flex-end' }}>
+          <label className="field" style={{ flex: '1 1 240px', maxWidth: 380 }}>
+            Rechercher un aliment
+            <input
+              type="search"
+              value={search}
+              onChange={(e) => setSearch(e.target.value)}
+              placeholder="Ex. L2 poulet"
+              aria-label="Rechercher un aliment dans le nuage"
+            />
+          </label>
+          {normalizedSearch && (
+            <>
+              <span className="small" style={{ paddingBottom: 8 }} aria-live="polite">
+                {searchMatches.length === 0
+                  ? searchCandidates.length === 0
+                    ? 'Aucun aliment trouvé.'
+                    : !includeSupplements && searchCandidates.every((f) => f.categorie === 'supplement')
+                      ? `${searchCandidates.length} supplément${searchCandidates.length > 1 ? 's' : ''} trouvé${searchCandidates.length > 1 ? 's' : ''} · cochez « Inclure les suppléments » pour ${searchCandidates.length > 1 ? 'les' : 'le'} tracer.`
+                      : `${searchCandidates.length} résultat${searchCandidates.length > 1 ? 's' : ''} trouvé${searchCandidates.length > 1 ? 's' : ''}, mais pas traçable${searchCandidates.length > 1 ? 's' : ''} avec les axes ou filtres actuels.`
+                  : `${searchMatches.length} résultat${searchMatches.length > 1 ? 's' : ''} · ${visibleSearchMatches.length} dans la zone affichée`}
+              </span>
+              <button className="ghost small" onClick={() => setSearch('')}>Effacer</button>
+            </>
+          )}
+        </div>
         <div className="row cat-legend" style={{ gap: 6, marginBottom: 10, flexWrap: 'wrap', alignItems: 'center' }}>
           {CATS.map((c) => (
             <button
@@ -753,6 +836,7 @@ function ScatterView() {
               {points.map((p, i) => {
                 const onFront = pareto && frontierSet.has(p.f.id);
                 const isHover = hover?.i === i;
+                const isSearchMatch = searchMatchIds.has(p.f.id);
                 const jamais = neverEaten.has(p.f.id);
                 const r = radius(p.s);
                 // Zone de tap agrandie et invisible : sur mobile, les bulles réelles (souvent
@@ -761,6 +845,18 @@ function ScatterView() {
                 const hitR = Math.max(r + 10, 16);
                 return (
                   <g key={p.f.id}>
+                    {isSearchMatch && (
+                      <path
+                        transform={`translate(${cx(p.x)} ${cy(p.y)})`}
+                        d={catSymbolPath(p.f.categorie, r + 3.5)}
+                        fill={C.text}
+                        fillOpacity={0.2}
+                        stroke={C.text}
+                        strokeWidth={1.5}
+                        style={{ filter: 'drop-shadow(0 0 4px rgba(255,255,255,0.9))' }}
+                        pointerEvents="none"
+                      />
+                    )}
                     <path
                       transform={`translate(${cx(p.x)} ${cy(p.y)})`}
                       d={catSymbolPath(p.f.categorie, r * (isHover ? 1.35 : 1))}
@@ -770,8 +866,8 @@ function ScatterView() {
                       // frontière — c'est justement là qu'il faut voir d'un coup d'œil
                       // si le meilleur compromis est un aliment habituel ou une piste.
                       fillOpacity={jamais ? 0.34 : onFront ? 0.95 : 0.72}
-                      stroke={onFront ? C.accent2 : isHover ? C.text : jamais ? C.muted : 'none'}
-                      strokeWidth={onFront ? 2 : isHover ? 1.5 : jamais ? 1.5 : 0}
+                      stroke={isSearchMatch ? C.text : onFront ? C.accent2 : isHover ? C.text : jamais ? C.muted : 'none'}
+                      strokeWidth={isSearchMatch ? 2 : onFront ? 2 : isHover ? 1.5 : jamais ? 1.5 : 0}
                       strokeDasharray={jamais ? '3 2' : undefined}
                       pointerEvents="none"
                     />
@@ -823,6 +919,25 @@ function ScatterView() {
                   </text>
                 ))}
               </g>
+              <g className="scatter-search-labels" pointerEvents="none">
+                {searchLabels.map((l) => (
+                  <text
+                    key={`${l.text}-${Math.round(l.x)}-${Math.round(l.y)}`}
+                    x={l.x}
+                    y={l.y}
+                    textAnchor={l.anchor}
+                    fontSize={10}
+                    fontWeight={700}
+                    fill={C.text}
+                    stroke={C.panel}
+                    strokeWidth={3.5}
+                    strokeLinejoin="round"
+                    paintOrder="stroke"
+                  >
+                    {l.text}
+                  </text>
+                ))}
+              </g>
             </g>
           </svg>
 
@@ -833,7 +948,8 @@ function ScatterView() {
             // % AJR / optimal pour la portion réaliste de l'aliment (pas les 100 g
             // de l'axe) : c'est ce qu'on mange vraiment qui répond à « ça rapporte
             // beaucoup ou non », d'où un calcul distinct des repères de l'échelle.
-            const detail = (k: NutrientKey, per100: number) => {
+            const detail = (k: ChartKey, per100: number) => {
+              if (k === 'prix') return null;
               const t = targets.find((r) => r.key === k);
               if (!t || t.ajr <= 0) return null;
               const amount = per100 * factor;
@@ -852,17 +968,18 @@ function ScatterView() {
                 {frontierSet.has(p.f.id) && pareto && <span style={{ color: C.accent2 }}> · Pareto</span>}
                 {neverEaten.has(p.f.id) && <span style={{ color: C.muted }}> · jamais mangé</span>}
                 <br />
-                {NUT_LABEL.get(xk)} : {fmt(p.x, p.x < 10 ? 1 : 0)} {NUT_UNIT.get(xk)} /100 g
+                {NUT_LABEL.get(xk)} : {pointValue(xk, p.x)}
                 <br />
-                {NUT_LABEL.get(yk)} : {fmt(p.y, p.y < 10 ? 1 : 0)} {NUT_UNIT.get(yk)} /100 g
+                {NUT_LABEL.get(yk)} : {pointValue(yk, p.y)}
                 {sizeK !== 'none' && (
                   <>
                     <br />
-                    {NUT_LABEL.get(sizeK)} : {fmt(p.s, p.s < 10 ? 1 : 0)} {NUT_UNIT.get(sizeK)}
+                    {NUT_LABEL.get(sizeK)} : {pointValue(sizeK, p.s)}
                   </>
                 )}
                 <br />
                 <span style={{ color: C.muted }}>Portion ≈ {fmt(portionG)} g</span>
+                {p.f.price && <><br /><span style={{ color: C.muted }}>Prix estimé · confiance {p.f.price.confidence} · {p.f.price.date}</span></>}
                 {dx && (
                   <>
                     <br />
@@ -896,8 +1013,7 @@ function ScatterView() {
           <p className="small" style={{ marginBottom: 0 }}>
             Ligne verte = <strong>frontière de Pareto</strong> : les {frontier.length} aliments qu'aucun autre ne
             surpasse à la fois en {NUT_LABEL.get(yk)} ({yGoal === 'max' ? 'plus' : 'moins'}) et en{' '}
-            {NUT_LABEL.get(xk)} ({xGoal === 'max' ? 'plus' : 'moins'}), plus tous ceux déjà à la valeur limite
-            (ex. 0 g) sur un axe minimisé/maximisé — indépassables sur cet axe, quel que soit l'autre. Ce sont eux
+            {NUT_LABEL.get(xk)} ({xGoal === 'max' ? 'plus' : 'moins'}){xk === 'prix' || yk === 'prix' ? '' : ', plus ceux déjà à la valeur limite sur un axe'}. Ce sont eux
             qui portent un nom sur le graphe
             {frontierLabels.length < frontier.length &&
               ` (${frontier.length - frontierLabels.length} sur ${frontier.length} restent anonymes, faute de place : zoomez pour les lire)`}
@@ -914,26 +1030,29 @@ function ScatterView() {
 // Vue 2 — Matrice de corrélation (Pearson) entre nutriments
 // ===========================================================================
 
-/** Coefficient de corrélation de Pearson entre deux séries alignées. */
-function pearson(a: number[], b: number[]): number {
-  const ma = d3mean(a) ?? 0;
-  const mb = d3mean(b) ?? 0;
+/** Pearson sur les seules paires renseignées ; une série constante n'est pas une corrélation nulle. */
+export function pearson(a: number[], b: number[]): { r: number | null; n: number } {
+  const pairs = a.map((value, i) => [value, b[i]] as const).filter(([x, y]) => Number.isFinite(x) && Number.isFinite(y));
+  if (pairs.length < 3) return { r: null, n: pairs.length };
+  const ma = d3mean(pairs, (pair) => pair[0]) ?? 0;
+  const mb = d3mean(pairs, (pair) => pair[1]) ?? 0;
   let num = 0;
   let da = 0;
   let db = 0;
-  for (let i = 0; i < a.length; i++) {
-    const xa = a[i] - ma;
-    const xb = b[i] - mb;
+  for (const [x, y] of pairs) {
+    const xa = x - ma;
+    const xb = y - mb;
     num += xa * xb;
     da += xa * xa;
     db += xb * xb;
   }
   const den = Math.sqrt(da * db);
-  return den === 0 ? 0 : num / den;
+  return { r: den === 0 ? null : num / den, n: pairs.length };
 }
 
 /** Couleur divergente rouge (−1) → neutre (0) → bleu (+1). */
-function corrColor(r: number): string {
+function corrColor(r: number | null): string {
+  if (r === null) return C.border;
   const neg = [239, 93, 93]; // danger
   const pos = [91, 140, 255]; // accent
   const neutral = [31, 35, 44]; // panel2
@@ -944,55 +1063,77 @@ function corrColor(r: number): string {
 }
 
 function CorrelationView() {
-  const [onlyMacros, setOnlyMacros] = useState(false);
+  const MACRO_KEYS: ChartKey[] = ['prix', 'kcal', 'proteines', 'glucides', 'lipides', 'fibres', 'agSatures', 'agTrans', 'agMonoInsatures', 'agPolyInsatures', 'omega3', 'omega6', 'omega9'];
+  const DEFAULT_KEYS: ChartKey[] = ['prix', 'kcal', 'proteines', 'glucides', 'lipides'];
+  const [keys, setKeys] = useState<ChartKey[]>(DEFAULT_KEYS);
+  const [pickerOpen, setPickerOpen] = useState(false);
 
   const explorable = useExplorable();
-  const MACRO_KEYS: NutrientKey[] = ['kcal', 'proteines', 'glucides', 'lipides', 'fibres', 'agSatures', 'agTrans', 'agMonoInsatures', 'agPolyInsatures', 'omega3', 'omega6', 'omega9'];
-  const keys = onlyMacros ? MACRO_KEYS : (NUT.map((n) => n.key) as NutrientKey[]);
 
   const cols = useMemo(() => keys.map((k) => explorable.map((f) => val(f, k))), [explorable, keys.join(',')]);
   const matrix = useMemo(
-    () => keys.map((_, i) => keys.map((_, j) => (i === j ? 1 : pearson(cols[i], cols[j])))),
+    () => keys.map((_, i) => keys.map((_, j) => pearson(cols[i], cols[j]))),
     [cols],
   );
 
   const n = keys.length;
-  const cell = onlyMacros ? 42 : 24;
-  const labelW = 96;
-  const labelTop = 96;
-  const W = labelW + n * cell + 8;
-  const H = labelTop + n * cell + 8;
+  const cell = n <= 8 ? 34 : n <= 18 ? 28 : 24;
+  const labelW = 112;
+  const labelTop = 84;
+  const W = labelW + n * cell + 6;
+  const H = labelTop + n * cell + 6;
 
   const [hover, setHover] = useState<{ i: number; j: number } | null>(null);
+  const toggle = (key: ChartKey) => setKeys((prev) => prev.includes(key) ? prev.filter((item) => item !== key) : [...prev, key]);
+  const shortLabel = (key: ChartKey) => {
+    const label = NUT_LABEL.get(key) ?? key;
+    return label.replace('Vitamine ', 'Vit. ').replace('AG poly-insaturés', 'AG polyins.').replace('AG mono-insaturés', 'AG monoins.');
+  };
 
   return (
     <div className="panel">
       <div className="row" style={{ gap: 6, marginBottom: 10, flexWrap: 'wrap' }}>
-        <button className={`ghost small ${!onlyMacros ? 'chip-active' : ''}`} onClick={() => setOnlyMacros(false)}>
-          Tous les nutriments
+        <button className="ghost small" onClick={() => setKeys(DEFAULT_KEYS)}>Prix + macros</button>
+        <button className="ghost small" onClick={() => setKeys(MACRO_KEYS)}>Macros élargies</button>
+        <button className="ghost small" onClick={() => setKeys(NUT.map((item) => item.key))}>Tout</button>
+      </div>
+      <div style={{ marginBottom: 12 }}>
+        <button className="ghost small" aria-expanded={pickerOpen} onClick={() => setPickerOpen((open) => !open)}>
+          ⚙ Personnaliser les variables ({keys.length}) {pickerOpen ? '▴' : '▾'}
         </button>
-        <button className={`ghost small ${onlyMacros ? 'chip-active' : ''}`} onClick={() => setOnlyMacros(true)}>
-          Macros seulement
-        </button>
+        {pickerOpen &&
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(175px, 1fr))', gap: 12, marginTop: 10, padding: 10, border: `1px solid ${C.border}`, borderRadius: 8 }}>
+          {[{ title: 'Prix', keys: ['prix'] as ChartKey[] }, ...NUTRIENT_GROUPS.map((group) => ({ ...group, keys: group.keys.filter((key) => NUT_LABEL.has(key)) }))].map((group) => (
+            <div key={group.title}>
+              <strong className="small" style={{ display: 'block', marginBottom: 5 }}>{group.title}</strong>
+              <div style={{ display: 'grid', gap: 3 }}>
+                {group.keys.map((key) => <label key={key} className="small" style={{ cursor: 'pointer' }}>
+                  <input type="checkbox" checked={keys.includes(key)} onChange={() => toggle(key)} /> {NUT_LABEL.get(key)}
+                </label>)}
+              </div>
+            </div>
+          ))}
+        </div>}
       </div>
       <p className="small" style={{ marginTop: 0 }}>
-        Corrélation de Pearson entre nutriments sur les {explorable.length} aliments (pour 100 g).
+        Corrélation de Pearson entre variables sur les {explorable.length} aliments (nutriments pour 100 g, prix en €/kg).
+        Chaque paire utilise uniquement les aliments renseignés ; une case grise est non calculable.
         <span style={{ color: C.accent }}> Bleu</span> = varient ensemble,
         <span style={{ color: C.danger }}> rouge</span> = varient à l'inverse, sombre ≈ indépendants.
       </p>
 
-      <div style={{ overflowX: 'auto', position: 'relative' }}>
-        <svg viewBox={`0 0 ${W} ${H}`} style={{ width: n > 12 ? W : '100%', maxWidth: '100%', display: 'block' }}>
+      {keys.length < 2 ? <div className="empty">Choisissez au moins deux variables.</div> : <div style={{ overflow: 'auto', maxHeight: 'min(68vh, 620px)', maxWidth: '100%', display: 'flex', justifyContent: n <= 8 ? 'center' : undefined }}>
+        <svg viewBox={`0 0 ${W} ${H}`} width={W} height={H} style={{ display: 'block', maxWidth: n <= 5 ? '100%' : undefined }} aria-label={`Matrice de corrélation de ${n} variables`}>
           {/* étiquettes colonnes (haut, pivotées) */}
           {keys.map((k, j) => (
             <text
               key={`c${k}`}
               transform={`translate(${labelW + j * cell + cell / 2} ${labelTop - 6}) rotate(-55)`}
               fill={hover?.j === j || hover?.i === j ? C.text : C.muted}
-              fontSize={onlyMacros ? 11 : 9}
+              fontSize={n <= 12 ? 10 : 9}
               textAnchor="start"
             >
-              {NUT_LABEL.get(k)}
+              {shortLabel(k)}
             </text>
           ))}
           {/* étiquettes lignes (gauche) */}
@@ -1002,16 +1143,16 @@ function CorrelationView() {
               x={labelW - 6}
               y={labelTop + i * cell + cell / 2}
               fill={hover?.i === i || hover?.j === i ? C.text : C.muted}
-              fontSize={onlyMacros ? 11 : 9}
+              fontSize={n <= 12 ? 10 : 9}
               textAnchor="end"
               dominantBaseline="middle"
             >
-              {NUT_LABEL.get(k)}
+              {shortLabel(k)}
             </text>
           ))}
           {/* cellules */}
           {matrix.map((row, i) =>
-            row.map((r, j) => (
+            row.map(({ r }, j) => (
               <g key={`${i}-${j}`}>
                 <rect
                   x={labelW + j * cell}
@@ -1019,39 +1160,42 @@ function CorrelationView() {
                   width={cell - 1.5}
                   height={cell - 1.5}
                   rx={2}
-                  fill={corrColor(r)}
+                  fill={i === j ? C.panel2 : j > i ? 'transparent' : corrColor(r)}
                   stroke={hover?.i === i && hover?.j === j ? C.text : 'none'}
                   strokeWidth={1.5}
                   style={{ cursor: 'pointer' }}
                   onMouseEnter={() => setHover({ i, j })}
                   onMouseLeave={() => setHover(null)}
+                  onClick={() => setHover({ i, j })}
                 />
-                {(onlyMacros || Math.abs(r) >= 0.55) && i !== j && (
+                {j < i && r !== null && (n <= 8 || Math.abs(r) >= 0.55) && (
                   <text
                     x={labelW + j * cell + (cell - 1.5) / 2}
                     y={labelTop + i * cell + (cell - 1.5) / 2}
                     fill={Math.abs(r) > 0.4 ? '#fff' : C.muted}
-                    fontSize={onlyMacros ? 10 : 8}
+                    fontSize={n <= 12 ? 10 : 8}
                     textAnchor="middle"
                     dominantBaseline="middle"
                     pointerEvents="none"
                   >
-                    {r.toFixed(onlyMacros ? 2 : 1)}
+                    {r.toFixed(n <= 12 ? 2 : 1)}
                   </text>
                 )}
               </g>
             )),
           )}
         </svg>
-      </div>
+      </div>}
 
       {hover && (
         <div className="small" style={{ marginTop: 10, color: C.text }}>
           <strong>{NUT_LABEL.get(keys[hover.i])}</strong> × <strong>{NUT_LABEL.get(keys[hover.j])}</strong> :{' '}
-          <span className="mono" style={{ color: Math.abs(matrix[hover.i][hover.j]) < 0.2 ? C.muted : matrix[hover.i][hover.j] >= 0 ? C.accent : C.danger }}>
-            r = {matrix[hover.i][hover.j].toFixed(2)}
-          </span>{' '}
-          {corrLabel(matrix[hover.i][hover.j])}
+          {matrix[hover.i]?.[hover.j]?.r == null ? 'non calculable' : <>
+            <span className="mono" style={{ color: Math.abs(matrix[hover.i][hover.j].r!) < 0.2 ? C.muted : matrix[hover.i][hover.j].r! >= 0 ? C.accent : C.danger }}>
+              r = {matrix[hover.i][hover.j].r!.toFixed(2)}
+            </span>{' '}{corrLabel(matrix[hover.i][hover.j].r!)}
+          </>}
+          {' · '}n = {matrix[hover.i]?.[hover.j]?.n ?? 0}
         </div>
       )}
     </div>

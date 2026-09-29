@@ -1,5 +1,6 @@
 import type { Food, FoodCategory, Nutrients, Unit } from './types';
 import { EMPTY_NUTRIENTS } from './types';
+import { seedPriceFor } from './priceSeed';
 
 /**
  * Base d'aliments curée — valeurs pour 100 g, approximations CIQUAL 2020 / USDA.
@@ -162,7 +163,7 @@ function f(
   // Répartition des AG saturés : dérivée du profil de l'aliment (ou de sa
   // catégorie), sauf si la ligne la donne explicitement.
   const split = splitSaturated(n.agSatures ?? 0, categorie, id);
-  return {
+  const food: Food = {
     id,
     nom,
     categorie,
@@ -171,6 +172,7 @@ function f(
     unitGrams: opts.unitGrams,
     n: { ...EMPTY_NUTRIENTS, ...split, ...n, omega3 },
   };
+  return { ...food, price: seedPriceFor(food, 'catalogue') };
 }
 
 export const FOODS: Food[] = [

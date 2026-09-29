@@ -1,6 +1,8 @@
 import { useMemo } from 'react';
 import type { NutrientKey, Nutrients } from '../nutrition/types';
 import { EMPTY_NUTRIENTS } from '../nutrition/types';
+import type { DayCost } from '../nutrition/price';
+import { PRICE_NOTE } from '../nutrition/price';
 import type { JournalItem } from '../store/store';
 import { useTargets } from './useTargets';
 import type { Target } from '../nutrition/targets';
@@ -368,12 +370,14 @@ export function Totals({
   totals,
   items,
   incertitude,
+  cost,
   date,
 }: {
   totals: Nutrients;
   items: JournalItem[];
   /** Incertitude ± kcal du jour (badge « ~ » discret sur la barre de calories). */
   incertitude?: KcalUncertainty;
+  cost: DayCost;
   /** Jour affiché (défaut : aujourd'hui) — ancre la moyenne 7 j du seuil de carence. */
   date?: string;
 }) {
@@ -424,6 +428,20 @@ export function Totals({
             <Breakdown items={items} nutrientKey={t.key} unit={t.unit} total={totals[t.key]} />
           </div>
         ))}
+        <div className="m has-breakdown" tabIndex={0}>
+          <span className="v mono">{cost.pricedItems > 0 || cost.complete ? fmt(cost.knownEur, 2) : '—'}<span style={{ fontSize: 13 }}> €</span></span>
+          <span className="l">Prix estimé{cost.complete ? '' : ` · partiel (${cost.missingNames.length} sans prix)`}</span>
+          <div className="breakdown" role="tooltip">
+            <div className="bd-title">Coût estimé · {PRICE_NOTE}</div>
+            <div className="small">Prix actuel des fiches, appliqué aussi aux jours passés. Aucun objectif de prix.</div>
+            {cost.contributions.length > 0 && (
+              <ul>{[...cost.contributions].sort((a, b) => b.eur - a.eur).map((row, i) => (
+                <li key={`${row.name}-${i}`}><span className="bd-nom">{row.name}</span><span className="bd-val mono">{fmt(row.eur, 2)} €</span></li>
+              ))}</ul>
+            )}
+            {cost.missingNames.length > 0 && <div className="small">Sans prix : {cost.missingNames.join(', ')}</div>}
+          </div>
+        </div>
       </div>
 
       <KcalBar consumed={totals.kcal} target={kcalT.optimal} incertitude={incertitude} />

@@ -12,6 +12,7 @@ import type {
 import { EMPTY_NUTRIENTS } from '../nutrition/types';
 import { computeItems, totalNutrients, toGrams, scaleNutrients, normalizeNutrients } from '../nutrition/compute';
 import { FOOD_BY_ID } from '../nutrition/foods';
+import { enrichBankPrices } from '../nutrition/priceSeed';
 import {
   adoptFromCatalog,
   findBankFood,
@@ -992,14 +993,21 @@ export const useStore = create<AppState>()(
         set((s) => {
           const customFoods = s.customFoods.map((f) =>
             f.id === id
-              ? {
+              ? (() => {
+                  const nutritionChanged = Object.entries(patch.n ?? {}).some(([key, value]) => f.n[key as NutrientKey] !== value);
+                  const otherChanged = (patch.nom !== undefined && patch.nom !== f.nom)
+                    || (patch.categorie !== undefined && patch.categorie !== f.categorie)
+                    || (patch.pieceGrams !== undefined && patch.pieceGrams !== f.pieceGrams)
+                    || (patch.aliases !== undefined && JSON.stringify(patch.aliases) !== JSON.stringify(f.aliases));
+                  return {
                   ...f,
                   ...patch,
                   id,
                   n: { ...f.n, ...(patch.n ?? {}) },
-                  // Relire et corriger un aliment, c'est le vérifier.
-                  aVerifier: undefined,
-                }
+                  // Changer seulement le prix ne valide pas les nutriments estimés.
+                  aVerifier: nutritionChanged || otherChanged ? undefined : f.aVerifier,
+                };
+                })()
               : f,
           );
           // Répercute immédiatement la correction sur tout l'historique déjà saisi
@@ -1213,7 +1221,7 @@ function mergePersisted(persisted: unknown, current: AppState): AppState {
           favoriteMeals,
         });
 
-  const customFoods = migrated.customFoods;
+  const customFoods = enrichBankPrices(migrated.customFoods);
   const entries = resyncEntries(migrated.entries, customFoods);
   return {
     ...current,

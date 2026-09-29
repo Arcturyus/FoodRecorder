@@ -120,6 +120,14 @@ export type FoodCategory =
   | 'supplement'
   | 'autre';
 
+/** Prix indicatif du produit tel qu'il est enregistré, par kg de partie consommée. */
+export interface FoodPrice {
+  eurPerKg: number;
+  confidence: 'faible' | 'moyenne' | 'forte';
+  date: string; // YYYY-MM-DD
+  origin: 'releve' | 'ia' | 'manuel';
+}
+
 export interface Food {
   id: string;
   nom: string;
@@ -132,6 +140,8 @@ export interface Food {
   unitGrams?: Partial<Record<Unit, number>>;
   /** pour 100 g */
   n: Nutrients;
+  /** undefined = ancienne fiche à enrichir ; null = prix explicitement inconnu. */
+  price?: FoodPrice | null;
   /** aliment ajouté par l'utilisateur */
   custom?: boolean;
   /**
@@ -170,6 +180,9 @@ export interface ExtractedItem {
    * (résolus par matching) et pour les moteurs légers (règles / IA locale).
    */
   nutriments?: Nutrients;
+  /** Estimation IA en euros par kg pour un aliment nouveau, hors banque. */
+  prixEurKg?: number;
+  confiancePrix?: FoodPrice['confidence'];
   /** Catégorie de l'aliment estimé par l'IA (accompagne `nutriments`). */
   categorie?: FoodCategory;
   /** Poids moyen en g d'une pièce, pour convertir « piece » d'un aliment estimé. */
