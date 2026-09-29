@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
-import { useStore, dayTotals, todayStr } from '../store/store';
+import { useStore, useEffectiveFoods, dayTotals, todayStr } from '../store/store';
+import { costOfDay } from '../nutrition/price';
 import type { JournalItem } from '../store/store';
 import { EMPTY_NUTRIENTS } from '../nutrition/types';
 import { dayKcalUncertainty } from '../nutrition/uncertainty';
@@ -29,6 +30,7 @@ import { UI_STORE, useUiPref } from './uiPrefs';
 export function DayView({ date }: { date: string }) {
   const entries = useStore((s) => s.entries);
   const sunExposures = useStore((s) => s.sunExposures);
+  const foods = useEffectiveFoods();
   const isToday = date === todayStr();
   const quand = isToday ? '' : ` du ${dayLabel(date, true)}`;
 
@@ -62,6 +64,7 @@ export function DayView({ date }: { date: string }) {
     return sunVitD > 0 ? { ...t, vitD: t.vitD + sunVitD } : t;
   }, [entries, date, sunVitD]);
   const kcalUnc = useMemo(() => dayKcalUncertainty(dayEntries), [dayEntries]);
+  const cost = useMemo(() => costOfDay(dayEntries, foods), [dayEntries, foods]);
 
   /**
    * Repas repliés par défaut : une journée bien remplie empilait cinq cartes
@@ -109,7 +112,7 @@ export function DayView({ date }: { date: string }) {
       />
       <FavoriteMeals date={isToday ? undefined : date} />
       <ManualAdd date={isToday ? undefined : date} title={isToday ? undefined : `Ajouter un aliment${quand}`} />
-      <Totals totals={totals} items={items} incertitude={kcalUnc} date={date} />
+      <Totals totals={totals} items={items} incertitude={kcalUnc} cost={cost} date={date} />
       {dayEntries.length === 0 ? (
         <div className="panel">
           <div className="empty">

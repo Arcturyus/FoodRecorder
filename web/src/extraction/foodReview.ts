@@ -18,7 +18,7 @@
 
 import { z } from 'zod';
 import { EMPTY_NUTRIENTS } from '../nutrition/types';
-import type { Food, FoodCategory, NutrientKey, Nutrients } from '../nutrition/types';
+import type { Food, FoodCategory, FoodPrice, NutrientKey, Nutrients } from '../nutrition/types';
 import { nutrientLabelOf } from '../nutrition/rda';
 import type { ExtractionMode } from '../store/store';
 import { askCloudChat, type ChatTurn } from './cloud';
@@ -43,6 +43,8 @@ const reviewSchema = z.object({
     .object({
       categorie: z.enum(CATEGORIES).optional(),
       grammesParPiece: z.number().positive().optional(),
+      prixEurKg: z.number().finite().positive().optional(),
+      confiancePrix: z.enum(['faible', 'moyenne', 'forte']).optional(),
       nutriments: nutrimentsSchema,
     })
     .nullable()
@@ -60,6 +62,8 @@ export interface ReviewFiche {
   nutriments: Nutrients;
   categorie?: FoodCategory;
   grammesParPiece?: number;
+  prixEurKg?: number;
+  confiancePrix?: FoodPrice['confidence'];
 }
 
 /** Contexte de consommation : ce que l'utilisateur mange VRAIMENT de cet aliment. */
@@ -81,6 +85,7 @@ Réponds UNIQUEMENT avec un objet JSON, sans texte autour :
 - "fiche" : null si les valeurs actuelles te paraissent correctes — c'est un cas NORMAL et fréquent, ne propose pas un changement pour justifier ta présence. Sinon, la fiche corrigée COMPLÈTE.
 - Quand tu proposes une fiche, "nutriments" doit contenir TOUS les champs (n'en omets AUCUN ; mets 0 si négligeable), même ceux que tu ne changes pas.
 - "grammesParPiece" : uniquement si l'aliment se compte en pièces/portions.
+- "prixEurKg" : ordre de grandeur du prix en France, région parisienne, par kg de produit consommé. "confiancePrix" vaut "faible", "moyenne" ou "forte". Si le prix existant manque, estime-le dans la fiche proposée ; ne mets jamais zéro pour inconnu.
 
 RÉPONDRE À L'UTILISATEUR :
 - S'il conteste une valeur, ne cède pas par politesse. S'il a raison, corrige ; s'il a tort, dis-le clairement en expliquant pourquoi, et renvoie "fiche": null.
@@ -106,6 +111,7 @@ function describeFood(food: Food, usage?: ReviewUsage): string {
     `Aliment : « ${food.nom} »`,
     `Catégorie actuelle : ${food.categorie}`,
     food.pieceGrams ? `Poids d'une pièce : ${food.pieceGrams} g` : null,
+    `Prix actuel : ${food.price ? `${food.price.eurPerKg} €/kg (confiance ${food.price.confidence})` : 'inconnu'}`,
     `Valeurs actuelles pour 100 g (les champs à 0 sont omis) : ${lignes || 'aucune'}`,
   ];
   if (usage && usage.occurrences > 0) {
@@ -212,6 +218,7 @@ export async function reviewFood(
             nutriments: { ...EMPTY_NUTRIENTS, ...fiche.nutriments },
             ...(fiche.categorie ? { categorie: fiche.categorie } : {}),
             ...(fiche.grammesParPiece ? { grammesParPiece: fiche.grammesParPiece } : {}),
+            ...(fiche.prixEurKg ? { prixEurKg: fiche.prixEurKg, confiancePrix: fiche.confiancePrix ?? 'faible' } : {}),
           },
         }
       : {}),

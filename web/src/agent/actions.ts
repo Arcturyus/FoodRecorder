@@ -2,6 +2,7 @@ import { z } from 'zod';
 import { EMPTY_NUTRIENTS, UNITS, type ExtractedItem, type Food, type FoodCategory, type NutrientKey } from '../nutrition/types';
 import { RDA, nutrientLabelOf } from '../nutrition/rda';
 import { normalizeForMatch } from '../nutrition/normalize';
+import { estimatedPrice } from '../nutrition/price';
 import type { Profile, TargetOverride } from '../nutrition/targets';
 import { AGENT_SECTIONS, AGENT_TABS, useNavigation } from './navigation';
 import { isDayCounted, resyncEntries, useStore } from '../store/store';
@@ -76,9 +77,11 @@ const foodModification = z.object({
   aliases: aliasesSchema.optional(),
   categorie: foodCategorySchema.optional(),
   pieceGrams: z.number().positive().optional(),
+  prixEurKg: z.number().finite().positive().nullable().optional(),
+  confiancePrix: z.enum(['faible', 'moyenne', 'forte']).optional(),
   nutriments: z.record(z.enum(nutrientKeys as [NutrientKey, ...NutrientKey[]]), z.number().min(0)).optional(),
 }).superRefine((value, ctx) => {
-  if (value.nom == null && value.aliases == null && value.categorie == null && value.pieceGrams == null && value.nutriments == null) {
+  if (value.nom == null && value.aliases == null && value.categorie == null && value.pieceGrams == null && value.nutriments == null && value.prixEurKg === undefined) {
     ctx.addIssue({ code: z.ZodIssueCode.custom, message: 'Au moins une correction est requise.' });
   }
   if (value.aliases && new Set(value.aliases.map(normalizeForMatch)).size !== value.aliases.length) {
@@ -123,6 +126,8 @@ const foodCreation = z.object({
   categorie: foodCategorySchema,
   pieceGrams: z.number().positive().optional(),
   unitGrams: z.record(units, z.number().positive()).optional(),
+  prixEurKg: z.number().finite().positive().optional(),
+  confiancePrix: z.enum(['faible', 'moyenne', 'forte']).optional(),
   nutriments: completeNutrients,
 }).superRefine((value, ctx) => {
   const names = [value.nom, ...value.aliases].map(normalizeForMatch);
@@ -147,6 +152,7 @@ function foodChanges(modifications: FoodModification[]): AgentActionPreviewGroup
     if (change.aliases != null && stable(change.aliases) !== stable(food.aliases)) fields.push({ key: 'aliases', label: 'Alias', before: food.aliases.join(', ') || '—', after: change.aliases.join(', ') || '—' });
     if (change.categorie != null && change.categorie !== food.categorie) fields.push({ key: 'categorie', label: 'Catégorie', before: food.categorie, after: change.categorie });
     if (change.pieceGrams != null && change.pieceGrams !== food.pieceGrams) fields.push({ key: 'pieceGrams', label: 'Poids par pièce', before: food.pieceGrams ?? null, after: change.pieceGrams, unit: 'g' });
+    if (change.prixEurKg !== undefined && change.prixEurKg !== (food.price?.eurPerKg ?? null)) fields.push({ key: 'prixEurKg', label: 'Prix estimé', before: food.price?.eurPerKg ?? null, after: change.prixEurKg, unit: '€/kg' });
     for (const [key, after] of Object.entries(change.nutriments ?? {}) as [NutrientKey, number][]) {
       if (food.n[key] === after) continue;
       const meta = nutrientMeta.get(key);
@@ -172,6 +178,7 @@ function applyFoodModifications(modifications: FoodModification[]): Food[] {
         ...(change.aliases != null ? { aliases: change.aliases } : {}),
         ...(change.categorie != null ? { categorie: change.categorie } : {}),
         ...(change.pieceGrams != null ? { pieceGrams: change.pieceGrams } : {}),
+        ...(change.prixEurKg !== undefined ? { price: change.prixEurKg === null ? null : estimatedPrice(change.prixEurKg, change.confiancePrix) } : {}),
         n: { ...food.n, ...(change.nutriments ?? {}) },
         // Un patch partiel (comme un reclassement) ne prouve pas que toute la
         // fiche a été relue : le statut global « à vérifier » est conservé.
@@ -198,6 +205,7 @@ function createBankFood(creation: FoodCreation): Food {
     ...(creation.pieceGrams != null ? { pieceGrams: creation.pieceGrams } : {}),
     ...(creation.unitGrams != null ? { unitGrams: creation.unitGrams } : {}),
     n: creation.nutriments,
+    price: estimatedPrice(creation.prixEurKg, creation.confiancePrix),
     custom: true,
     origine: 'ia',
     aVerifier: true,
@@ -216,6 +224,7 @@ function foodCreationChanges(food: FoodCreation): AgentActionPreviewGroup[] {
       { key: 'aliases', label: 'Alias', before: null, after: (food.aliases ?? []).join(', ') || '—' },
       { key: 'categorie', label: 'Catégorie', before: null, after: food.categorie },
       ...(food.pieceGrams != null ? [{ key: 'pieceGrams', label: 'Poids par pièce', before: null, after: food.pieceGrams, unit: 'g' }] : []),
+      { key: 'prixEurKg', label: 'Prix estimé', before: null, after: food.prixEurKg ?? null, unit: '€/kg' },
       ...nutrientKeys.map((key) => {
         const meta = nutrientMeta.get(key);
         return { key, label: meta?.label ?? nutrientLabelOf(key), before: null, after: food.nutriments[key], unit: `${meta?.unit ?? ''}/100 g` };
@@ -408,13 +417,13 @@ export const ACTION_TOOLS: AgentTool<unknown>[] = [
   confirmedTool('noter_jour', 'Prépare l’ajout ou le remplacement de la note d’un jour.', noteArgs, { type: 'object', properties: { date: { type: 'string' }, note: { type: 'string' } }, required: ['date', 'note'], additionalProperties: false }, (a) => ({ text: `${a.note.trim() ? 'Remplacer' : 'Effacer'} la note du ${a.date}${a.note.trim() ? ` par « ${a.note.trim()} »` : ''}.`, impact: '1 note de jour.' })),
   confirmedTool('modifier_objectif_nutriment', 'Modifie globalement une cible nutritionnelle.', targetArgs, { type: 'object', properties: { nutriment: { type: 'string', enum: nutrientKeys }, ajr: { type: 'number' }, optimal: { type: 'number' }, perKg: { type: 'boolean' } }, required: ['nutriment'], additionalProperties: false }, (a) => ({ text: `Modifier la cible globale ${RDA.find((r) => r.key === a.nutriment)?.label ?? a.nutriment}.`, impact: 'Tous les bilans, couvertures et recommandations futurs utilisant cette cible.' })),
   confirmedTool('modifier_profil', 'Modifie des champs du profil personnel.', profileArgs, { type: 'object', properties: { sexe: { type: 'string' }, poids: { type: 'number' }, activite: { type: 'string' }, objectif: { type: 'string' }, deficitPct: { type: 'number' }, surplusPct: { type: 'number' }, protParKg: { type: 'number' } }, additionalProperties: false }, (a) => ({ text: `Modifier le profil : ${Object.entries(a).map(([k, v]) => `${k}=${v}`).join(', ')}.`, impact: 'Recalcul global des objectifs et recommandations dépendant du profil.' })),
-  confirmedTool('modifier_aliment_global', 'Modifie le nom, les alias, la catégorie, le poids par pièce ou certains nutriments d’une fiche. Le champ aliases remplace toute la liste, ce qui permet une suppression explicite. Les nutriments non fournis restent strictement inchangés.', editFoodArgs, { type: 'object', properties: { id: { type: 'string' }, nom: { type: 'string' }, aliases: { type: 'array', items: { type: 'string' } }, categorie: { type: 'string', enum: foodCategories }, pieceGrams: { type: 'number' }, nutriments: { type: 'object', additionalProperties: { type: 'number', minimum: 0 } } }, required: ['id'], additionalProperties: false }, (a) => {
+  confirmedTool('modifier_aliment_global', 'Modifie le nom, les alias, la catégorie, le poids par pièce ou le prix estimé et certains nutriments d’une fiche. Le champ aliases remplace toute la liste, ce qui permet une suppression explicite. Les nutriments non fournis restent strictement inchangés.', editFoodArgs, { type: 'object', properties: { id: { type: 'string' }, nom: { type: 'string' }, aliases: { type: 'array', items: { type: 'string' } }, categorie: { type: 'string', enum: foodCategories }, pieceGrams: { type: 'number' }, prixEurKg: { type: ['number', 'null'], exclusiveMinimum: 0 }, confiancePrix: { type: 'string', enum: ['faible', 'moyenne', 'forte'] }, nutriments: { type: 'object', additionalProperties: { type: 'number', minimum: 0 } } }, required: ['id'], additionalProperties: false }, (a) => {
     const changes = foodChanges([a]);
     if (!changes.length) throw new Error('Aucune modification effective.');
     const s = useStore.getState(); const n = s.entries.flatMap((e) => e.items).filter((i) => i.foodId === a.id).length;
     return { text: `Modifier la fiche ${changes[0].label}.`, impact: `${changes[0].fields.length} champ(s) ; ${n} item(s) d’historique seront recalculés.`, changes };
   }),
-  confirmedTool('modifier_aliments_banque', 'Modifie atomiquement jusqu’à 100 aliments déjà adoptés : nom, alias, catégorie et/ou valeurs nutritionnelles partielles. aliases remplace la liste complète, pour pouvoir retirer des synonymes. Une seule confirmation affiche tous les avant/après ; soit tout est appliqué, soit rien.', editFoodsArgs, { type: 'object', properties: { modifications: { type: 'array', minItems: 1, maxItems: 100, items: { type: 'object', properties: { id: { type: 'string' }, nom: { type: 'string' }, aliases: { type: 'array', items: { type: 'string' } }, categorie: { type: 'string', enum: foodCategories }, pieceGrams: { type: 'number' }, nutriments: { type: 'object', additionalProperties: { type: 'number', minimum: 0 } } }, required: ['id'], additionalProperties: false } } }, required: ['modifications'], additionalProperties: false }, (a) => {
+  confirmedTool('modifier_aliments_banque', 'Modifie atomiquement jusqu’à 100 aliments déjà adoptés : nom, alias, catégorie prix estimé et/ou valeurs nutritionnelles partielles. aliases remplace la liste complète, pour pouvoir retirer des synonymes. Une seule confirmation affiche tous les avant/après ; soit tout est appliqué, soit rien.', editFoodsArgs, { type: 'object', properties: { modifications: { type: 'array', minItems: 1, maxItems: 100, items: { type: 'object', properties: { id: { type: 'string' }, nom: { type: 'string' }, aliases: { type: 'array', items: { type: 'string' } }, categorie: { type: 'string', enum: foodCategories }, pieceGrams: { type: 'number' }, prixEurKg: { type: ['number', 'null'], exclusiveMinimum: 0 }, confiancePrix: { type: 'string', enum: ['faible', 'moyenne', 'forte'] }, nutriments: { type: 'object', additionalProperties: { type: 'number', minimum: 0 } } }, required: ['id'], additionalProperties: false } } }, required: ['modifications'], additionalProperties: false }, (a) => {
     const changes = foodChanges(a.modifications);
     if (!changes.length) throw new Error('Aucune modification effective.');
     const ids = new Set(changes.map((row) => row.id));
@@ -422,7 +431,7 @@ export const ACTION_TOOLS: AgentTool<unknown>[] = [
     const fieldCount = changes.reduce((sum, group) => sum + group.fields.length, 0);
     return { text: `Modifier ${changes.length} aliment(s) de la banque en une seule opération.`, impact: `${fieldCount} champ(s) ; ${historyItems} item(s) d’historique seront recalculés.`, changes };
   }),
-  confirmedTool('creer_aliment_banque', 'Crée une fiche alimentaire estimée par l’agent dans la banque personnelle. Évalue les nutriments pour 100 g, même lorsque l’utilisateur ne les donne pas tous ; les valeurs fournies servent d’indications à vérifier, pas d’instructions à recopier. La fiche reste marquée à vérifier. Le nom et les alias ne doivent pas déjà exister.', createFoodArgs, { type: 'object', properties: { nom: { type: 'string' }, aliases: { type: 'array', items: { type: 'string' } }, categorie: { type: 'string', enum: foodCategories }, pieceGrams: { type: 'number', exclusiveMinimum: 0 }, unitGrams: { type: 'object', additionalProperties: { type: 'number', exclusiveMinimum: 0 } }, nutriments: completeNutrientsJsonSchema }, required: ['nom', 'categorie', 'nutriments'], additionalProperties: false }, (a) => {
+  confirmedTool('creer_aliment_banque', 'Crée une fiche alimentaire estimée par l’agent dans la banque personnelle. Évalue les nutriments pour 100 g et le prix français approximatif en €/kg, même lorsque l’utilisateur ne les donne pas tous ; les valeurs fournies servent d’indications à vérifier, pas d’instructions à recopier. La fiche reste marquée à vérifier. Le nom et les alias ne doivent pas déjà exister.', createFoodArgs, { type: 'object', properties: { nom: { type: 'string' }, aliases: { type: 'array', items: { type: 'string' } }, categorie: { type: 'string', enum: foodCategories }, pieceGrams: { type: 'number', exclusiveMinimum: 0 }, unitGrams: { type: 'object', additionalProperties: { type: 'number', exclusiveMinimum: 0 } }, prixEurKg: { type: 'number', exclusiveMinimum: 0 }, confiancePrix: { type: 'string', enum: ['faible', 'moyenne', 'forte'] }, nutriments: completeNutrientsJsonSchema }, required: ['nom', 'categorie', 'nutriments'], additionalProperties: false }, (a) => {
     const changes = foodCreationChanges(a);
     return { text: `Créer la fiche ${a.nom} dans la banque.`, impact: '1 fiche estimée et marquée à vérifier sera ajoutée sans modifier l’historique existant.', changes };
   }),

@@ -123,8 +123,9 @@ function DiffTable({ food, fiche, onApply }: { food: Food; fiche: ReviewFiche; o
   const changeCat = fiche.categorie && fiche.categorie !== food.categorie ? fiche.categorie : null;
   const changePiece =
     fiche.grammesParPiece && fiche.grammesParPiece !== food.pieceGrams ? fiche.grammesParPiece : null;
+  const changePrice = fiche.prixEurKg && fiche.prixEurKg !== food.price?.eurPerKg ? fiche.prixEurKg : null;
 
-  if (diff.length === 0 && !changeCat && !changePiece) {
+  if (diff.length === 0 && !changeCat && !changePiece && !changePrice) {
     return <div className="small" style={{ color: 'var(--muted)' }}>Fiche identique aux valeurs actuelles.</div>;
   }
 
@@ -139,6 +140,12 @@ function DiffTable({ food, fiche, onApply }: { food: Food; fiche: ReviewFiche; o
         <div className="small">
           Poids d'une pièce : <span className="mono">{food.pieceGrams ?? '—'} g</span> →{' '}
           <span className="mono">{changePiece} g</span>
+        </div>
+      )}
+      {changePrice && (
+        <div className="small">
+          Prix estimé : <span className="mono">{food.price?.eurPerKg ?? '—'} €/kg</span> →{' '}
+          <span className="mono">{changePrice} €/kg (confiance {fiche.confiancePrix ?? 'faible'})</span>
         </div>
       )}
       {diff.map((d) => (

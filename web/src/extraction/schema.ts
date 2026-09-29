@@ -31,6 +31,8 @@ export const extractedItemSchema = z.object({
   quantiteMax: z.number().positive().optional(),
   // Champs réservés à l'estimation IA d'un aliment hors base (optionnels).
   nutriments: nutrimentsSchema.optional(),
+  prixEurKg: z.number().finite().positive().optional(),
+  confiancePrix: z.enum(['faible', 'moyenne', 'forte']).optional(),
   categorie: z.enum(CATEGORIES).optional(),
   grammesParPiece: z.number().positive().optional(),
 });
@@ -98,7 +100,8 @@ export function validateExtraction(raw: unknown): ExtractedItem[] | null {
       : {}),
     // On ne conserve l'estimation IA que si des nutriments ont été fournis.
     ...(it.nutriments
-      ? { nutriments: fullNutrients(it.nutriments, it.categorie), categorie: it.categorie, grammesParPiece: it.grammesParPiece }
+      ? { nutriments: fullNutrients(it.nutriments, it.categorie), categorie: it.categorie, grammesParPiece: it.grammesParPiece,
+          ...(it.prixEurKg ? { prixEurKg: it.prixEurKg, confiancePrix: it.confiancePrix ?? 'faible' } : {}) }
       : {}),
   }));
 }
@@ -135,9 +138,11 @@ Dans ce cas, ajoute à l'item :
 - "categorie" ∈ ["fruit","legume","feculent","viande","poisson","oeuf-laitier","sucre-snack","matiere-grasse","boisson","plat","supplement","autre"]
 - "grammesParPiece" (optionnel) : poids en g d'une pièce/portion si l'unité est "piece"/"portion"
 - "nutriments" : un objet contenant TOUS les champs ci-dessous (n'en omets AUCUN ; mets 0 si négligeable).
+- "prixEurKg" : estimation positive du prix courant en France, région parisienne, en euros par kg de l'aliment décrit tel qu'il est consommé. Un ordre de grandeur suffit ; ne fabrique pas de précision commerciale.
+- "confiancePrix" : "faible", "moyenne" ou "forte". Mets "faible" si le produit ou son conditionnement est ambigu.
 ${NUTRIMENTS_PROMPT_DOC}
 Exemple : {"aliment":"pastel de nata","quantite":1,"unite":"piece","estimation":true,"categorie":"sucre-snack","grammesParPiece":60,"nutriments":{"kcal":298,"proteines":6,"glucides":37,"lipides":13,"fibres":1,"agSatures":6,"agSaturesLdl":3.9,"agSaturesStearique":1.1,"agMonoInsatures":4,"agPolyInsatures":1.5,"omega3":0.1,"omega6":1.2,"omega9":3.5,"fer":0.6,"magnesium":12,"potassium":90,"calcium":80,"zinc":0.5,"sodium":180,"selenium":8,"iode":10,"vitA":90,"vitC":0,"vitD":0.8,"vitE":0.4,"vitK1":2,"vitK2":1,"vitB1":0.05,"vitB2":0.2,"vitB3":0.4,"vitB5":0.5,"vitB6":0.05,"vitB9":18,"vitB12":0.4,"creatine":0,"collagene":0,"alcool":0}}
-N'utilise "nutriments" QUE lorsque c'est justifié ; en cas de doute, laisse l'application résoudre l'aliment (n'ajoute pas de nutriments).`;
+N'utilise "nutriments" et "prixEurKg" QUE pour un aliment nouveau ; en cas de doute, laisse l'application résoudre l'aliment. Si le prix est impossible à estimer, omets-le sans mettre zéro.`;
 
 /**
  * Consigne de CHOIX D'UNITÉ, commune à tous les moteurs.

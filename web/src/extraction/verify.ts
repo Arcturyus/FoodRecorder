@@ -40,6 +40,8 @@ const verdictSchema = z.object({
   meme: z.boolean(),
   categorie: z.enum(CATEGORIES).optional(),
   grammesParPiece: z.number().positive().optional(),
+  prixEurKg: z.number().finite().positive().optional(),
+  confiancePrix: z.enum(['faible', 'moyenne', 'forte']).optional(),
   quantite: z.number().positive().optional(),
   quantiteMin: z.number().positive().optional(),
   quantiteMax: z.number().positive().optional(),
@@ -71,6 +73,7 @@ Réponds UNIQUEMENT avec un objet JSON, sans texte autour :
   - "categorie" ∈ ["fruit","legume","feculent","viande","poisson","oeuf-laitier","sucre-snack","matiere-grasse","boisson","plat","supplement","autre"]
   - "nutriments" : objet contenant TOUS les champs ci-dessous (n'en omets AUCUN ; 0 si négligeable)
   - "grammesParPiece" (optionnel) : poids en g d'une pièce/portion si l'unité est "piece"/"portion"
+  - "prixEurKg" et "confiancePrix" : estimation du prix en France, région parisienne, pour 1 kg de l'aliment consommé ; confiance "faible", "moyenne" ou "forte". Cherche un ordre de grandeur, jamais zéro pour un prix inconnu.
   - "quantite", "quantiteMin", "quantiteMax" (optionnels) : corrige la quantité si celle extraite est manifestement incohérente pour cet aliment, avec sa fourchette plausible. Si tu corriges la quantité, garde l'unité de l'élément (ne la change pas).
 
 Sois EXIGEANT sur "meme" : au moindre doute sur le fait qu'il s'agit du même aliment, réponds false et estime. Une part de tarte aux myrtilles n'est PAS une myrtille ; un gâteau au chocolat n'est PAS du chocolat noir ; une soupe de potiron n'est PAS du potiron.
@@ -109,8 +112,8 @@ function extractJson(text: string): unknown | null {
   }
 }
 
-function askBridge(system: string, user: string): Promise<string> {
-  return callBridge({ prompt: `${system}\n\n${user}`, label: 'verify' });
+function askBridge(system: string, user: string, archive?: boolean): Promise<string> {
+  return callBridge({ prompt: `${system}\n\n${user}`, label: 'verify', archive });
 }
 
 /**
@@ -145,6 +148,7 @@ export async function verifyMatches(
   mode: ExtractionMode,
   cloud: CloudConfig,
   recentCounts?: RecentCounts,
+  options: { archive?: boolean } = {},
 ): Promise<ExtractedItem[]> {
   if (mode !== 'cloud' && mode !== 'claudecode') return items;
   if (mode === 'cloud' && !cloud.apiKey) return items;
@@ -156,7 +160,7 @@ export async function verifyMatches(
   try {
     const system = systemPrompt();
     const user = userPrompt(doubtful);
-    text = mode === 'cloud' ? await askCloud(system, user, cloud) : await askBridge(system, user);
+    text = mode === 'cloud' ? await askCloud(system, user, cloud) : await askBridge(system, user, options.archive);
   } catch {
     return items; // IA indisponible : on garde le matching de la base.
   }
@@ -179,6 +183,7 @@ export async function verifyMatches(
       nutriments: { ...EMPTY_NUTRIENTS, ...v.nutriments },
       ...(v.categorie ? { categorie: v.categorie } : {}),
       ...(v.grammesParPiece ? { grammesParPiece: v.grammesParPiece } : {}),
+      ...(v.prixEurKg ? { prixEurKg: v.prixEurKg, confiancePrix: v.confiancePrix ?? 'faible' } : {}),
       // Fourchette conservée seulement si cohérente (même règle que validateExtraction).
       ...(min != null && max != null && min < max && min <= quantite && quantite <= max
         ? { quantiteMin: min, quantiteMax: max }
