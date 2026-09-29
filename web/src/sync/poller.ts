@@ -20,6 +20,7 @@ import {
 } from './supabase';
 import { useSyncStore } from './syncStore';
 import { useQueueStatus, pendingTotal, type PendingCounts } from './queueStatus';
+import type { BackgroundActivityReporter, BackgroundWorkerActivity } from './workerActivity';
 
 let running = false;
 
@@ -38,11 +39,19 @@ let running = false;
  * No-op silencieux si Supabase n'est pas configuré, sans profil connecté, ou session expirée :
  * depuis la migration 0001, `sync_queue` est cloisonnée par profil et exige un jeton valide.
  */
-export async function runSyncTick(): Promise<void> {
+export async function runSyncTick(reportActivity?: BackgroundActivityReporter): Promise<void> {
   const { profileId, sessionExpired } = useSyncStore.getState();
   if (!isSyncConfigured() || !profileId || sessionExpired || running) return;
   running = true;
   const queue = useQueueStatus.getState();
+  const publishActivity = (activity: Omit<BackgroundWorkerActivity, 'loggedAt'>) => {
+    if (!reportActivity) return;
+    try {
+      reportActivity({ ...activity, loggedAt: new Date().toISOString() });
+    } catch {
+      // Logging must never prevent processing an item from the queue.
+    }
+  };
   try {
     const {
       extractionMode,
@@ -59,7 +68,7 @@ export async function runSyncTick(): Promise<void> {
     // config « clé API » inerte passée à verifyMatches, qui n'en fera rien.
     const cloud = cloudConfigOf(useStore.getState());
     const verify = (items: Awaited<ReturnType<typeof extractWithCli>>['items']) =>
-      verifyMatches(items, effectiveFoods(customFoods), 'claudecode', cloud, recentFoodCounts(entries));
+      verifyMatches(items, effectiveFoods(customFoods), 'claudecode', cloud, recentFoodCounts(entries), { archive: false });
 
     const bridge = extractionMode === 'claudecode' ? await checkBridge() : { available: false };
     queue.setBridge(bridge.available);
@@ -119,11 +128,16 @@ export async function runSyncTick(): Promise<void> {
     // Transcriptions vocales en attente.
     for (const row of pendingTranscripts) {
       begin('transcript');
+      const startedAt = Date.now();
       let failure: string | undefined;
+      let source: string | undefined;
+      let result: unknown;
       try {
-        const res = await extractWithCli(row.payload.transcript);
+        const res = await extractWithCli(row.payload.transcript, { archive: false });
+        source = res.source;
         if (res.items.length > 0) {
           const items = res.source === 'rules' ? res.items : await verify(res.items);
+          result = items;
           // Heure/jour = ceux estampillés par l'émetteur à l'envoi (cf. supabase.ts),
           // pas l'heure de CE traitement différé. L'entrée remonte ensuite aux autres
           // appareils par la synchro d'état (profileSync), avec un id unique.
@@ -137,6 +151,17 @@ export async function runSyncTick(): Promise<void> {
       }
       await markProcessed(row.id);
       finish(row.id, 'transcript', failure);
+      publishActivity({
+        kind: 'transcript',
+        status: failure ? 'error' : 'success',
+        captureDate: row.payload.date ?? null,
+        clientTime: row.payload.clientTime ?? null,
+        durationMs: Date.now() - startedAt,
+        ...(source ? { source } : {}),
+        transcript: row.payload.transcript,
+        ...(result !== undefined ? { result } : {}),
+        ...(failure ? { error: failure } : {}),
+      });
     }
 
     // Photos en attente (analysées par le CLI multimodal). Succès → le base64 est purgé de
@@ -144,11 +169,16 @@ export async function runSyncTick(): Promise<void> {
     // au lieu d'être avalé silencieusement comme avant.
     for (const row of pendingImages) {
       begin('image');
+      const startedAt = Date.now();
       let failure: string | undefined;
+      let source: string | undefined;
+      let result: unknown;
       try {
-        const res = await extractImageWithCli(row.payload.imageBase64, row.payload.mediaType);
+        const res = await extractImageWithCli(row.payload.imageBase64, row.payload.mediaType, { archive: false });
+        source = res.source;
         if (res.items.length > 0) {
           const items = await verify(res.items);
+          result = items;
           addEntry('📷 Photo', items, res.source, row.payload.date, row.payload.clientTime);
         } else {
           // Traité sans erreur technique, mais rien à ajouter : distingue ce cas d'un
@@ -168,15 +198,31 @@ export async function runSyncTick(): Promise<void> {
         await markImageProcessed(row.id, { ...row.payload, error: failure });
       }
       finish(row.id, 'image', failure);
+      publishActivity({
+        kind: 'image',
+        status: failure ? 'error' : 'success',
+        captureDate: row.payload.date ?? null,
+        clientTime: row.payload.clientTime ?? null,
+        durationMs: Date.now() - startedAt,
+        ...(source ? { source } : {}),
+        mediaType: row.payload.mediaType,
+        ...(result !== undefined ? { result } : {}),
+        ...(failure ? { error: failure } : {}),
+      });
     }
 
     // Dictées « soleil » en attente : même chemin qu'un repas — le poste qui a
     // le pont analyse et enregistre, la synchro d'état diffuse ensuite.
     for (const row of pendingSun) {
       begin('sun');
+      const startedAt = Date.now();
       let failure: string | undefined;
+      let source: string | undefined;
+      let result: unknown;
       try {
-        const { sorties, source } = await extractSun(row.payload.transcript, 'claudecode', cloud);
+        const res = await extractSun(row.payload.transcript, 'claudecode', cloud, { archive: false });
+        const { sorties } = res;
+        source = res.source;
         if (sorties.length > 0 && source !== 'rules') {
           // Ce poste n'a pas le formulaire de l'appareil qui a dicté : les
           // champs non dits prennent les valeurs de repli. Le jour ciblé est
@@ -184,6 +230,7 @@ export async function runSyncTick(): Promise<void> {
           // saisie = son heure d'envoi, pas ce traitement différé.
           const defaults = { ...SUN_FALLBACK, date: row.payload.date ?? todayStr() };
           const complete = sorties.map((p) => completeSunExposure(p, defaults));
+          result = complete;
           for (const e of complete) addSunExposure(e, row.payload.clientTime);
         } else {
           failure = 'Aucune sortie au soleil reconnue dans la dictée.';
@@ -193,6 +240,17 @@ export async function runSyncTick(): Promise<void> {
       }
       await markProcessed(row.id);
       finish(row.id, 'sun', failure);
+      publishActivity({
+        kind: 'sun',
+        status: failure ? 'error' : 'success',
+        captureDate: row.payload.date ?? null,
+        clientTime: row.payload.clientTime ?? null,
+        durationMs: Date.now() - startedAt,
+        ...(source ? { source } : {}),
+        transcript: row.payload.transcript,
+        ...(result !== undefined ? { result } : {}),
+        ...(failure ? { error: failure } : {}),
+      });
     }
 
     // Dictées de pesée en attente : même chemin que le soleil. Ce poste n'a
@@ -201,25 +259,45 @@ export async function runSyncTick(): Promise<void> {
     // estampillé par l'émetteur et l'heure celle de son envoi.
     for (const row of pendingWeight) {
       begin('weight');
+      const startedAt = Date.now();
       let failure: string | undefined;
+      let source: string | undefined;
+      let result: unknown;
       try {
-        const { patch, source } = await extractWeight(row.payload.transcript, 'claudecode', cloud);
+        const res = await extractWeight(row.payload.transcript, 'claudecode', cloud, { archive: false });
+        const { patch } = res;
+        source = res.source;
         const stamp = row.payload.clientTime ? new Date(row.payload.clientTime) : new Date();
         const pesee =
-          source !== 'rules'
+          res.source !== 'rules'
             ? completeWeightEntry(patch, {
                 date: row.payload.date ?? todayStr(stamp),
                 heure: nowTime(stamp),
-                source,
+                source: res.source,
               })
             : null;
-        if (pesee) addWeightEntry(pesee, row.payload.clientTime);
-        else failure = 'Aucun poids reconnu dans la dictée.';
+        if (pesee) {
+          result = pesee;
+          addWeightEntry(pesee, row.payload.clientTime);
+        } else {
+          failure = 'Aucun poids reconnu dans la dictée.';
+        }
       } catch (e) {
         failure = (e as Error).message;
       }
       await markProcessed(row.id);
       finish(row.id, 'weight', failure);
+      publishActivity({
+        kind: 'weight',
+        status: failure ? 'error' : 'success',
+        captureDate: row.payload.date ?? null,
+        clientTime: row.payload.clientTime ?? null,
+        durationMs: Date.now() - startedAt,
+        ...(source ? { source } : {}),
+        transcript: row.payload.transcript,
+        ...(result !== undefined ? { result } : {}),
+        ...(failure ? { error: failure } : {}),
+      });
     }
 
     // Le rejeu des résultats traités par d'AUTRES appareils est pris en charge par

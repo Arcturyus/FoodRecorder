@@ -4,8 +4,11 @@ $taskName = 'FoodRecorder Codex Background Worker'
 $userId = "$env:USERDOMAIN\$env:USERNAME"
 $runner = (Resolve-Path (Join-Path $PSScriptRoot 'run-background-worker.ps1')).Path
 $webRoot = (Resolve-Path (Join-Path $PSScriptRoot '..')).Path
-$powershell = Join-Path $PSHOME 'powershell.exe'
-$arguments = "-NoLogo -NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File `"$runner`""
+$powershell = Join-Path $env:SystemRoot 'System32\WindowsPowerShell\v1.0\powershell.exe'
+if (-not (Test-Path -LiteralPath $powershell)) {
+  $powershell = (Get-Command 'powershell.exe' -ErrorAction Stop).Source
+}
+$arguments = "-NoLogo -NoProfile -ExecutionPolicy Bypass -WindowStyle Normal -File `"$runner`""
 
 $existing = Get-ScheduledTask -TaskName $taskName -ErrorAction SilentlyContinue
 if ($existing) {
@@ -25,8 +28,7 @@ $settings = New-ScheduledTaskSettingsSet `
   -RestartInterval (New-TimeSpan -Minutes 1) `
   -ExecutionTimeLimit ([TimeSpan]::Zero) `
   -AllowStartIfOnBatteries `
-  -DontStopIfGoingOnBatteries `
-  -Hidden
+  -DontStopIfGoingOnBatteries
 
 Register-ScheduledTask `
   -TaskName $taskName `

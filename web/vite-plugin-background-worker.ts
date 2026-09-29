@@ -6,6 +6,113 @@ import { homedir } from 'node:os';
 import { resolve } from 'node:path';
 import type { Plugin } from 'vite';
 
+const MAX_ACTIVITY_TEXT_CHARS = 12_000;
+const MAX_ACTIVITY_JSON_CHARS = 48_000;
+
+type WorkerActivityKind = 'transcript' | 'image' | 'sun' | 'weight';
+
+interface WorkerActivity {
+  loggedAt: string;
+  kind: WorkerActivityKind;
+  status: 'success' | 'error';
+  captureDate: string | null;
+  clientTime: string | number | null;
+  durationMs: number;
+  source?: string;
+  transcript?: string;
+  mediaType?: string;
+  result?: unknown;
+  error?: string;
+}
+
+function logText(value: unknown, limit = MAX_ACTIVITY_TEXT_CHARS): string | undefined {
+  if (typeof value !== 'string') return undefined;
+  const cleaned = value
+    .replace(/\u001b(?:\[[0-?]*[ -/]*[@-~]|\][^\u0007]*(?:\u0007|\u001b\\))/g, '')
+    .replace(/\r\n?/g, '\n')
+    .replace(/[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f]/g, ' ');
+  return cleaned.length > limit ? `${cleaned.slice(0, limit)}… [tronqué]` : cleaned;
+}
+
+function safeActivityValue(value: unknown, depth = 0): unknown {
+  if (value == null || typeof value === 'boolean') return value;
+  if (typeof value === 'number') return Number.isFinite(value) ? value : null;
+  if (typeof value === 'string') return logText(value, 2_000) ?? '';
+  if (depth >= 8) return '[profondeur limitée]';
+  if (Array.isArray(value)) return value.slice(0, 100).map((item) => safeActivityValue(item, depth + 1));
+  if (typeof value !== 'object') return undefined;
+
+  const safe: Record<string, unknown> = {};
+  for (const [key, nested] of Object.entries(value as Record<string, unknown>).slice(0, 100)) {
+    if (/image|base64|prompt|transcript|password|token|rawstdout|rawstderr/i.test(key)) continue;
+    safe[key] = safeActivityValue(nested, depth + 1);
+  }
+  return safe;
+}
+
+function normalizeActivity(value: unknown): WorkerActivity | null {
+  if (!value || typeof value !== 'object') return null;
+  const raw = value as Record<string, unknown>;
+  const kinds: WorkerActivityKind[] = ['transcript', 'image', 'sun', 'weight'];
+  if (!kinds.includes(raw.kind as WorkerActivityKind) || (raw.status !== 'success' && raw.status !== 'error')) return null;
+  const loggedAt = typeof raw.loggedAt === 'string' && Number.isFinite(Date.parse(raw.loggedAt))
+    ? new Date(raw.loggedAt).toISOString()
+    : new Date().toISOString();
+  const durationMs = typeof raw.durationMs === 'number' && Number.isFinite(raw.durationMs)
+    ? Math.max(0, Math.min(raw.durationMs, 3_600_000))
+    : 0;
+  const result = Object.prototype.hasOwnProperty.call(raw, 'result') ? safeActivityValue(raw.result) : undefined;
+  return {
+    loggedAt,
+    kind: raw.kind as WorkerActivityKind,
+    status: raw.status,
+    captureDate: logText(raw.captureDate, 40) ?? null,
+    clientTime: typeof raw.clientTime === 'number' && Number.isFinite(raw.clientTime)
+      ? raw.clientTime
+      : logText(raw.clientTime, 80) ?? null,
+    durationMs,
+    ...(logText(raw.source, 80) ? { source: logText(raw.source, 80) } : {}),
+    ...(raw.kind !== 'image' && logText(raw.transcript) !== undefined ? { transcript: logText(raw.transcript) } : {}),
+    ...(raw.kind === 'image' && logText(raw.mediaType, 100) ? { mediaType: logText(raw.mediaType, 100) } : {}),
+    ...(result !== undefined ? { result } : {}),
+    ...(logText(raw.error, 1_000) ? { error: logText(raw.error, 1_000) } : {}),
+  };
+}
+
+function formatTimestamp(value: string | number | null): string | null {
+  if (!value) return null;
+  const date = new Date(value);
+  return Number.isFinite(date.getTime()) ? date.toLocaleString('fr-FR', { hour12: false }) : String(value);
+}
+
+function formatActivity(activity: WorkerActivity): string {
+  const labels: Record<WorkerActivityKind, string> = {
+    transcript: 'Dictée analysée',
+    image: 'Photo analysée',
+    sun: 'Dictée soleil analysée',
+    weight: 'Dictée de pesée analysée',
+  };
+  const duration = `${(activity.durationMs / 1000).toFixed(1).replace('.', ',')} s`;
+  const lines = [
+    `[FoodRecorder] ${formatTimestamp(activity.loggedAt)} · ${labels[activity.kind]} · ${activity.status === 'success' ? 'réussite' : 'échec'} · ${duration}`,
+  ];
+  if (activity.captureDate) lines.push(`  Date de capture : ${activity.captureDate}`);
+  if (activity.clientTime) lines.push(`  Envoyée le : ${formatTimestamp(activity.clientTime) ?? activity.clientTime}`);
+  if (activity.source) lines.push(`  Source : ${activity.source}`);
+  if (activity.kind === 'image') lines.push(`  Image : ${activity.mediaType ?? 'photo'} reçue et analysée (image non affichée dans le journal).`);
+  if (activity.transcript !== undefined) {
+    lines.push('  Texte dicté :');
+    lines.push(...activity.transcript.split('\n').map((line) => `    ${line}`));
+  }
+  if (activity.result !== undefined) {
+    let output = JSON.stringify(activity.result, null, 2) ?? 'null';
+    if (output.length > MAX_ACTIVITY_JSON_CHARS) output = `${output.slice(0, MAX_ACTIVITY_JSON_CHARS)}\n… [sortie tronquée]`;
+    lines.push('  Résultat JSON :', ...output.split('\n').map((line) => `    ${line}`));
+  }
+  if (activity.error) lines.push(`  Erreur : ${activity.error}`);
+  return lines.join('\n');
+}
+
 interface WorkerConfig {
   enabled: boolean;
   profileConfigured: boolean;
@@ -296,7 +403,7 @@ export function backgroundWorker(): Plugin {
             res.end(JSON.stringify({ error: 'Commande locale refusée depuis cette origine.' }));
             return;
           }
-          const body = JSON.parse((await readBody(req)) || '{}') as Record<string, unknown>;
+          const body = JSON.parse((await readBody(req, 128_000)) || '{}') as Record<string, unknown>;
           if (body.action === 'enabled' && typeof body.enabled === 'boolean') {
             await setEnabled(body.enabled);
           } else if (body.action === 'setup') {
@@ -315,6 +422,14 @@ export function backgroundWorker(): Plugin {
               return;
             }
             await acceptReport(body as unknown as WorkerReport);
+          } else if (body.action === 'activity') {
+            const activity = normalizeActivity(body.activity);
+            if (!activity) {
+              res.statusCode = 400;
+              res.end(JSON.stringify({ error: 'Événement du journal invalide.' }));
+              return;
+            }
+            server.config.logger.info(formatActivity(activity));
           } else {
             res.statusCode = 400;
             res.end(JSON.stringify({ error: 'Action du worker inconnue.' }));
