@@ -477,15 +477,46 @@ function ScatterView() {
   // Pointeurs actifs (pour le pincer-zoomer tactile à deux doigts) et pincement
   // en cours (distance + centre courants, pour calculer le facteur de zoom).
   const pointersRef = useRef<Map<number, { x: number; y: number }>>(new Map());
+  const pointPressRef = useRef<Map<number, { foodId: string | null; x: number; y: number; moved: boolean; selectedBefore: string | null }>>(new Map());
   const pinchRef = useRef<{ dist: number } | null>(null);
 
   function onPointerDown(e: React.PointerEvent<SVGSVGElement>) {
+    const firstPointer = pointersRef.current.size === 0;
+    const hitPoint = (e.target as Element).closest<SVGCircleElement>('[data-food-id]');
+    let foodId = hitPoint?.dataset.foodId ?? null;
+    if (!foodId && firstPointer && svgRef.current) {
+      const { x, y } = toViewBox(e, svgRef.current, W, H);
+      let closestDistance = Infinity;
+      for (const point of points) {
+        const distance = Math.hypot(x - cx(point.x), y - cy(point.y));
+        const hitRadius = Math.max(radius(point.s) + 10, 16);
+        if (distance <= hitRadius && distance < closestDistance) {
+          foodId = point.f.id;
+          closestDistance = distance;
+        }
+      }
+    }
+    const selectedBefore = selectedPointId;
+    pointPressRef.current.set(e.pointerId, {
+      foodId: firstPointer ? foodId : null,
+      x: e.clientX,
+      y: e.clientY,
+      moved: !firstPointer,
+      selectedBefore,
+    });
+    if (firstPointer && foodId) {
+      setSelectedPointId((id) => id === foodId ? null : foodId);
+    }
     e.currentTarget.setPointerCapture(e.pointerId);
     pointersRef.current.set(e.pointerId, { x: e.clientX, y: e.clientY });
     if (pointersRef.current.size === 1) {
       dragRef.current = { x: e.clientX, y: e.clientY };
       setDragging(true);
     } else {
+      for (const press of pointPressRef.current.values()) {
+        press.moved = true;
+        if (press.foodId) setSelectedPointId(press.selectedBefore);
+      }
       dragRef.current = null;
       const pts = [...pointersRef.current.values()];
       pinchRef.current = { dist: Math.hypot(pts[0].x - pts[1].x, pts[0].y - pts[1].y) };
@@ -493,6 +524,11 @@ function ScatterView() {
   }
   function onPointerMove(e: React.PointerEvent<SVGSVGElement>) {
     if (!pointersRef.current.has(e.pointerId)) return;
+    const press = pointPressRef.current.get(e.pointerId);
+    if (press && Math.hypot(e.clientX - press.x, e.clientY - press.y) > 6) {
+      if (!press.moved && press.foodId) setSelectedPointId(press.selectedBefore);
+      press.moved = true;
+    }
     pointersRef.current.set(e.pointerId, { x: e.clientX, y: e.clientY });
 
     if (pointersRef.current.size >= 2 && svgRef.current) {
@@ -515,6 +551,7 @@ function ScatterView() {
     setZoomY((z) => ({ ...z, y: z.y + dy }));
   }
   function endDrag(e: React.PointerEvent<SVGSVGElement>) {
+    pointPressRef.current.delete(e.pointerId);
     pointersRef.current.delete(e.pointerId);
     if (pointersRef.current.size < 2) pinchRef.current = null;
     if (pointersRef.current.size === 1) {
@@ -849,7 +886,7 @@ function ScatterView() {
             <g clipPath="url(#scatter-clip)">
               <path d={oneToOnePath} fill="none" stroke={C.muted} strokeWidth={1.5} strokeDasharray="2 4" opacity={0.7} />
               {selectedRatioPath && (
-                <path d={selectedRatioPath} fill="none" stroke={C.accent} strokeWidth={2.5} opacity={0.95} />
+                <path d={selectedRatioPath} fill="none" stroke={C.accent} strokeWidth={2.5} strokeDasharray="1 5" strokeLinecap="round" opacity={0.95} />
               )}
               {pareto && frontier.length > 1 && (
                 <path d={frontierPath} fill="none" stroke={C.accent2} strokeWidth={2} strokeDasharray="5 4" opacity={0.9} />
@@ -898,19 +935,12 @@ function ScatterView() {
                       cy={cy(p.y)}
                       r={hitR}
                       fill="transparent"
+                      data-food-id={p.f.id}
                       style={{ cursor: 'pointer' }}
                       onMouseEnter={(e) => {
                         if (svgRef.current) {
                           const v = toViewBox(e, svgRef.current, W, H);
                           setHover({ i, px: v.px, py: v.py });
-                        }
-                      }}
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        setSelectedPointId((id) => id === p.f.id ? null : p.f.id);
-                        if (svgRef.current) {
-                          const v = toViewBox(e, svgRef.current, W, H);
-                          setHover((h) => (h?.i === i ? null : { i, px: v.px, py: v.py }));
                         }
                       }}
                     />
