@@ -1242,12 +1242,10 @@ function mergePersisted(persisted: unknown, current: AppState): AppState {
     // déplacement — `cloudApiKey`/`cloudModel` restent en place (cf. AppState).
     cloudApiKeys,
     cloudModels,
-    // Réglage additif : les anciennes sauvegardes continuent avec le modèle
-    // par défaut de chaque CLI, sans migration des données nutritionnelles.
+    // Une valeur vide laisse la CLI choisir son modèle par défaut. Une valeur
+    // renseignée est conservée telle quelle et transmise sans conversion.
     cliModels: {
       ...(p.cliModels ?? {}),
-      ...(p.cliModels?.codex === 'gpt-5.6-terra' ? { codex: 'gpt-6-luna' } : {}),
-      ...(p.cliModels?.codex === 'gpt-5.6-sol' ? { codex: 'gpt-6-sol' } : {}),
       ...(p.cliModels?.claude === 'claude-opus-4-8' || p.cliModels?.claude === 'claude-opus-5'
         ? { claude: 'claude-opus-5-5' }
         : {}),

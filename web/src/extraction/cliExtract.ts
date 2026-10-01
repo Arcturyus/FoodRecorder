@@ -108,20 +108,26 @@ function extractJson(text: string): unknown | null {
 export async function extractImageWithCli(
   imageBase64: string,
   mediaType: string,
-  options: { archive?: boolean } = {},
+  options: { archive?: boolean; attempts?: number } = {},
 ): Promise<{ items: ExtractedItem[]; source: CliSource }> {
-  try {
-    const text = await callBridge({
-      prompt: `${IMAGE_SYSTEM_PROMPT}\n\nJSON :`,
-      label: 'photo',
-      image: { data: imageBase64, mediaType },
-      archive: options.archive,
-    });
-    const items = validateExtraction(extractJson(text));
-    return { items: items ?? [], source: cliSource() };
-  } catch (e) {
-    throw e instanceof Error ? new Error(`Pont ${currentCliLabel()} : ${e.message}`) : e;
+  const attempts = Math.max(1, Math.min(options.attempts ?? 2, 2));
+  let lastError: unknown;
+  for (let attempt = 1; attempt <= attempts; attempt++) {
+    try {
+      const text = await callBridge({
+        prompt: `${IMAGE_SYSTEM_PROMPT}\n\nJSON :`,
+        label: 'photo',
+        image: { data: imageBase64, mediaType },
+        archive: options.archive,
+      });
+      const items = validateExtraction(extractJson(text));
+      return { items: items ?? [], source: cliSource() };
+    } catch (e) {
+      lastError = e;
+      if (attempt < attempts) await new Promise((resolve) => setTimeout(resolve, 500));
+    }
   }
+  throw lastError instanceof Error ? new Error(`Pont ${currentCliLabel()} : ${lastError.message}`) : lastError;
 }
 
 export async function extractWithCli(

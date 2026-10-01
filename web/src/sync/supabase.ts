@@ -53,6 +53,13 @@ export interface ImagePayload extends StampedPayload {
   error?: string;
 }
 
+/** Une photo conservée après un échec d'analyse, proposée à l'utilisateur pour décision. */
+export interface FailedImage {
+  id: string;
+  payload: ImagePayload;
+  created_at: string;
+}
+
 /**
  * Kinds déposés dans la file : uniquement des ENTRÉES en attente de traitement.
  *
@@ -230,6 +237,22 @@ export function fetchPendingImages(): Promise<SyncRow<ImagePayload>[]> {
   return fetchPending<ImagePayload>('image');
 }
 
+/** Récupère les photos dont l'analyse a échoué et dont le base64 est encore conservé. */
+export async function fetchFailedImages(): Promise<FailedImage[]> {
+  if (!supabase) return [];
+  const { data, error } = await supabase
+    .from('sync_queue')
+    .select('id,payload,created_at')
+    .eq('kind', 'image')
+    .eq('processed', true)
+    .not('payload->>error', 'is', null)
+    .order('created_at', { ascending: true });
+  if (error) throw new Error(error.message);
+  return ((data ?? []) as FailedImage[]).filter(
+    (row) => typeof row.payload?.imageBase64 === 'string' && Boolean(row.payload?.error),
+  );
+}
+
 /** Récupère les dictées « soleil » en attente d'analyse. */
 export function fetchPendingSun(): Promise<SyncRow<TranscriptPayload>[]> {
   return fetchPending<TranscriptPayload>('sun');
@@ -268,9 +291,29 @@ export async function markProcessed(id: string): Promise<void> {
  * Marque une photo comme traitée en purgeant son base64 (`sync_queue.payload` peut sinon
  * accumuler des centaines de Ko par photo indéfiniment). En cas de succès, `payload` ne porte
  * plus que les métadonnées (mediaType/date/clientTime) ; en cas d'échec, on garde le base64 et on
- * ajoute `error` pour permettre un diagnostic — la ligne reste `processed` pour ne pas reboucler.
+ * ajoute `error` pour permettre un diagnostic — la ligne reste `processed` pour ne pas reboucler,
+ * puis peut être remise en attente par la décision de l'utilisateur.
  */
 export async function markImageProcessed(id: string, payload: Omit<ImagePayload, 'imageBase64'> | ImagePayload): Promise<void> {
   if (!supabase) return;
-  await supabase.from('sync_queue').update({ processed: true, payload }).eq('id', id);
+  await withRetry('mise à jour de la photo', () =>
+    supabase!.from('sync_queue').update({ processed: true, payload }).eq('id', id),
+  );
+}
+
+/** Remet une photo échouée dans la file, sans toucher à son image. */
+export async function retryFailedImage(id: string, payload: ImagePayload): Promise<void> {
+  if (!supabase) return;
+  const { error: _error, ...retryPayload } = payload;
+  await withRetry('relance de la photo', () =>
+    supabase!.from('sync_queue').update({ processed: false, payload: retryPayload }).eq('id', id),
+  );
+}
+
+/** Supprime définitivement une photo échouée et son entrée de file. */
+export async function deleteFailedImage(id: string): Promise<void> {
+  if (!supabase) return;
+  await withRetry('suppression de la photo', () =>
+    supabase!.from('sync_queue').delete().eq('id', id),
+  );
 }

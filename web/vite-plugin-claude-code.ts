@@ -38,7 +38,7 @@ import { join, resolve } from 'node:path';
  * Délai par défaut : la saisie d'un repas doit rester rapide, mieux vaut échouer
  * et retomber sur le parseur à règles que faire attendre devant un formulaire.
  */
-const CLI_TIMEOUT_MS = 60_000;
+const CLI_TIMEOUT_MS = 120_000;
 
 /**
  * Plafond pour les appels qui l'assument (relecture d'un aliment : prompt long,
