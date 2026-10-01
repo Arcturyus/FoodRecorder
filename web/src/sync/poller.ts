@@ -8,6 +8,7 @@ import { completeSunExposure, SUN_FALLBACK } from '../sun/vitaminD';
 import {
   fetchPendingTranscripts,
   fetchPendingImages,
+  fetchFailedImages,
   fetchPendingSun,
   fetchPendingWeight,
   summarizePending,
@@ -77,20 +78,23 @@ export async function runSyncTick(reportActivity?: BackgroundActivityReporter): 
       // Ce poste ne traite rien (téléphone, ou extraction non confiée au pont) : il relève
       // seulement ce qui attend, en colonnes légères — inutile de rapatrier des photos en
       // base64 pour afficher « 2 en attente » et le détail de chaque ligne.
-      const summary = await summarizePending();
+      const [summary, failedImages] = await Promise.all([summarizePending(), fetchFailedImages()]);
       queue.setPending(summary.counts, summary.items);
+      queue.setFailedImages(failedImages);
       return;
     }
 
     // Les quatre kinds sont relevés d'un bloc, alors qu'ils étaient récupérés au fil des
     // boucles : le total doit être connu AVANT le premier appel au CLI, sans quoi le
     // bandeau afficherait « 1/1 » à répétition au lieu de « 2/5 ».
-    const [pendingTranscripts, pendingImages, pendingSun, pendingWeight] = await Promise.all([
+    const [pendingTranscripts, pendingImages, pendingSun, pendingWeight, failedImages] = await Promise.all([
       fetchPendingTranscripts(),
       fetchPendingImages(),
       fetchPendingSun(),
       fetchPendingWeight(),
+      fetchFailedImages(),
     ]);
+    queue.setFailedImages(failedImages);
     const counts: PendingCounts = {
       transcript: pendingTranscripts.length,
       image: pendingImages.length,
@@ -174,7 +178,7 @@ export async function runSyncTick(reportActivity?: BackgroundActivityReporter): 
       let source: string | undefined;
       let result: unknown;
       try {
-        const res = await extractImageWithCli(row.payload.imageBase64, row.payload.mediaType, { archive: false });
+        const res = await extractImageWithCli(row.payload.imageBase64, row.payload.mediaType, { archive: false, attempts: 2 });
         source = res.source;
         if (res.items.length > 0) {
           const items = await verify(res.items);
@@ -299,6 +303,10 @@ export async function runSyncTick(reportActivity?: BackgroundActivityReporter): 
         ...(failure ? { error: failure } : {}),
       });
     }
+
+    // Une photo qui vient d'échouer est devenue une décision utilisateur : on la
+    // recharge tout de suite pour afficher « Retenter » sans attendre le prochain tick.
+    queue.setFailedImages(await fetchFailedImages());
 
     // Le rejeu des résultats traités par d'AUTRES appareils est pris en charge par
     // la sync d'état (profileSync, toujours active ici — cf. garde en tête de

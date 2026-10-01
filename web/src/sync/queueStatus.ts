@@ -10,7 +10,7 @@
  */
 
 import { create } from 'zustand';
-import type { PendingItem, SyncKind } from './supabase';
+import type { FailedImage, PendingItem, SyncKind } from './supabase';
 
 /** Une ligne traitée sans résultat exploitable, avec le motif à afficher. */
 export interface QueueFailure {
@@ -41,6 +41,8 @@ interface QueueStatusState {
    * le bandeau pour savoir CE QUI attend, et pas seulement combien.
    */
   pendingItems: PendingItem[];
+  /** Photos conservées après un échec, avec les actions de décision utilisateur. */
+  failedImages: FailedImage[];
   /** Analyse en cours sur ce poste, ou `null` (rien en cours, ou pas de pont ici). */
   current: QueueCurrent | null;
   /**
@@ -55,6 +57,7 @@ interface QueueStatusState {
 
   /** Compte et détail vont toujours ensemble : un seul setter, impossible de les désynchroniser. */
   setPending: (pending: PendingCounts, items: PendingItem[]) => void;
+  setFailedImages: (images: FailedImage[]) => void;
   setCurrent: (current: QueueCurrent | null) => void;
   setBridge: (hasBridge: boolean) => void;
   recordDone: () => void;
@@ -66,12 +69,14 @@ interface QueueStatusState {
 export const useQueueStatus = create<QueueStatusState>()((set) => ({
   pending: NO_PENDING,
   pendingItems: [],
+  failedImages: [],
   current: null,
   hasBridge: false,
   done: 0,
   failures: [],
 
   setPending: (pending, pendingItems) => set({ pending, pendingItems }),
+  setFailedImages: (failedImages) => set({ failedImages }),
   setCurrent: (current) => set({ current }),
   setBridge: (hasBridge) => set({ hasBridge }),
   recordDone: () => set((s) => ({ done: s.done + 1 })),

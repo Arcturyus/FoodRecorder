@@ -23,6 +23,7 @@ vi.mock('../src/sync/supabase', () => ({
   isSyncConfigured: () => true,
   fetchPendingTranscripts: async () => rows.transcripts,
   fetchPendingImages: async () => rows.images,
+  fetchFailedImages: async () => [],
   fetchPendingSun: async () => rows.sun,
   fetchPendingWeight: async () => rows.weight,
   summarizePending: async () => ({

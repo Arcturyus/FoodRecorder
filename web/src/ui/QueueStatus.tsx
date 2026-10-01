@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react';
 import { currentCliLabel } from '../extraction/bridge';
 import { todayStr } from '../store/store';
 import { useQueueStatus, pendingTotal, type PendingCounts } from '../sync/queueStatus';
-import type { PendingItem, SyncKind } from '../sync/supabase';
+import { deleteFailedImage, retryFailedImage, type FailedImage, type PendingItem, type SyncKind } from '../sync/supabase';
 
 /**
  * Bandeau « où en est la file » en tête de l'onglet du jour.
@@ -73,12 +73,17 @@ function PendingLine({ item }: { item: PendingItem }) {
 export function QueueStatus() {
   const pending = useQueueStatus((s) => s.pending);
   const pendingItems = useQueueStatus((s) => s.pendingItems);
+  const failedImages = useQueueStatus((s) => s.failedImages);
   const current = useQueueStatus((s) => s.current);
   const hasBridge = useQueueStatus((s) => s.hasBridge);
   const done = useQueueStatus((s) => s.done);
   const failures = useQueueStatus((s) => s.failures);
   const reset = useQueueStatus((s) => s.reset);
+  const setPending = useQueueStatus((s) => s.setPending);
+  const setFailedImages = useQueueStatus((s) => s.setFailedImages);
   const [open, setOpen] = useState(false);
+  const [actionId, setActionId] = useState<string | null>(null);
+  const [actionError, setActionError] = useState<string | null>(null);
 
   useEffect(() => {
     reset();
@@ -87,7 +92,7 @@ export function QueueStatus() {
   const waiting = pendingTotal(pending);
   // Rien à dire : ni attente, ni bilan à montrer. Le bandeau disparaît complètement
   // plutôt que d'occuper une ligne pour annoncer qu'il ne se passe rien.
-  if (waiting === 0 && done === 0 && failures.length === 0) return null;
+  if (waiting === 0 && done === 0 && failures.length === 0 && failedImages.length === 0) return null;
 
   let message: string;
   if (current) {
@@ -97,6 +102,10 @@ export function QueueStatus() {
     message = hasBridge
       ? `${describePending(pending)} à analyser.`
       : `${describePending(pending)} en attente de traitement par l'ordinateur.`;
+  } else if (failedImages.length > 0) {
+    message = failedImages.length === 1
+      ? 'Il y a une erreur dans l’analyse de la photo.'
+      : `Il y a une erreur dans l’analyse de ${failedImages.length} photos.`;
   } else {
     message = 'Tout est traité.';
   }
@@ -104,7 +113,44 @@ export function QueueStatus() {
   const busy = current !== null || waiting > 0;
   // Rien à déplier tant qu'aucune ligne n'attend : le bandeau reste alors un simple texte,
   // sans affordance de clic qui n'ouvrirait rien.
-  const depliable = pendingItems.length > 0;
+  const depliable = pendingItems.length > 0 || failedImages.length > 0;
+
+  const retry = async (image: FailedImage) => {
+    setActionError(null);
+    setActionId(image.id);
+    try {
+      await retryFailedImage(image.id, image.payload);
+      setFailedImages(failedImages.filter((item) => item.id !== image.id));
+      setPending(
+        { ...pending, image: pending.image + 1 },
+        [...pendingItems, {
+          id: image.id,
+          kind: 'image',
+          ...(image.payload.date ? { date: image.payload.date } : {}),
+          sentAt: image.payload.clientTime ?? Date.parse(image.created_at),
+        }],
+      );
+      setOpen(true);
+    } catch (error) {
+      setActionError(error instanceof Error ? error.message : 'Impossible de remettre la photo en attente.');
+    } finally {
+      setActionId(null);
+    }
+  };
+
+  const remove = async (image: FailedImage) => {
+    if (!window.confirm('Supprimer définitivement cette photo de la file d’analyse ?')) return;
+    setActionError(null);
+    setActionId(image.id);
+    try {
+      await deleteFailedImage(image.id);
+      setFailedImages(failedImages.filter((item) => item.id !== image.id));
+    } catch (error) {
+      setActionError(error instanceof Error ? error.message : 'Impossible de supprimer la photo.');
+    } finally {
+      setActionId(null);
+    }
+  };
 
   const contenu = (
     <>
@@ -125,12 +171,36 @@ export function QueueStatus() {
       )}
 
       {open && depliable && (
-        <ul className="queue-status-detail">
-          {pendingItems.map((it) => (
-            <PendingLine key={it.id} item={it} />
-          ))}
-        </ul>
+        <>
+          {pendingItems.length > 0 && (
+            <ul className="queue-status-detail">
+              {pendingItems.map((it) => (
+                <PendingLine key={it.id} item={it} />
+              ))}
+            </ul>
+          )}
+          {failedImages.length > 0 && (
+            <ul className="queue-status-fails queue-status-failed-actions">
+              {failedImages.map((image) => (
+                <li key={image.id}>
+                  <span className="queue-status-detail-head">Photo · {formatSentAt(image.payload.clientTime ?? Date.parse(image.created_at))}</span>
+                  <span className="queue-status-detail-text">{image.payload.error}</span>
+                  <span className="queue-status-actions">
+                    <button type="button" className="small" disabled={actionId !== null} onClick={() => retry(image)}>
+                      {actionId === image.id ? 'Relance…' : 'Retenter maintenant'}
+                    </button>
+                    <button type="button" className="small danger" disabled={actionId !== null} onClick={() => remove(image)}>
+                      Supprimer
+                    </button>
+                  </span>
+                </li>
+              ))}
+            </ul>
+          )}
+        </>
       )}
+
+      {actionError && <div className="queue-status-fails">{actionError}</div>}
 
       {(done > 0 || failures.length > 0) && (
         <span className="queue-status-tally">

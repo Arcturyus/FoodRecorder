@@ -1911,6 +1911,10 @@ button.queue-status-main:hover, button.queue-status-main:hover .queue-status-che
 .queue-status-tally { font-size: 12px; }
 .queue-status-failed { color: var(--danger); }
 .queue-status-fails { margin: 2px 0 0; padding-left: 18px; font-size: 12px; color: var(--danger); }
+.queue-status-failed-actions { margin-top: 8px; }
+.queue-status-actions { display: flex; gap: 6px; margin-top: 7px; }
+.queue-status-actions button { font-size: 12px; }
+.queue-status-actions button.danger { color: var(--danger); }
 
 /* --------------------------------------------------------------------------
    Champ « quel aliment est-ce ? » : recherche dans la banque + nom libre.
