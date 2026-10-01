@@ -91,6 +91,29 @@ semaine qui se pilote : « j'ai été bas en protéines lundi et mardi, je rattr
 colonnes, nutriment par nutriment, avec le cumul de la semaine face à sept fois l'objectif, dirait
 quelque chose qu'aucune moyenne à 30 jours ne dit.
 
+### P-07 · Ajouter le cuivre au suivi des minéraux
+
+Le modèle suit le zinc, mais pas le cuivre, alors que le guide du zinc signale qu'un apport élevé et durable
+peut antagoniser le cuivre. Le suivi actuel ne permet donc pas de voir les deux apports côte à côte.
+
+**Piste** : ajouter le cuivre au modèle nutritionnel, aux cibles et aux vues de bilan, après avoir vérifié
+la couverture des aliments et choisi la référence de population à utiliser. Garder visible la provenance
+et l'absence éventuelle de données pour ne pas confondre une valeur inconnue avec un apport nul.
+
+**À trancher** : afficher le cuivre comme une tuile indépendante, ou aussi le rapprocher du zinc dans une
+vue d'équilibre ? Quelles références et limites afficher ? [Avis de l'EFSA sur le cuivre](https://www.efsa.europa.eu/sites/default/files/consultation/150629a%2C0.pdf).
+
+### P-08 · Décomposer la vitamine A
+
+Le modèle conserve une seule valeur `vitA`, exprimée en µg d'équivalent rétinol. Le détail entre rétinol et
+caroténoïdes provitaminiques A n'est pas conservé dans cette valeur agrégée.
+
+**Piste** : garder le total pour la comparaison aux repères, tout en enregistrant et affichant séparément
+le rétinol et le bêta-carotène lorsque les données existent. Documenter la formule retenue et la couverture
+des constituants par aliment ; n'ajouter d'autres caroténoïdes que si les sources sont assez complètes.
+La [documentation Ciqual 2025](https://ciqual.anses.fr/cms/sites/default/files/inline-files/Table%20Ciqual%202025%20doc%20FR_2025_11_19.pdf)
+présente le rétinol et le bêta-carotène séparément et précise la formule de calcul de l'activité vitaminique A.
+
 ---
 
 ## 4. Chantiers décidés, pas encore faits
