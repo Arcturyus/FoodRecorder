@@ -7,7 +7,7 @@ import type { WeightEntry } from '../weight/types';
 
 export type Day = { date: string; day: number; weight: number | null; intake: number | null; protocol: string; standard: boolean };
 export const dayNumber = (date: string) => Date.parse(`${date}T00:00:00Z`) / 86400000;
-export const MAINTENANCE_MODEL_VERSION = 'maintenance-calendar-hac-v1';
+export const MAINTENANCE_MODEL_VERSION = 'maintenance-calendar-hac-v2';
 
 /** One latest eligible weight per day; muted and absent food days stay unknown. */
 export function maintenanceDays(entries: JournalEntry[], weights: WeightEntry[], mutedDays: Record<string, boolean>, standardOnly: boolean, today: string): Day[] {
@@ -51,24 +51,57 @@ export function defaultPeriod(rows: Day[], standardOnly = true): { start: string
   return { start: best?.start ?? rows[0]?.date ?? '', end: best?.end ?? rows[rows.length - 1]?.date ?? '' };
 }
 
-export type Options = { start: string; end: string; standardOnly: boolean; rho: number; lag: number; confidence: 90 | 95 | 99; intakeBias: number }
+export type Options = { start: string; end: string; standardOnly: boolean; rho: number; lag: number; confidence: 90 | 95 | 99; intakeBias: number; estimatedIntakes?: Record<string, number> }
+export type IntakeEstimateMethod = 'local-mean' | 'period-mean';
+
+/** Only intake days between retained weights matter. Donors are real counted
+ * days, never other imputations. A local mean uses ±7 calendar days, falling
+ * back to the selected interval's mean when that neighbourhood is empty.
+ */
+export function intakeGaps(rows: Day[], options: Pick<Options, 'start' | 'end' | 'standardOnly'>, method: IntakeEstimateMethod = 'local-mean') {
+  const weights = rows.filter(r => r.date >= options.start && r.date <= options.end && r.weight !== null && (!options.standardOnly || r.standard)).sort((a, b) => a.day - b.day);
+  if (weights.length < 2) return [];
+  const first = weights[0].day, last = weights[weights.length - 1].day;
+  const byDay = new Map(rows.map(r => [r.day, r]));
+  const donors = rows.filter(r => r.day >= first && r.day < last && r.intake !== null && Number.isFinite(r.intake) && r.intake >= 0);
+  const gaps: { date: string; suggested: number | null; donorCount: number; basis: IntakeEstimateMethod }[] = [];
+  for (let day = first; day < last; day++) {
+    const row = byDay.get(day);
+    if (row?.intake !== null && row?.intake !== undefined && Number.isFinite(row.intake)) continue;
+    const local = method === 'local-mean' ? donors.filter(r => Math.abs(r.day - day) <= 7) : [];
+    const used = local.length ? local : donors;
+    gaps.push({ date: new Date(day * 86400000).toISOString().slice(0, 10),
+      suggested: used.length ? Math.round(used.reduce((sum, r) => sum + r.intake!, 0) / used.length) : null,
+      donorCount: used.length, basis: local.length ? 'local-mean' : 'period-mean' });
+  }
+  return gaps;
+}
+
 export function estimate(rows: Day[], options: Options) {
   const { rho, lag, confidence, intakeBias } = options
   if (!(rho > 0) || !Number.isFinite(rho) || !Number.isFinite(intakeBias) || lag < 0 || !Number.isFinite(lag) || ![90, 95, 99].includes(confidence)) throw new Error('Paramètres numériques invalides.')
   if (!options.start || !options.end || options.start > options.end) throw new Error('Choisissez une période valide.')
-  const selected = rows.filter(r => r.date >= options.start && r.date <= options.end)
+  const selected = rows.filter(r => r.date >= options.start && r.date <= options.end).sort((a, b) => a.day - b.day)
   const weights = selected.filter(r => r.weight !== null && (!options.standardOnly || r.standard))
   if (weights.length < 4) throw new Error('Il faut au moins 4 pesées retenues pour cet ajustement et son incertitude.')
   const first = weights[0], last = weights[weights.length - 1], duration = last.day - first.day
   if (duration <= 0) throw new Error('Les pesées doivent couvrir plusieurs jours.')
   const byDay = new Map(rows.map(r => [r.day, r])); let cumulative = 0
+  const estimatedDays: { date: string; kcal: number }[] = []
   const totals = new Map<number, number>()
   for (let d = first.day; d <= last.day; d++) {
     totals.set(d, cumulative)
     if (d < last.day) {
       const row = byDay.get(d)
-      if (!row || row.intake === null || !Number.isFinite(row.intake)) throw new Error(`Calories manquantes le ${new Date(d * 86400000).toISOString().slice(0, 10)} : impossible de cumuler sans inventer une valeur.`)
-      cumulative += row.intake + intakeBias
+      const date = new Date(d * 86400000).toISOString().slice(0, 10)
+      let intake = row?.intake
+      if (intake == null || !Number.isFinite(intake)) {
+        intake = options.estimatedIntakes?.[date]
+        if (intake == null || !Number.isFinite(intake)) throw new Error(`Calories manquantes le ${date} : activez l'estimation des jours manquants et renseignez leur valeur.`)
+        estimatedDays.push({ date, kcal: intake })
+      }
+      if (intake < 0) throw new Error(`Calories invalides le ${date} : la valeur doit être positive ou nulle.`)
+      cumulative += intake + intakeBias
     }
   }
   const points = weights.map(r => ({ ...r, t: r.day - first.day, cumulative: totals.get(r.day)!, y: r.weight! - totals.get(r.day)! / rho }))
@@ -90,5 +123,18 @@ export function estimate(rows: Day[], options: Options) {
   const z = { 90: 1.644853627, 95: 1.959963985, 99: 2.575829304 }[confidence]
   const margin = z * se
   const naive = cumulative / duration - rho * (last.weight! - first.weight!) / duration
-  return { points: fitted, n, duration, first: first.date, last: last.date, meanT, meanY, sxx, sxy, slope, intercept, maintenance, se, iidSe, z, margin, low: maintenance - margin, high: maintenance + margin, residualSd: Math.sqrt(sse / (n - 2)), sse, meat, variance, cumulative, meanIntake: cumulative / duration, naive, excluded: selected.filter(r => r.weight !== null).length - n }
+  return { points: fitted, n, duration, first: first.date, last: last.date, meanT, meanY, sxx, sxy, slope, intercept, maintenance, se, iidSe, z, margin, low: maintenance - margin, high: maintenance + margin, residualSd: Math.sqrt(sse / (n - 2)), sse, meat, variance, cumulative, meanIntake: cumulative / duration, naive, estimatedDays, excluded: selected.filter(r => r.weight !== null).length - n }
+}
+
+/** Illustrative scenario, not a confidence interval: vary all imputed days
+ * together while retaining every actual intake and weight observation.
+ */
+export function intakeSensitivity(rows: Day[], options: Options, variation = 500) {
+  if (!Number.isFinite(variation) || variation < 0) throw new Error('Variation invalide.')
+  const base = estimate(rows, options);
+  if (!base.estimatedDays.length) return null;
+  const shifted = (delta: number) => Object.fromEntries(base.estimatedDays.map(d => [d.date, Math.max(0, d.kcal + delta)]));
+  const lower = estimate(rows, { ...options, estimatedIntakes: shifted(-variation) }).maintenance;
+  const upper = estimate(rows, { ...options, estimatedIntakes: shifted(variation) }).maintenance;
+  return { variation, low: Math.min(lower, upper), high: Math.max(lower, upper) };
 }

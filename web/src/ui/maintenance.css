@@ -7,6 +7,12 @@
 .maintenance-table table { border-collapse: collapse; font-size: 12px; width: 100%; }
 .maintenance-table th, .maintenance-table td { padding: 7px 9px; text-align: right; white-space: nowrap; border-bottom: 1px solid var(--border); }
 .maintenance-table th:first-child, .maintenance-table td:first-child { text-align: left; }
+.maintenance-gaps { margin: 14px 0; padding: 12px; border: 1px solid var(--border); border-radius: 10px; background: var(--panel-2); }
+.maintenance-gaps p:first-child { margin-top: 0; }
+.maintenance-gaps .row { align-items: center; }
+.maintenance-gap-list { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 12px; margin: 12px 0; }
+.maintenance-gap { min-width: 0; }
+.maintenance-gap .field { width: 100%; }
 @media (max-width: 600px) {
   .maintenance-controls .field { max-width: none; flex-basis: 130px; }
   .maintenance-result .energy-headline { gap: 12px; flex-wrap: wrap; }

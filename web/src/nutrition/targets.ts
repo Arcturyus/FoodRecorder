@@ -79,6 +79,8 @@ export interface ObservedMaintenance {
   intakeBias: number;
   standardOnly: boolean;
   version: string;
+  estimatedIntakes?: Record<string, number>;
+  intakeEstimateMethod?: 'local-mean' | 'period-mean';
 }
 
 export const DEFAULT_PROFILE: Profile = {

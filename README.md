@@ -154,7 +154,10 @@ partir de quand ça devient risqué. Quand rien n'est établi, c'est écrit — 
 
 Dans **Poids → Estimer ma maintenance**, les calories du journal et les pesées permettent d'estimer une
 maintenance moyenne sur une période choisie, avec son intervalle statistique et le détail du calcul.
-Le calcul exige des apports renseignés chaque jour entre les pesées extrêmes. On peut appliquer cette
+La période automatique choisit la plus longue série complète. Pour conserver une période avec des trous,
+on peut estimer les jours manquants par la moyenne locale (±7 jours, ou moyenne de la période sans voisin),
+corriger les valeurs proposées et consulter une sensibilité à ±500 kcal par jour estimé. Ces hypothèses
+ne modifient pas le journal ; leur incertitude n'est pas incluse dans l'intervalle statistique. On peut appliquer cette
 valeur au maintien utilisé dans toute l'app, puis revenir aux formules à tout moment. Le déficit ou
 surplus du profil reste appliqué ; une cible calorique fixée directement dans Nutriments reste prioritaire.
 

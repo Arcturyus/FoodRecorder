@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
+import { calorieColor } from './calorieColor';
 import { useStore, todayStr, useEffectiveFoods, isDayCounted, useCloudConfig } from '../store/store';
 import { useTargets } from './useTargets';
 import { foodFrequencies, frequencyKey } from '../nutrition/frequency';
@@ -255,7 +256,7 @@ function CalCell({
         <>
           <span className="cal-kcal">{fmt(kcal)}</span>
           <span className={`cal-bar ${level}`}>
-            <span style={{ width: `${Math.min(100, ratio * 100)}%` }} />
+            <span style={{ width: `${Math.min(100, ratio * 100)}%`, background: target > 0 ? calorieColor(ratio) : undefined }} />
           </span>
         </>
       )}

@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
 import { todayStr, useStore } from '../store/store';
-import { defaultPeriod, estimate, maintenanceDays, MAINTENANCE_MODEL_VERSION, type Options } from '../nutrition/maintenance';
+import { defaultPeriod, estimate, intakeGaps, intakeSensitivity, maintenanceDays, MAINTENANCE_MODEL_VERSION, type Options } from '../nutrition/maintenance';
 import { computeEnergyFor, type ObservedMaintenance } from '../nutrition/targets';
 import { useBody, useTargets } from './useTargets';
 import { Section } from './Section';
@@ -9,7 +9,7 @@ import { fmt } from './format';
 import './maintenance.css';
 
 const defaults = { standardOnly: true, rho: 7700, lag: 7, confidence: 95 as const, intakeBias: 0 };
-type Calculation = { result: ReturnType<typeof estimate>; options: Options; fingerprint: string };
+type Calculation = { result: ReturnType<typeof estimate>; sensitivity: ReturnType<typeof intakeSensitivity>; options: Options; fingerprint: string };
 
 export function MaintenancePanel() {
   const entries = useStore(s => s.entries);
@@ -25,10 +25,17 @@ export function MaintenancePanel() {
   useEffect(() => {
     if (!period.start && !period.end && rows.length) setPeriod(defaultPeriod(rows, standardOnly));
   }, [rows, standardOnly, period.start, period.end]);
-  const [advanced, setAdvanced] = useState<Omit<Options, 'start' | 'end' | 'standardOnly'>>(defaults);
+  const [advanced, setAdvanced] = useState<Omit<Options, 'start' | 'end' | 'standardOnly' | 'estimatedIntakes'>>(defaults);
+  const [fillMissing, setFillMissing] = useState(false);
+  const [intakeOverrides, setIntakeOverrides] = useState<Record<string, string>>({});
   const [calculation, setCalculation] = useState<Calculation | null>(null);
   const [error, setError] = useState('');
-  const options: Options = { ...advanced, ...period, standardOnly };
+  const gaps = useMemo(() => intakeGaps(rows, { ...period, standardOnly }), [rows, period, standardOnly]);
+  const estimatedIntakes = fillMissing ? Object.fromEntries(gaps.map(g => {
+    const raw = intakeOverrides[g.date];
+    return [g.date, raw !== undefined ? (raw.trim() ? Number(raw.replace(',', '.')) : NaN) : g.suggested ?? NaN];
+  })) : undefined;
+  const options: Options = { ...advanced, ...period, standardOnly, estimatedIntakes };
   const fingerprint = JSON.stringify({ rows, options });
   const stale = calculation !== null && calculation.fingerprint !== fingerprint;
   const result = calculation?.result;
@@ -39,7 +46,7 @@ export function MaintenancePanel() {
 
   function calculate() {
     try {
-      setCalculation({ result: estimate(rows, options), options, fingerprint });
+      setCalculation({ result: estimate(rows, options), sensitivity: intakeSensitivity(rows, options), options, fingerprint });
       setError('');
     } catch (e) { setCalculation(null); setError((e as Error).message); }
   }
@@ -48,7 +55,8 @@ export function MaintenancePanel() {
     const r = calculation.result, o = calculation.options;
     const saved: ObservedMaintenance = { kcal: Math.round(r.maintenance), low: r.low, high: r.high,
       start: r.first, end: r.last, calculatedAt: new Date().toISOString(), n: r.n, duration: r.duration,
-      rho: o.rho, lag: o.lag, confidence: o.confidence, intakeBias: o.intakeBias, standardOnly: o.standardOnly, version: MAINTENANCE_MODEL_VERSION };
+      rho: o.rho, lag: o.lag, confidence: o.confidence, intakeBias: o.intakeBias, standardOnly: o.standardOnly, version: MAINTENANCE_MODEL_VERSION,
+      ...(r.estimatedDays.length ? { estimatedIntakes: Object.fromEntries(r.estimatedDays.map(d => [d.date, d.kcal])), intakeEstimateMethod: 'local-mean' as const } : {}) };
     setProfile({ observedMaintenance: saved, maintenanceMode: 'observed' });
   }
 
@@ -62,6 +70,7 @@ export function MaintenancePanel() {
         onClick={() => setProfile({ maintenanceMode: 'observed' })}>Utiliser mon estimation ({fmt(observed.kcal)} kcal/j)</button>}
     </div>
     {observed && <p className="hint">Estimation enregistrée le {new Date(observed.calculatedAt).toLocaleDateString('fr-FR')} sur la période {observed.start} → {observed.end}.
+      {observed.estimatedIntakes && ` ${Object.keys(observed.estimatedIntakes).length} jour(s) de calories estimés.`}
       Elle reste fixe jusqu'à un nouveau calcul appliqué. Objectif calorique actuel : {fmt(target)} kcal/j.</p>}
     <div className="row maintenance-controls">
       <label className="field">Du<input aria-label="Début de la période de maintenance" type="date" value={period.start} max={todayStr()}
@@ -69,10 +78,33 @@ export function MaintenancePanel() {
       <label className="field">Au<input aria-label="Fin de la période de maintenance" type="date" value={period.end} max={todayStr()}
         onChange={e => setPeriod(p => ({ ...p, end: e.target.value }))} /></label>
       <button type="button" className="ghost small" onClick={() => setPeriod(defaultPeriod(rows, standardOnly))}>Période continue automatique</button>
+      <button type="button" className="ghost small" disabled={!rows.length}
+        onClick={() => setPeriod({ start: rows[0].date, end: rows[rows.length - 1].date })}>Toute la période</button>
     </div>
     <label className="row small" style={{ gap: 8, marginBlock: 12 }}><input type="checkbox" checked={standardOnly} onChange={e => setStandardOnly(e.target.checked)} />Pesées à jeun et nu uniquement</label>
     <div className="hint">Une pesée par jour : la dernière respectant le filtre. Les jours non comptés sont exclus des apports ; un jeûne déclaré compte pour zéro.
-      Aucun jour de calories ne peut manquer entre les deux pesées extrêmes. Les calories de la dernière date ne sont pas nécessaires.</div>
+      La période automatique retient la plus longue série complète. Les calories de la dernière pesée ne sont pas nécessaires.</div>
+    {gaps.length > 0 && <div className="maintenance-gaps" role="region" aria-label="Jours de calories manquants">
+      <p><strong>{gaps.length} jour(s) sans calories utilisables entre les pesées extrêmes.</strong> Vous pouvez conserver toute la période en estimant ces journées.</p>
+      <label className="row small" style={{ gap: 8 }}><input type="checkbox" checked={fillMissing}
+        onChange={e => setFillMissing(e.target.checked)} />Estimer les jours manquants</label>
+      {fillMissing && <>
+        <p className="hint">Moyenne des jours renseignés dans les 7 jours avant et après chaque trou, limitée à la période calculée.
+          Sans voisin renseigné, la moyenne de la période est proposée. Aucun repas n'est ajouté au journal ; les jours exclus sont aussi estimés pour ce calcul.</p>
+        <details className="maintenance-details"><summary>Voir ou corriger les {gaps.length} journées estimées</summary>
+          <div className="maintenance-gap-list">{gaps.map(g => <div className="maintenance-gap" key={g.date}>
+            <label className="field">{g.date} · kcal
+              <NumberField min={0} step={50} value={intakeOverrides[g.date] ?? g.suggested ?? ''}
+                onChange={value => setIntakeOverrides(values => ({ ...values, [g.date]: value }))} />
+            </label>
+            <span className="hint">{intakeOverrides[g.date] !== undefined ? 'Valeur modifiée' : g.suggested === null ? 'À renseigner : aucun jour connu' :
+              `${g.basis === 'local-mean' ? 'Moyenne locale' : 'Moyenne de la période'} · ${g.donorCount} jour(s)`}</span>
+          </div>)}</div>
+          <button type="button" className="ghost small" onClick={() => setIntakeOverrides({})}>Rétablir les moyennes proposées</button>
+        </details>
+        <p className="hint">Le résultat dépendra de ces hypothèses. Les journées oubliées peuvent différer des journées renseignées.</p>
+      </>}
+    </div>}
     <details className="maintenance-details">
       <summary>Hypothèses et sensibilité</summary>
       <div className="maintenance-controls row">
@@ -94,6 +126,12 @@ export function MaintenancePanel() {
       <p>Intervalle statistique approximatif à {calculation.options.confidence} % : <strong>{fmt(result.low)} à {fmt(result.high)} kcal/j</strong>.</p>
       <p className="hint">Conditionnel aux calories saisies et à la conversion choisie. Les biais systématiques et les variations futures d'activité ne sont pas inclus.
         {result.n < 30 || result.duration < 28 ? ' Échantillon limité : comparez plusieurs périodes et hypothèses.' : ''}</p>
+      {result.estimatedDays.length > 0 && <div className="maintenance-gaps">
+        <p><strong>Résultat avec {result.estimatedDays.length} jour(s) de calories estimés sur {result.duration} ({fmt(result.estimatedDays.length / result.duration * 100)} %).</strong></p>
+        {calculation.sensitivity && <p className="small">Sensibilité : si chaque journée estimée varie de −500 à +500 kcal (sans descendre sous zéro),
+          la maintenance varie de <strong>{fmt(calculation.sensitivity.low)} à {fmt(calculation.sensitivity.high)} kcal/j</strong>, les autres données restant identiques.</p>}
+        <p className="hint">Ce scénario n'est pas un intervalle de confiance. L'intervalle statistique ci-dessus ne couvre pas l'incertitude sur les calories manquantes.</p>
+      </div>}
       {stale && <p role="status" style={{ color: 'var(--warn)' }}>Les données ou les réglages ont changé. Recalculez avant d'appliquer.</p>}
       {result.maintenance <= 0 && <p role="alert">L'estimation n'est pas positive ; elle ne peut pas remplacer la maintenance.</p>}
       <button type="button" disabled={stale || !Number.isFinite(result.maintenance) || result.maintenance <= 0} onClick={apply}>Remplacer ma maintenance estimée</button>

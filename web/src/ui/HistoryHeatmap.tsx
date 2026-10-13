@@ -4,6 +4,7 @@ import { fmt } from './format';
 import { dayLabel } from './DayPicker';
 import { DEFAULT_PERIOD_DAYS } from './PeriodSelector';
 import { calorieGoalLabel, type ResolvedCalorieGoal } from '../nutrition/calorieGoals';
+import { calorieColor } from './calorieColor';
 
 /**
  * Heatmap continue de l'historique, façon « contributions GitHub » : une case =
@@ -15,7 +16,7 @@ import { calorieGoalLabel, type ResolvedCalorieGoal } from '../nutrition/calorie
  * week-ends, les vacances, les trois semaines d'arrêt, d'un seul coup d'œil.
  *
  * La couleur code l'ÉCART À L'OBJECTIF kcal, pas la quantité : vert = dans la
- * cible, orange = en dessous, rouge = au-dessus, l'intensité montant avec
+ * cible, dégradé vers le rouge en dessous, vers le violet au-dessus, selon
  * l'écart. Les jours non comptés (mal remplis, jeûnes) ne sont pas coloriés —
  * les peindre laisserait croire à une mesure là où il n'y en a pas.
  */
@@ -99,7 +100,7 @@ function monthLabel(ym: string): string {
 /**
  * Écart à l'objectif traduit en couleur (le sens) et en intensité (l'ampleur).
  * Les seuils `under`/`ok`/`over` sont ceux du calendrier mensuel — même
- * vocabulaire, sinon un même jour serait orange en haut et vert en bas. Dans la
+ * vocabulaire, sinon un même jour aurait deux couleurs différentes. Dans la
  * cible, l'intensité est maximale : c'est le résultat visé, il doit ressortir,
  * et l'écart y est petit par construction (rien à graduer).
  */
@@ -270,17 +271,12 @@ export function HistoryHeatmap({
       <div className="row small" style={{ gap: 14, marginTop: 8, flexWrap: 'wrap', alignItems: 'center' }}>
         <span className="heat-scale">
           en dessous
-          <i className="heat-key under s3" />
-          <i className="heat-key under s2" />
-          <i className="heat-key under s1" />
-          <i className="heat-key ok s3" />
-          <i className="heat-key over s1" />
-          <i className="heat-key over s2" />
-          <i className="heat-key over s3" />
+          {[0.3, 0.5, 0.7, 1, 1.2, 1.4, 1.6].map(ratio =>
+            <i key={ratio} className="heat-key" style={{ background: calorieColor(ratio) }} />)}
           au-dessus
         </span>
         <span>
-          <i className="heat-key ok s3" /> dans la cible (90–110 % de l'objectif du jour)
+          <i className="heat-key ok s3" style={{ background: calorieColor(1) }} /> dans la cible (90–110 % de l'objectif du jour)
         </span>
         <span>
           <i className="heat-key empty" /> rien d'enregistré
@@ -361,5 +357,7 @@ function HeatCell({
   const label = `${dayLabel(date)} : ${
     filled ? `${fmt(kcal)} kcal${counted ? '' : ', non compté'}` : 'jeûne'
   }`;
-  return <button type="button" className={cls} data-date={date} aria-label={label} onClick={() => onPick(date)} />;
+  return <button type="button" className={cls} data-date={date} aria-label={label}
+    style={filled && counted && target > 0 ? { background: calorieColor(kcal / target) } : undefined}
+    onClick={() => onPick(date)} />;
 }
