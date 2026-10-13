@@ -45,10 +45,19 @@ export function WeightForm() {
   const [flash, setFlash] = useState('');
   const [acceptedFields, setAcceptedFields] = useState<Set<WeightMetricKey>>(() => new Set());
 
-  const lastWeight = useMemo(
-    () => [...weightEntries].sort((a, b) => `${a.date} ${a.heure}`.localeCompare(`${b.date} ${b.heure}`)).at(-1),
-    [weightEntries],
-  );
+  const lastValues = useMemo(() => {
+    const values: Partial<Record<WeightMetricKey, number>> = {};
+    const sorted = [...weightEntries].sort((a, b) =>
+      `${a.date} ${a.heure}`.localeCompare(`${b.date} ${b.heure}`) || a.createdAt - b.createdAt,
+    );
+    for (const entry of sorted) {
+      for (const { key } of NUM_FIELDS) {
+        const value = entry[key];
+        if (value != null && Number.isFinite(value)) values[key] = value;
+      }
+    }
+    return values;
+  }, [weightEntries]);
 
   const poids = toNum(draft.poids);
   const computed = useMemo(
@@ -130,9 +139,12 @@ export function WeightForm() {
             {m.key === 'poids' ? ' *' : ''}
             <SuggestedNumberField
               min={0}
-              step={0.1}
+              step={m.key === 'metabolismeBasalMachine' ? 1 : 0.1}
+              inputMode={m.key === 'metabolismeBasalMachine' ? 'numeric' : 'decimal'}
+              repeatOnHold
               value={draft[m.key]}
-              suggestedValue={lastWeight?.[m.key]}
+              suggestedValue={m.key === 'metabolismeBasalMachine' && lastValues[m.key] != null
+                ? Math.round(lastValues[m.key]!) : lastValues[m.key]}
               accepted={acceptedFields.has(m.key)}
               onAccept={() => setAcceptedFields((current) => new Set(current).add(m.key))}
               onChange={(v) => set(m.key, v)}

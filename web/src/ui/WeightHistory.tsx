@@ -159,7 +159,13 @@ function WeightRow({ entry, focus }: { entry: WeightEntry; focus?: number }) {
               <label className="field" key={mt.key} style={{ flex: '1 1 120px' }}>
                 {mt.label}
                 {mt.unit ? ` (${mt.unit})` : ''}
-                <NumberField step={0.1} value={entry[mt.key] ?? ''} onChange={(v) => setNum(mt.key, v)} />
+                <NumberField
+                  step={mt.key === 'metabolismeBasalMachine' ? 1 : 0.1}
+                  inputMode={mt.key === 'metabolismeBasalMachine' ? 'numeric' : 'decimal'}
+                  repeatOnHold
+                  value={entry[mt.key] ?? ''}
+                  onChange={(v) => setNum(mt.key, v)}
+                />
               </label>
             ))}
           </div>

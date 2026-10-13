@@ -10,6 +10,8 @@ import type { Nutrients } from '../nutrition/types';
 
 export type PeriodPreset = 7 | 30 | 90 | 365 | 'all' | 'custom';
 
+export const DEFAULT_PERIOD_DAYS = 90;
+
 /** Plage de dates inclusive (YYYY-MM-DD). */
 export interface DateRange {
   start: string;
@@ -39,7 +41,7 @@ function daysAgo(n: number): string {
 }
 
 export function defaultPeriodState(): PeriodState {
-  return { preset: 30, custom: { start: daysAgo(30), end: todayStr() } };
+  return { preset: DEFAULT_PERIOD_DAYS, custom: { start: daysAgo(DEFAULT_PERIOD_DAYS - 1), end: todayStr() } };
 }
 
 /**

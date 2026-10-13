@@ -18,6 +18,7 @@ export function SuggestedNumberField({ suggestedValue, accepted, onAccept, value
     <NumberField
       {...props}
       value={value}
+      suggestedBase={!accepted ? suggestedValue : undefined}
       placeholder={!accepted ? suggestion : undefined}
       onFocus={() => {
         if (accepted) return;

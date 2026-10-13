@@ -1,4 +1,5 @@
-import type { CSSProperties, FocusEventHandler, KeyboardEventHandler } from 'react';
+import { useEffect, useRef } from 'react';
+import type { CSSProperties, FocusEventHandler, KeyboardEventHandler, PointerEvent } from 'react';
 
 function decimalsOf(step: number): number {
   const s = step.toString();
@@ -25,6 +26,9 @@ type NumberFieldProps = {
    * taille, âge), le pas doit rester fixe — d'où l'option explicite.
    */
   adaptiveStep?: boolean;
+  /** Valeur de départ des boutons lorsque le champ est vide. */
+  suggestedBase?: number;
+  repeatOnHold?: boolean;
   placeholder?: string;
   inputMode?: 'decimal' | 'numeric';
   autoFocus?: boolean;
@@ -46,6 +50,8 @@ export function NumberField({
   step = 1,
   inputStep,
   adaptiveStep = false,
+  suggestedBase,
+  repeatOnHold = false,
   placeholder,
   inputMode = 'decimal',
   autoFocus,
@@ -54,6 +60,18 @@ export function NumberField({
   style,
   title,
 }: NumberFieldProps) {
+  const repeatTimer = useRef<ReturnType<typeof setTimeout>>();
+  const stopRepeat = () => {
+    clearTimeout(repeatTimer.current);
+    repeatTimer.current = undefined;
+  };
+  useEffect(() => {
+    window.addEventListener('blur', stopRepeat);
+    return () => {
+      stopRepeat();
+      window.removeEventListener('blur', stopRepeat);
+    };
+  }, []);
   /** Pas effectif à cette valeur (cf. `adaptiveStep`). */
   const stepAt = (v: number): number => {
     if (!adaptiveStep) return step;
@@ -65,7 +83,7 @@ export function NumberField({
 
   const bump = (dir: 1 | -1) => {
     const current = parseFloat(String(value).replace(',', '.'));
-    const base = Number.isFinite(current) ? current : min ?? 0;
+    const base = Number.isFinite(current) ? current : suggestedBase ?? min ?? 0;
     const s = stepAt(base);
     // Pas élargi : on retombe sur le multiple suivant (53 → 55 → 60), pas sur
     // 53 + 5. Pas nominal : incrément simple, pour ne pas déplacer une valeur
@@ -77,10 +95,38 @@ export function NumberField({
     next = Math.round(next * 10 ** d) / 10 ** d;
     onChange(String(next));
   };
+  const latestBump = useRef(bump);
+  latestBump.current = bump;
+
+  const startRepeat = (event: PointerEvent<HTMLButtonElement>, dir: 1 | -1) => {
+    if (!repeatOnHold || event.button !== 0) return;
+    event.preventDefault();
+    stopRepeat();
+    event.currentTarget.setPointerCapture(event.pointerId);
+    bump(dir);
+    const repeat = () => {
+      latestBump.current(dir);
+      repeatTimer.current = setTimeout(repeat, 100);
+    };
+    repeatTimer.current = setTimeout(repeat, 400);
+  };
+
+  const buttonProps = (dir: 1 | -1) => ({
+    onPointerDown: (event: PointerEvent<HTMLButtonElement>) => startRepeat(event, dir),
+    onPointerUp: stopRepeat,
+    onPointerCancel: stopRepeat,
+    onLostPointerCapture: stopRepeat,
+    onPointerLeave: stopRepeat,
+    onClick: (event: React.MouseEvent<HTMLButtonElement>) => {
+      if (!repeatOnHold || event.detail === 0) bump(dir);
+    },
+    style: repeatOnHold ? { touchAction: 'none', userSelect: 'none' } as CSSProperties : undefined,
+    onContextMenu: repeatOnHold ? (event: React.MouseEvent<HTMLButtonElement>) => event.preventDefault() : undefined,
+  });
 
   return (
     <span className="number-field" style={style} data-tip={title}>
-      <button type="button" tabIndex={-1} onClick={() => bump(-1)} aria-label="Diminuer">
+      <button type="button" tabIndex={-1} {...buttonProps(-1)} aria-label="Diminuer">
         −
       </button>
       <input
@@ -96,7 +142,7 @@ export function NumberField({
         onFocus={onFocus}
         onChange={(e) => onChange(e.target.value)}
       />
-      <button type="button" tabIndex={-1} onClick={() => bump(1)} aria-label="Augmenter">
+      <button type="button" tabIndex={-1} {...buttonProps(1)} aria-label="Augmenter">
         +
       </button>
     </span>

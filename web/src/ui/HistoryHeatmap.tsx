@@ -2,6 +2,7 @@ import { useMemo, useState } from 'react';
 import { todayStr, isDayCounted } from '../store/store';
 import { fmt } from './format';
 import { dayLabel } from './DayPicker';
+import { DEFAULT_PERIOD_DAYS } from './PeriodSelector';
 
 /**
  * Heatmap continue de l'historique, façon « contributions GitHub » : une case =
@@ -20,7 +21,7 @@ import { dayLabel } from './DayPicker';
 
 /** Fenêtres proposées. En jours : un « mois » calendaire n'a pas de longueur fixe. */
 const WINDOWS = [
-  { label: '3 mois', days: 91 },
+  { label: '90 j', days: DEFAULT_PERIOD_DAYS },
   { label: '6 mois', days: 182 },
   { label: '12 mois', days: 365 },
 ] as const;
@@ -146,7 +147,7 @@ export function HistoryHeatmap({
   selected: string | null;
   onPickDate: (date: string) => void;
 }) {
-  const [windowDays, setWindowDays] = useState<number>(365);
+  const [windowDays, setWindowDays] = useState<number>(DEFAULT_PERIOD_DAYS);
   /**
    * Jour survolé, lu dans une ligne unique sous la grille. Pas d'info-bulle par
    * case : à 12 px elles se chevaucheraient, et le défilement horizontal de la
