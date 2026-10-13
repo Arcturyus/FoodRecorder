@@ -1,7 +1,7 @@
 # analysis/ — cours de rappel ACP sur la banque d'aliments
 
-Analyse **externe à `web/`** qui reproduit à la main la carte ACP de l'app (onglet *Comparer →
-Carte ACP*) et déroule les diagnostics classiques d'une ACP, pour comprendre / réviser.
+Analyse **externe à `web/`** qui reproduit à la main la carte ACP de l'app (*Stats → Aliments →
+Comparer*, carte en bas de page) et déroule les diagnostics classiques d'une ACP, pour comprendre / réviser.
 
 Le notebook est **fidèle à l'app** : mêmes réglages par défaut (base *pour 100 kcal*, nutriments
 standardisés puis pondérés par l'importance, compléments exclus) → mêmes chiffres. On retrouve

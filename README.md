@@ -187,8 +187,8 @@ web/
     ui/          composants React (D3 pur pour les graphes, pas de lib de charts)
   tests/         Vitest
 analysis/        notebook Python qui refait l'ACP de l'app à la main (cours / vérification)
-plan.md          plan d'exécution initial (dont le portage mobile React Native, pas encore fait)
-idées.md         ce qui reste à faire, et pourquoi certaines pistes ont été écartées
+idées.md         pistes encore ouvertes et propositions à discuter
+banque-produits-prix-2026-09-29.md  relevé daté, source des prix initiaux du catalogue
 ```
 
 ---
