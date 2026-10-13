@@ -32,6 +32,7 @@ export function backupCounts(b: Record<string, unknown>): Record<string, number>
     notes: size(b.dayNotes),
     importances: size(b.nutrientImportance),
     'cibles réglées': size(b.nutrientTargets),
+    'objectifs journaliers': size(b.dailyCalorieGoals),
   };
 }
 

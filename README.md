@@ -152,6 +152,18 @@ Chaque nutriment a une fiche explicative qui affiche d'abord **la solidité de c
 dose la carence pose problème, ce que la molécule fait, ce qu'on gagne (ou non) à dépasser l'AJR, et à
 partir de quand ça devient risqué. Quand rien n'est établi, c'est écrit — pas de seuil inventé.
 
+Dans **Poids → Estimer ma maintenance**, les calories du journal et les pesées permettent d'estimer une
+maintenance moyenne sur une période choisie, avec son intervalle statistique et le détail du calcul.
+Le calcul exige des apports renseignés chaque jour entre les pesées extrêmes. On peut appliquer cette
+valeur au maintien utilisé dans toute l'app, puis revenir aux formules à tout moment. Le déficit ou
+surplus du profil reste appliqué ; une cible calorique fixée directement dans Nutriments reste prioritaire.
+
+L'objectif calorique effectif est conservé par jour à partir de cette version. L'historique compare chaque
+jour à son objectif (vert entre 90 et 110 %). Pour les anciens jours sans objectif connu, la moyenne des
+apports des jours comptés de la semaine sert d'approximation, signalée comme telle. Stats garde les
+objectifs actuels par défaut ; quand seules les calories sont sélectionnées, un mode facultatif utilise
+les objectifs de chaque date. Les objectifs journaliers sont inclus dans les sauvegardes et la synchronisation.
+
 ---
 
 ## La banque d'aliments

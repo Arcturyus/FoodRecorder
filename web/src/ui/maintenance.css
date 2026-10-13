@@ -1,0 +1,14 @@
+.maintenance-controls { gap: 12px; flex-wrap: wrap; align-items: end; margin: 14px 0; }
+.maintenance-controls .field { flex: 1 1 170px; min-width: 0; max-width: 280px; }
+.maintenance-details { margin: 16px 0; }
+.maintenance-details summary { cursor: pointer; color: var(--accent); }
+.maintenance-result { margin-top: 18px; border-top: 1px solid var(--border); padding-top: 16px; }
+.maintenance-table { overflow-x: auto; max-width: 100%; }
+.maintenance-table table { border-collapse: collapse; font-size: 12px; width: 100%; }
+.maintenance-table th, .maintenance-table td { padding: 7px 9px; text-align: right; white-space: nowrap; border-bottom: 1px solid var(--border); }
+.maintenance-table th:first-child, .maintenance-table td:first-child { text-align: left; }
+@media (max-width: 600px) {
+  .maintenance-controls .field { max-width: none; flex-basis: 130px; }
+  .maintenance-result .energy-headline { gap: 12px; flex-wrap: wrap; }
+  .maintenance-result > button { max-width: calc(100% - 48px); white-space: normal; }
+}

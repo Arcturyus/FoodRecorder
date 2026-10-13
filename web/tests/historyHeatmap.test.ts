@@ -72,7 +72,8 @@ describe('monthSpans', () => {
 describe('heatLevel', () => {
   it('reprend les seuils du calendrier mensuel', () => {
     expect(heatLevel(0.69).level).toBe('under');
-    expect(heatLevel(0.7).level).toBe('ok');
+    expect(heatLevel(0.89).level).toBe('under');
+    expect(heatLevel(0.9).level).toBe('ok');
     expect(heatLevel(1.1).level).toBe('ok');
     expect(heatLevel(1.11).level).toBe('over');
   });

@@ -75,14 +75,14 @@ describe('autres transports agent', () => {
   });
 
   it('garde le CLI en compatibilité JSON et étiquette ses tokens comme estimés', async () => {
-    useStore.setState({ extractionMode: 'claudecode', cliBridge: 'codex' });
+    useStore.setState({ extractionMode: 'claudecode', cliBridge: 'codex', cliModels: { codex: 'test-codex-model' } });
     const fetchMock = vi.fn().mockResolvedValue(new Response(JSON.stringify({ text: '{"outil":"lire_profil_objectifs","args":{}}' }), { status: 200, headers: { 'Content-Type': 'application/json' } }));
     vi.stubGlobal('fetch', fetchMock);
     const reply = await askAgentEngine([{ role: 'user', content: 'Mes objectifs ?' }], [], DEFAULT_AGENT_LIMITS);
     expect(reply.kind).toBe('tool');
-    expect(reply.usage).toMatchObject({ provider: 'codex', model: 'codex (défaut CLI)', transport: 'cli-json', estimated: true });
+    expect(reply.usage).toMatchObject({ provider: 'codex', model: 'test-codex-model', transport: 'cli-json', estimated: true });
     const body = JSON.parse(fetchMock.mock.calls[0][1].body);
-    expect(body).toMatchObject({ cli: 'codex', label: 'agent' });
+    expect(body).toMatchObject({ cli: 'codex', model: 'test-codex-model', label: 'agent' });
     expect(body.prompt).toContain('lire_profil_objectifs');
   });
 

@@ -22,6 +22,7 @@ import { fmt } from './format';
 import { FoodInsights } from './Foods';
 import { useEffectiveFoods, useStore } from '../store/store';
 import { costOfDay, meanCompleteCosts } from '../nutrition/price';
+import { useCalorieGoals } from './useCalorieGoals';
 
 /** Toutes les clés de nutriments (moyennes par groupe de dates). */
 const NUT_KEYS = Object.keys(EMPTY_NUTRIENTS) as NutrientKey[];
@@ -141,6 +142,11 @@ export function Stats() {
   // en premier, et à une seule courbe le graphe affiche aussi les quantités réelles
   // (axe de droite) — la lecture la plus directe possible dès l'ouverture.
   const [selected, setSelected] = useState<string[]>(['kcal']);
+  const [dailyGoalMode, setDailyGoalMode] = useState(false);
+  const caloriesOnly = selected.length === 1 && selected[0] === 'kcal';
+  const historicalCalories = caloriesOnly && dailyGoalMode;
+  const goalForDate = useCalorieGoals(targetByKey.get('kcal')!.optimal);
+  useEffect(() => { if (!caloriesOnly) setDailyGoalMode(false); }, [caloriesOnly]);
   const [maOn, setMaOn] = useState(false);
   const [maWindow, setMaWindow] = useState(7);
   /**
@@ -274,6 +280,17 @@ export function Stats() {
         // Nutriment : % = apport / objectif (plafond pour les « limites », sinon
         // optimal ou AJR selon `refMode`).
         const t = targetByKey.get(id as NutrientKey)!;
+        if (id === 'kcal' && historicalCalories) {
+          const goals = buckets.map(b => b.dates.map(date => goalForDate(date)));
+          const objectives = goals.map(list => list.every(g => g !== null) ? list.reduce((sum, g) => sum + g!.kcal, 0) / list.length : null);
+          const values = bucketAverages.map(a => a.kcal);
+          const raws = values.map((v, k) => objectives[k] ? v / objectives[k]! * 100 : null);
+          const ma = smooth(raws);
+          return { id, kind: 'nutrient' as const, label: t.label, unit: t.unit, goal: t.goal, color,
+            objective: t.optimal, variableObjective: true,
+            points: values.map((v, k) => ({ ...point(k, v, raws[k], ma[k]), objective: objectives[k],
+              approximateGoal: goals[k].some(g => g?.source === 'weekly-estimate') })) };
+        }
         const objective = t.goal === 'limit' ? t.ajr : refMode === 'ajr' ? t.ajr : t.optimal;
         const values = bucketAverages.map((a) => a[id as NutrientKey]);
         const raws = values.map((v) => (objective > 0 ? (v / objective) * 100 : 0));
@@ -289,7 +306,7 @@ export function Stats() {
           points: values.map((v, k) => point(k, v, raws[k], ma[k])),
         };
       }),
-    [selected, targetByKey, buckets, bucketAverages, smooth, refMode, priceByDate, priceMean],
+    [selected, targetByKey, buckets, bucketAverages, smooth, refMode, priceByDate, priceMean, historicalCalories, goalForDate],
   );
 
   const colorById = useMemo(() => new Map(series.map((s) => [s.id, s.color])), [series]);
@@ -435,18 +452,23 @@ export function Stats() {
             )}
           </div>
         </div>
+        {caloriesOnly && <label className="row small" style={{ gap: 8, marginBlock: 12 }}>
+          <input type="checkbox" checked={dailyGoalMode} onChange={e => setDailyGoalMode(e.target.checked)} />Calories par rapport à l'objectif de chaque jour
+        </label>}
+        {historicalCalories && <p className="hint">100 % correspond à l'objectif de chaque date. Avant le premier enregistrement, approximation par la moyenne des jours comptés de la semaine (lundi–dimanche).
+          En semaine ou mois : apports moyens divisés par objectifs moyens des mêmes jours. Les couvertures ci-dessous gardent les objectifs actuels.</p>}
         <p className="small" style={{ marginTop: 2 }}>
           Nutriments et rapports sont en <strong>% de leur cible</strong>. Pour le prix, 100 % représente
           le <strong>coût quotidien moyen de la période choisie</strong>, sans objectif de dépense.
           Survolez pour les valeurs réelles en euros ou en unités nutritionnelles.
           {selected.includes('prix') && ` ${[...priceByDate.values()].filter((cost) => !cost.complete).length} jour(s) au prix partiel sont exclus de la moyenne et du tracé.`}
-          {selected.length === 1
+          {historicalCalories ? ' Objectif variable : les kcal et l’objectif du point sont indiqués au survol.' : selected.length === 1
             ? ' Un seul élément affiché : l’axe de droite donne directement les quantités.'
             : ' Les quantités réelles s’affichent sur un second axe dès qu’un seul élément est sélectionné — à plusieurs, leurs unités ne partagent aucune graduation.'}
           {gran !== 'jour' &&
             ` Un point = ${gran === 'semaine' ? 'une semaine' : 'un mois'} (${buckets.length} au total), en moyenne PAR JOUR des jours enregistrés — comparable à la cible journalière.`}
           {selected.includes('vitD') && ' La vitamine D inclut l\'apport du soleil ☀️.'}
-          {refMode === 'ajr' && " Nutriments à couvrir : la ligne 100 % est l'AJR (réglage « Référence 100 % » ci-dessus). Les rapports gardent leur propre cible."}
+          {refMode === 'ajr' && !historicalCalories && " Nutriments à couvrir : la ligne 100 % est l'AJR (réglage « Référence 100 % » ci-dessus). Les rapports gardent leur propre cible."}
           {decayOn
             ? ` Chaque point de la courbe épaisse est la moyenne pondérée des ${decayWindowDays(halfLife)} ${granularityUnit(gran)} qui le précèdent (demi-vie ${halfLife} ${granularityUnit(gran)}) : une carence comblée depuis s'efface, une carence installée reste. La courbe brute reste en trait fin.`
             : maOn && ' La moyenne mobile lisse le bruit ; la courbe brute reste en trait fin.'}
@@ -515,6 +537,7 @@ type TrendSeries = {
   label: string;
   color: string;
   objective: number;
+  variableObjective?: boolean;
   unit?: string; // nutriment
   goal?: Target['goal']; // nutriment
   suffix?: string; // rapport (ex. « :1 »)
@@ -526,6 +549,8 @@ type TrendSeries = {
     value: number | null;
     pct: number | null;
     maPct: number | null;
+    objective?: number | null;
+    approximateGoal?: boolean;
   }[];
 };
 
@@ -566,7 +591,7 @@ function MultiTrend({
    * commune en quantité n'existe pas — c'est précisément pourquoi l'axe principal
    * est en % de la cible.
    */
-  const solo = series.length === 1 ? series[0] : null;
+  const solo = series.length === 1 && !series[0].variableObjective ? series[0] : null;
   const m = { top: 16, right: solo ? 58 : 16, bottom: 30, left: 44 };
   const svgRef = useRef<SVGSVGElement>(null);
   const [hover, setHover] = useState<number | null>(null);
@@ -754,6 +779,7 @@ function MultiTrend({
                 <i style={{ display: 'inline-block', width: 8, height: 8, borderRadius: 2, background: s.color, marginRight: 5 }} />
                 {s.label} : <strong>{p.value == null ? '—' : formatSeriesValue(s, p.value)}</strong>
                 {p.pct != null && <span style={{ color: s.kind === 'price' ? C.muted : p.pct >= 100 ? C.accent2 : C.warn }}> · {fmt(p.pct)} % {s.kind === 'price' ? 'de la moyenne' : ''}</span>}
+                {s.variableObjective && <div className="small">Objectif {p.objective == null ? 'inconnu' : `${fmt(p.objective)} kcal`}{p.approximateGoal ? ' · approximé par la semaine' : ''}</div>}
                 {maOn && p.maPct != null && <span style={{ color: C.muted }}> · lissé {fmt(p.maPct)} %</span>}
               </div>
             );

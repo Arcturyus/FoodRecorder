@@ -26,6 +26,7 @@ import { Settings } from './ui/Settings';
 import { AgentChat } from './ui/AgentChat';
 import { AgentLauncher } from './ui/AgentLauncher';
 import { useNavigation, type AppTab } from './agent/navigation';
+import { useCalorieGoalRecording } from './ui/useCalorieGoalRecording';
 
 type Tab = AppTab;
 
@@ -159,6 +160,7 @@ export function App() {
   useEffect(() => {
     initChangeTracker();
   }, []);
+  useCalorieGoalRecording();
 
   // La session Supabase persistée peut avoir expiré pendant que l'app était fermée : on le
   // constate au démarrage pour afficher tout de suite la demande de mot de passe, plutôt que

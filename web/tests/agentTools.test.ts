@@ -33,10 +33,18 @@ async function run(name: string, args: unknown): Promise<any> {
 }
 
 beforeEach(() => {
-  useStore.setState({ entries: [], customFoods: [], sunExposures: [], mutedDays: {}, dayNotes: {} });
+  useStore.setState({ entries: [], customFoods: [], sunExposures: [], mutedDays: {}, dayNotes: {}, dailyCalorieGoals: {} });
 });
 
 describe('outils de lecture de l’agent', () => {
+  it('reads the saved calorie goal of a historical day instead of the current goal', async () => {
+    const meal = entry('2026-07-01', 100);
+    meal.items[0].nutrients.kcal = 1800;
+    useStore.setState({ entries: [meal], dailyCalorieGoals: { '2026-07-01': { kcal: 2000, source: 'recorded', updatedAt: 1 } } });
+    const result = await run('lire_nutriments', { date: '2026-07-01', nutriments: ['kcal'] });
+    expect(result.calorieGoal).toMatchObject({ kcal: 2000, source: 'recorded' });
+    expect(result.nutrients[0]).toMatchObject({ value: 1800, target: { optimal: 2000 }, coveragePercent: 90 });
+  });
   it('déclare explicitement chaque lecture pour que la boucle reste fail-closed', () => {
     expect(READ_TOOLS.length).toBeGreaterThan(9);
     expect(READ_TOOLS.every((tool) => tool.policy === 'read')).toBe(true);

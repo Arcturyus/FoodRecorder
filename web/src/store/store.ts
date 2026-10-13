@@ -39,6 +39,7 @@ import type { BodyMeasurementEntry, WeightEntry, WeightConfig } from '../weight/
 import { SEED_WEIGHT_ENTRIES, SEED_WEIGHT_CONFIG } from '../weight/seed';
 import type { SunExposure } from '../sun/vitaminD';
 import { normalizeCreme } from '../sun/vitaminD';
+import { normalizeCalorieGoals, recordCalorieGoal, type DailyCalorieGoals } from '../nutrition/calorieGoals';
 
 /** Un item enregistré dans le journal (résolu et éditable). */
 export interface JournalItem {
@@ -364,6 +365,8 @@ interface AppState {
    * `computeTargets`, et suivra ses évolutions futures.
    */
   nutrientTargets: TargetOverrides;
+  dailyCalorieGoals: DailyCalorieGoals;
+  recordCurrentCalorieGoal: (date: string, kcal: number) => void;
 
   setSttEngine: (e: SttEngine) => void;
   setSttModel: (id: string) => void;
@@ -563,6 +566,8 @@ export const useStore = create<AppState>()(
       dayNotes: {},
       nutrientImportance: {},
       nutrientTargets: {},
+      dailyCalorieGoals: {},
+      recordCurrentCalorieGoal: (date, kcal) => set(s => ({ dailyCalorieGoals: recordCalorieGoal(s.dailyCalorieGoals, date, kcal, Date.now()) })),
 
       setSttEngine: (e) => set({ sttEngine: e }),
       setSttModel: (id) => set({ sttModel: id }),
@@ -1254,6 +1259,7 @@ function mergePersisted(persisted: unknown, current: AppState): AppState {
     dayNotes: p.dayNotes ?? {},
     nutrientImportance: p.nutrientImportance ?? {},
     nutrientTargets: p.nutrientTargets ?? {},
+    dailyCalorieGoals: normalizeCalorieGoals(p.dailyCalorieGoals),
   };
 }
 

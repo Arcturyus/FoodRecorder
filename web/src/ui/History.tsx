@@ -11,6 +11,8 @@ import type { Food, FoodCategory } from '../nutrition/types';
 import { DayView } from './DayView';
 import { DayPickerButton, dayLabel, daysAgo, relativeDayLabel } from './DayPicker';
 import { HistoryHeatmap } from './HistoryHeatmap';
+import { useCalorieGoals } from './useCalorieGoals';
+import { calorieGoalLabel } from '../nutrition/calorieGoals';
 import { UncertaintyBadge } from './UncertaintyBadge';
 import { fmt, CATEGORY_LABELS } from './format';
 
@@ -31,6 +33,7 @@ export function History() {
   const toggleDayMute = useStore((s) => s.toggleDayMute);
   const targets = useTargets();
   const kcalTarget = targets.find((t) => t.key === 'kcal')?.optimal ?? 2000;
+  const goalForDate = useCalorieGoals(kcalTarget);
 
   const today = todayStr();
   const now = new Date();
@@ -83,6 +86,7 @@ export function History() {
         kcalByDate={kcalByDate}
         mutedDays={mutedDays}
         kcalTarget={kcalTarget}
+        goalForDate={goalForDate}
         today={today}
         foundDates={foundDates}
         selected={editDate}
@@ -116,12 +120,14 @@ export function History() {
             if (date === null) return <div key={`e${i}`} className="cal-cell empty" />;
             const hasEntries = kcalByDate.has(date);
             const counted = isDayCounted(mutedDays, hasEntries, date);
+            const goal = goalForDate(date);
             return (
               <CalCell
                 key={date}
                 date={date}
                 kcal={kcalByDate.get(date)}
-                target={kcalTarget}
+                target={goal?.kcal ?? 0}
+                goalLabel={calorieGoalLabel(goal)}
                 isToday={date === today}
                 isFuture={date > today}
                 selected={date === editDate}
@@ -141,7 +147,7 @@ export function History() {
             <i className="cal-legend under" /> sous l'objectif
           </span>
           <span>
-            <i className="cal-legend ok" /> proche de l'objectif
+            <i className="cal-legend ok" /> dans la cible (90–110 %)
           </span>
           <span>
             <i className="cal-legend over" /> au-dessus
@@ -175,6 +181,7 @@ function CalCell({
   date,
   kcal,
   target,
+  goalLabel,
   isToday,
   isFuture,
   selected,
@@ -189,6 +196,7 @@ function CalCell({
   date: string;
   kcal: number | undefined;
   target: number;
+  goalLabel: string;
   isToday: boolean;
   isFuture: boolean;
   selected: boolean;
@@ -207,7 +215,7 @@ function CalCell({
 }) {
   const day = Number(date.slice(8, 10));
   const ratio = kcal != null && target > 0 ? kcal / target : 0;
-  const level = kcal == null ? '' : ratio < 0.7 ? 'under' : ratio <= 1.1 ? 'ok' : 'over';
+  const level = kcal == null || target <= 0 ? '' : ratio < 0.9 ? 'under' : ratio <= 1.1 ? 'ok' : 'over';
 
   // Libellé de l'action de mute selon l'état courant du jour.
   const muteTitle = counted
@@ -223,6 +231,7 @@ function CalCell({
       }${found ? ' found' : ''}${muted ? ' muted' : ''}${fasting ? ' fasting' : ''}`}
       onClick={onClick}
       disabled={isFuture}
+      title={`${date} · ${goalLabel}${target > 0 ? ` : ${fmt(target)} kcal` : ''}`}
       data-tip={found ? 'Jour retenu par la recherche' : undefined}
     >
       <span className="cal-day">{day}</span>

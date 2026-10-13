@@ -17,7 +17,6 @@ Revue du 13/10/2026 : code actuel et navigation sur ordinateur / téléphone, en
 - **P-05 · Traçabilité des chiffres restants.** L'énergie et le soleil ont déjà leur détail. Compléter au besoin les cibles et scores de recommandations : formule, entrées utilisées, étapes et limites accessibles au clic.
 - **P-07 · Cuivre.** Ajouter le nutriment après vérification de la couverture des aliments, des références et des limites. Distinguer inconnu de zéro ; un rapprochement avec le zinc reste à discuter.
 - **P-08 · Vitamine A détaillée.** Garder le total `vitA`, et conserver rétinol / bêta-carotène séparément lorsque les sources le permettent ; expliciter conversion et données manquantes.
-- **C-01 · Dépense observée.** Croiser apports enregistrés et tendance du poids sur plusieurs semaines. Exclure les jours non saisis ; ne pas estimer sous environ 80 % de couverture. Afficher l'incertitude. À décider : emplacement et correctif personnel daté / annulable avant toute application aux objectifs.
 
 ## À confirmer à l'usage
 

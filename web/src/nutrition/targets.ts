@@ -1,7 +1,7 @@
 import type { NutrientKey } from './types';
 import { RDA } from './rda';
 import type { Goal } from './rda';
-import { computeEnergy, protRecommandeParKg, PROT_BOUNDS } from './energy';
+import { computeEnergy, protRecommandeParKg, PROT_BOUNDS, TEF_RATIO, DAYS_PER_MONTH, KCAL_PER_KG_FAT } from './energy';
 import type { BmrFormula, EnergyBreakdown, Sex, SportType, WorkPosture } from './energy';
 
 /**
@@ -59,6 +59,26 @@ export interface Profile {
   bmrFormule?: BmrFormula;
   /** % de masse grasse saisi à la main — sinon celui de la dernière pesée qui en porte un. */
   masseGrassePct?: number;
+  /** Defaults to formulas. The observed estimate is a dated, explicitly applied snapshot. */
+  maintenanceMode?: 'formula' | 'observed';
+  observedMaintenance?: ObservedMaintenance;
+}
+
+export interface ObservedMaintenance {
+  kcal: number;
+  low: number;
+  high: number;
+  start: string;
+  end: string;
+  calculatedAt: string;
+  n: number;
+  duration: number;
+  rho: number;
+  lag: number;
+  confidence: 90 | 95 | 99;
+  intakeBias: number;
+  standardOnly: boolean;
+  version: string;
 }
 
 export const DEFAULT_PROFILE: Profile = {
@@ -119,7 +139,7 @@ export function energySettings(profile: Profile): {
 /** Décomposition complète de la dépense pour un profil et un corps donnés. */
 export function computeEnergyFor(profile: Profile, body: BodyContext = DEFAULT_BODY): EnergyBreakdown {
   const s = energySettings(profile);
-  return computeEnergy({
+  const formula = computeEnergy({
     sexe: profile.sexe,
     poids: profile.poids,
     tailleCm: body.tailleCm,
@@ -132,6 +152,19 @@ export function computeEnergyFor(profile: Profile, body: BodyContext = DEFAULT_B
     formule: s.bmrFormule,
     kcalFactor: objectiveKcalFactor(profile),
   });
+  const observed = profile.observedMaintenance;
+  if (profile.maintenanceMode !== 'observed' || !observed || !Number.isFinite(observed.kcal) || observed.kcal <= 0) return formula;
+  const tdee = observed.kcal;
+  const cible = Math.round(tdee * objectiveKcalFactor(profile) / 10) * 10;
+  // Preserve the app's existing TEF convention for forecasts; never attribute
+  // the difference from the formulas to a particular BMR/activity component.
+  const ecartReel = (tdee - cible) * (1 - TEF_RATIO);
+  const low = Number.isFinite(observed.low) ? observed.low : tdee;
+  const high = Number.isFinite(observed.high) ? observed.high : tdee;
+  return { ...formula, tdee, cible, ecartReel,
+    kgParMois: -ecartReel * DAYS_PER_MONTH / KCAL_PER_KG_FAT,
+    kgParMoisMin: -(high - cible) * (1 - TEF_RATIO) * DAYS_PER_MONTH / KCAL_PER_KG_FAT,
+    kgParMoisMax: -(low - cible) * (1 - TEF_RATIO) * DAYS_PER_MONTH / KCAL_PER_KG_FAT };
 }
 
 /** Protéines conseillées (g/kg) pour ce profil — le point de repère du réglage libre. */

@@ -126,6 +126,7 @@ beforeEach(() => {
     profile: DEFAULT_PROFILE,
     weightConfig: DEFAULT_WEIGHT_CONFIG,
     deviceId: 'me',
+    dailyCalorieGoals: {},
   });
 });
 
@@ -136,6 +137,15 @@ function join(cursor: string | null = null) {
 }
 
 describe('runProfileSyncTick — pull', () => {
+  it('merges independent daily calorie goals despite a pending local map update', async () => {
+    useStore.setState({ dailyCalorieGoals: { '2026-07-18': { kcal: 2000, source: 'recorded', updatedAt: 300 } } });
+    join();
+    useSyncStore.getState().mergePending({ 'profile_kv:dailyCalorieGoals': { updatedAt: 300 } });
+    db.rows.profile_kv = [{ profile_id: 'p1', key: 'dailyCalorieGoals', payload: { '2026-07-19': { kcal: 2100, source: 'recorded', updatedAt: 100 } }, updated_at: 100, deleted: false, device: 'other', synced_at: '000100' }];
+    await runProfileSyncTick();
+    expect(Object.keys(useStore.getState().dailyCalorieGoals).sort()).toEqual(['2026-07-18', '2026-07-19']);
+    expect(Object.keys(db.rows.profile_kv[0].payload).sort()).toEqual(['2026-07-18', '2026-07-19']);
+  });
   it('applique une entrée distante absente en local (LWW)', async () => {
     db.rows.journal_entries = [entryRow('e1')];
     join();
@@ -315,6 +325,7 @@ describe('jonction et création', () => {
     expect(Object.keys(useSyncStore.getState().pending)).toHaveLength(0);
     // Les singletons sont aussi poussés.
     expect((db.rows.profile_kv ?? []).map((r) => r.key).sort()).toEqual([
+      'dailyCalorieGoals',
       'dayNotes',
       'mutedDays',
       'nutrientImportance',

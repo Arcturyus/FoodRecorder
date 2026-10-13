@@ -3,7 +3,8 @@ import { RDA, nutrientLabelOf } from '../nutrition/rda';
 import { computeTargets } from '../nutrition/targets';
 import type { FoodCategory, NutrientKey, Nutrients } from '../nutrition/types';
 import { EMPTY_NUTRIENTS } from '../nutrition/types';
-import { effectiveFoods, isDayCounted, useStore } from '../store/store';
+import { effectiveFoods, isDayCounted, useStore, todayStr } from '../store/store';
+import { caloriesByDate, resolveCalorieGoal } from '../nutrition/calorieGoals';
 import { groupIntoMeals } from '../ui/meals';
 import { computeWeight } from '../weight/compute';
 import { foodFrequencies, nutrientContributions } from '../nutrition/frequency';
@@ -56,11 +57,14 @@ function selectedKeys(keys?: NutrientKey[]): NutrientKey[] {
   return keys?.length ? keys : nutrientKeys;
 }
 
-function nutrientRows(values: Nutrients, keys?: NutrientKey[]) {
+function nutrientRows(values: Nutrients, keys?: NutrientKey[], date?: string) {
   const byTarget = targets();
+  const s = useStore.getState();
+  const dailyGoal = date ? resolveCalorieGoal(date, s.dailyCalorieGoals, caloriesByDate(s.entries), s.mutedDays, byTarget.get('kcal')!.optimal, todayStr()) : null;
   return selectedKeys(keys).map((key) => {
     const meta = nutrientMeta.get(key);
-    const target = byTarget.get(key);
+    const baseTarget = byTarget.get(key);
+    const target = key === 'kcal' && baseTarget && dailyGoal ? { ...baseTarget, optimal: dailyGoal.kcal } : baseTarget;
     const value = round(values[key]);
     return {
       key,
@@ -173,7 +177,8 @@ const lireNutriments: AgentTool<z.infer<typeof lireNutrimentsArgs>> = {
       date,
       countedInAverages: isDayCounted(s.mutedDays, s.entries.some((e) => e.date === date), date),
       filters: { inclureSoleil },
-      nutrients: nutrientRows(withSun, nutriments),
+      nutrients: nutrientRows(withSun, nutriments, date),
+      calorieGoal: resolveCalorieGoal(date, s.dailyCalorieGoals, caloriesByDate(s.entries), s.mutedDays, targets().get('kcal')!.optimal, todayStr()),
       ...(!nutriments?.length || nutriments.includes('vitD')
         ? { vitaminD: { foodMicrograms: round(totals.vitD), sunMicrograms: round(sunGain), totalMicrograms: round(withSun.vitD), exposures } }
         : {}),

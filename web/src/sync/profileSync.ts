@@ -24,6 +24,7 @@ import {
 } from '../store/store';
 import type { Food } from '../nutrition/types';
 import { enrichBankPrices } from '../nutrition/priceSeed';
+import { mergeCalorieGoals, type DailyCalorieGoals } from '../nutrition/calorieGoals';
 import type { WeightEntry } from '../weight/types';
 import { normalizeCreme, type SunExposure } from '../sun/vitaminD';
 import { exportJsonFile } from '../store/backup';
@@ -114,7 +115,7 @@ function mergeArray<T extends { id: string }>(local: T[], rows: DbRow[]): T[] {
 }
 
 /** Champs singletons (`profile`, `weightConfig`, `mutedDays`…) à écraser depuis le distant. */
-function kvUpdates(rows: DbRow[]): Partial<StoreState> {
+function kvUpdates(rows: DbRow[], localGoals: DailyCalorieGoals = {}): Partial<StoreState> {
   const out: Record<string, unknown> = {};
   for (const r of rows) {
     if (r.deleted || !r.payload) continue; // on ne supprime jamais un singleton
@@ -124,6 +125,7 @@ function kvUpdates(rows: DbRow[]): Partial<StoreState> {
     if (r.key === 'dayNotes') out.dayNotes = r.payload;
     if (r.key === 'nutrientImportance') out.nutrientImportance = r.payload;
     if (r.key === 'nutrientTargets') out.nutrientTargets = r.payload;
+    if (r.key === 'dailyCalorieGoals') out.dailyCalorieGoals = mergeCalorieGoals(localGoals, r.payload);
   }
   return out as Partial<StoreState>;
 }
@@ -154,10 +156,14 @@ function applyDelta(remote: RemoteData): void {
         favoriteMeals: mergeArray(s.favoriteMeals, remote.tables.favorite_meals),
         weightEntries: mergeArray(s.weightEntries, remote.tables.weight_entries),
         sunExposures: normalizeSun(mergeArray(s.sunExposures, remote.tables.sun_exposures)),
-        ...kvUpdates(remote.kv),
+        ...kvUpdates(remote.kv, s.dailyCalorieGoals),
       };
     }),
   );
+  const goalRow = remote.kv.find(r => r.key === 'dailyCalorieGoals' && !r.deleted);
+  if (goalRow && JSON.stringify(goalRow.payload) !== JSON.stringify(useStore.getState().dailyCalorieGoals)) {
+    useSyncStore.getState().mergePending({ [pendingKey('profile_kv', 'dailyCalorieGoals')]: { updatedAt: Date.now() } });
+  }
 }
 
 /** Remplace TOTALEMENT les données locales par le distant (stratégie « télécharger »). */
@@ -172,6 +178,7 @@ function replaceFromRemote(remote: RemoteData): void {
         favoriteMeals: liveArray<FavoriteMeal>(remote.tables.favorite_meals),
         weightEntries: liveArray<WeightEntry>(remote.tables.weight_entries),
         sunExposures: normalizeSun(liveArray<SunExposure>(remote.tables.sun_exposures)),
+        dailyCalorieGoals: {},
         ...kvUpdates(remote.kv),
       };
     }),
@@ -187,6 +194,7 @@ function filterByPending(remote: RemoteData): RemoteData {
   const pending = useSyncStore.getState().pending;
   const keep = (table: SyncTable, rows: DbRow[]): DbRow[] =>
     rows.filter((r) => {
+      if (table === 'profile_kv' && r.key === 'dailyCalorieGoals') return true; // merge independent days, including locally pending ones
       const id = table === 'profile_kv' ? r.key : r.id;
       if (!id) return false;
       const p = pending[pendingKey(table, id)];

@@ -3,6 +3,7 @@ import { todayStr, isDayCounted } from '../store/store';
 import { fmt } from './format';
 import { dayLabel } from './DayPicker';
 import { DEFAULT_PERIOD_DAYS } from './PeriodSelector';
+import { calorieGoalLabel, type ResolvedCalorieGoal } from '../nutrition/calorieGoals';
 
 /**
  * Heatmap continue de l'historique, façon « contributions GitHub » : une case =
@@ -103,7 +104,7 @@ function monthLabel(ym: string): string {
  * et l'écart y est petit par construction (rien à graduer).
  */
 export function heatLevel(ratio: number): { level: 'under' | 'ok' | 'over'; step: 1 | 2 | 3 } {
-  if (ratio < 0.7) return { level: 'under', step: ratio < 0.35 ? 3 : ratio < 0.55 ? 2 : 1 };
+  if (ratio < 0.9) return { level: 'under', step: ratio < 0.35 ? 3 : ratio < 0.55 ? 2 : 1 };
   if (ratio > 1.1) return { level: 'over', step: ratio > 1.6 ? 3 : ratio > 1.3 ? 2 : 1 };
   return { level: 'ok', step: 3 };
 }
@@ -131,6 +132,7 @@ export function HistoryHeatmap({
   kcalByDate,
   mutedDays,
   kcalTarget,
+  goalForDate,
   today,
   foundDates,
   selected,
@@ -140,6 +142,7 @@ export function HistoryHeatmap({
   kcalByDate: Map<string, number>;
   mutedDays: Record<string, boolean>;
   kcalTarget: number;
+  goalForDate?: (date: string) => ResolvedCalorieGoal | null;
   today: string;
   /** Jours retenus par la recherche d'aliment (cerclés, comme dans le calendrier). */
   foundDates: Set<string>;
@@ -174,6 +177,7 @@ export function HistoryHeatmap({
   const remplis = windowDates.filter((d) => kcalByDate.has(d)).length;
 
   const hoveredKcal = hover != null ? kcalByDate.get(hover) : undefined;
+  const hoveredGoal = hover ? goalForDate?.(hover) : null;
 
   return (
     <div className="panel">
@@ -228,7 +232,7 @@ export function HistoryHeatmap({
                     key={date}
                     date={date}
                     kcal={kcalByDate.get(date)}
-                    target={kcalTarget}
+                    target={goalForDate ? goalForDate(date)?.kcal ?? 0 : kcalTarget}
                     counted={isDayCounted(mutedDays, kcalByDate.has(date), date)}
                     found={foundDates.has(date)}
                     selected={date === selected}
@@ -248,7 +252,7 @@ export function HistoryHeatmap({
             <strong style={{ color: 'var(--text)' }}>{capitalize(dayLabel(hover))}</strong>
             {' — '}
             {hoveredKcal != null
-              ? `${fmt(hoveredKcal)} kcal (${ecartLabel(hoveredKcal, kcalTarget)})${
+              ? `${fmt(hoveredKcal)} kcal (${ecartLabel(hoveredKcal, goalForDate ? hoveredGoal?.kcal ?? 0 : kcalTarget)}) · ${calorieGoalLabel(hoveredGoal ?? null)}${hoveredGoal ? ` : ${fmt(hoveredGoal.kcal)} kcal` : ''}${
                   isDayCounted(mutedDays, true, hover) ? '' : ' · non compté (mal rempli)'
                 }`
               : isDayCounted(mutedDays, false, hover)
@@ -276,7 +280,7 @@ export function HistoryHeatmap({
           au-dessus
         </span>
         <span>
-          <i className="heat-key ok s3" /> dans la cible ({fmt(kcalTarget)} kcal)
+          <i className="heat-key ok s3" /> dans la cible (90–110 % de l'objectif du jour)
         </span>
         <span>
           <i className="heat-key empty" /> rien d'enregistré
@@ -291,7 +295,7 @@ export function HistoryHeatmap({
       <div className="hint" style={{ marginTop: 6 }}>
         La couleur ne dit pas « bien » ou « mal » : elle situe la journée par rapport à l'objectif, à partir de ce qui a
         été saisi. Une journée à moitié remplie paraît donc « en dessous » — c'est à ça que sert 🔇 dans le calendrier
-        ci-dessous.
+        ci-dessous. Avant le premier objectif enregistré, l'objectif est approximé par la moyenne des jours comptés de la semaine, du lundi au dimanche.
       </div>
     </div>
   );

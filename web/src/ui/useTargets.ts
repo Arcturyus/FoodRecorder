@@ -3,6 +3,7 @@ import { useStore } from '../store/store';
 import { computeTargets, computeEnergyFor } from '../nutrition/targets';
 import type { BodyContext, Target } from '../nutrition/targets';
 import type { EnergyBreakdown } from '../nutrition/energy';
+import { useCalorieGoals } from './useCalorieGoals';
 
 /**
  * Les cibles quotidiennes dépendent de trois sources qui vivaient jusqu'ici
@@ -40,11 +41,14 @@ export function useBody(): BodyContext {
 }
 
 /** Objectifs nutritionnels du profil courant, réglages personnels compris. */
-export function useTargets(): Target[] {
+export function useTargets(date?: string): Target[] {
   const profile = useStore((s) => s.profile);
   const overrides = useStore((s) => s.nutrientTargets);
   const body = useBody();
-  return useMemo(() => computeTargets(profile, body, overrides), [profile, body, overrides]);
+  const current = useMemo(() => computeTargets(profile, body, overrides), [profile, body, overrides]);
+  const goalForDate = useCalorieGoals(current.find(t => t.key === 'kcal')!.optimal);
+  const goal = date ? goalForDate(date) : null;
+  return useMemo(() => goal ? current.map(t => t.key === 'kcal' ? { ...t, optimal: goal.kcal } : t) : current, [current, goal?.kcal]);
 }
 
 /**

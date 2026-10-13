@@ -5,6 +5,8 @@ import type { DayCost } from '../nutrition/price';
 import { PRICE_NOTE } from '../nutrition/price';
 import type { JournalItem } from '../store/store';
 import { useTargets } from './useTargets';
+import { useCalorieGoals } from './useCalorieGoals';
+import { calorieGoalLabel } from '../nutrition/calorieGoals';
 import type { Target } from '../nutrition/targets';
 import { computeRatios } from '../nutrition/ratios';
 import type { RatioResult } from '../nutrition/ratios';
@@ -381,10 +383,12 @@ export function Totals({
   /** Jour affiché (défaut : aujourd'hui) — ancre la moyenne 7 j du seuil de carence. */
   date?: string;
 }) {
-  const targets = useTargets();
+  const targets = useTargets(date);
   const recentAvg = useTrailingAverage(date ?? todayStr(), LOW_THRESHOLD_WINDOW);
 
   const kcalT = targets.find((t) => t.key === 'kcal')!;
+  const goalForDate = useCalorieGoals(kcalT.optimal);
+  const dayGoal = date ? goalForDate(date) : null;
   const headline = targets.filter((t) =>
     ['proteines', 'glucides', 'lipides', 'fibres'].includes(t.key),
   );
@@ -445,6 +449,7 @@ export function Totals({
       </div>
 
       <KcalBar consumed={totals.kcal} target={kcalT.optimal} incertitude={incertitude} />
+      {date && date < todayStr() && <p className="hint">{dayGoal ? `${calorieGoalLabel(dayGoal)} : ${fmt(dayGoal.kcal)} kcal.` : 'Objectif historique inconnu : repère actuel utilisé pour ce bilan.'}</p>}
 
       <div className="fold-head">
         <button type="button" className="sec-toggle fold-toggle" aria-expanded={open} onClick={() => setOpen(!open)}>

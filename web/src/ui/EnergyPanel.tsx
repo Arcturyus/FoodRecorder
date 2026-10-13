@@ -1,6 +1,6 @@
 import { useStore } from '../store/store';
-import { useEnergy, useBody } from './useTargets';
-import { objectivePct } from '../nutrition/targets';
+import { useEnergy, useBody, useTargets } from './useTargets';
+import { objectivePct, computeEnergyFor } from '../nutrition/targets';
 import {
   TDEE_UNCERTAINTY_PCT,
   TEF_RATIO,
@@ -36,10 +36,30 @@ function signe(kg: number): string {
 }
 
 export function EnergyPanel() {
+  const profile = useStore(s => s.profile);
+  const setProfile = useStore(s => s.setProfile);
+  const e = useEnergy();
+  const target = useTargets().find(t => t.key === 'kcal')!.optimal;
+  const saved = profile.observedMaintenance;
+  if (profile.maintenanceMode !== 'observed' || !saved || !Number.isFinite(saved.kcal) || saved.kcal <= 0) return <FormulaEnergyPanel />;
+  return <Section id="energie" title="Dépense énergétique estimée" defaultOpen={false}
+    summary={`${fmt(e.tdee)} kcal/j · maintenance observée`}>
+    <div className="energy-headline"><div><strong className="energy-big mono">{fmt(e.tdee)}</strong> kcal/j de maintien</div>
+      <div><strong className="energy-big mono">{fmt(target)}</strong> kcal/j visées</div></div>
+    <p className="small">Maintenance appliquée depuis les observations du {saved.start} au {saved.end}.
+      Le déficit ou surplus du profil s'applique à cette valeur. Les cibles réglées directement dans Nutriments restent prioritaires.</p>
+    <p className="hint">Intervalle statistique historique à {saved.confidence} % : {fmt(saved.low)} à {fmt(saved.high)} kcal/j.
+      Il n'inclut pas les biais de saisie ni les changements d'activité après cette période.</p>
+    <button type="button" className="ghost small" onClick={() => setProfile({ maintenanceMode: 'formula' })}>Revenir à la maintenance par formules</button>
+    <details style={{ marginTop: 16 }}><summary>Comparer au calcul par formules</summary><FormulaEnergyPanel comparison /></details>
+  </Section>;
+}
+
+function FormulaEnergyPanel({ comparison = false }: { comparison?: boolean }) {
   const profile = useStore((s) => s.profile);
   const setProfile = useStore((s) => s.setProfile);
   const body = useBody();
-  const e = useEnergy();
+  const e = computeEnergyFor({ ...profile, maintenanceMode: 'formula' }, body);
 
   const parts = [
     { label: 'Métabolisme de base', value: e.bmr, color: 'var(--accent)' },
@@ -71,9 +91,9 @@ export function EnergyPanel() {
 
   return (
     <Section
-      id="energie"
-      title="Dépense énergétique estimée"
-      defaultOpen={false}
+      id={comparison ? 'energie-formules' : 'energie'}
+      title={comparison ? 'Estimation par formules' : 'Dépense énergétique estimée'}
+      defaultOpen={comparison}
       summary={`${fmt(e.tdee)} kcal/j dépensés · ${fmt(e.cible)} kcal/j visés`}
     >
       <div className="energy-headline">
@@ -169,7 +189,7 @@ export function EnergyPanel() {
           </div>
         )}
         <label className="field" style={{ marginTop: 10, maxWidth: 380 }}>
-          Formule utilisée pour les cibles
+          Formule du métabolisme de base
           <select
             value={formuleChoisie}
             onChange={(ev) => setProfile({ bmrFormule: ev.target.value as BmrFormula })}

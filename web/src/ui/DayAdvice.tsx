@@ -276,6 +276,7 @@ function AdviceBody({
   exceeded,
   windowSize,
   gate,
+  date,
 }: {
   totals: Nutrients;
   scope: AdviceScope;
@@ -288,11 +289,12 @@ function AdviceBody({
    * micronutriments restent masquées tant que la journée est trop peu avancée.
    */
   gate?: { progress: number };
+  date?: string;
 }) {
   const entries = useStore((s) => s.entries);
   const nutrientImportance = useStore((s) => s.nutrientImportance);
   const foods = useEffectiveFoods();
-  const targets = useTargets();
+  const targets = useTargets(date);
   const importance = useMemo(() => makeImportanceFn(nutrientImportance), [nutrientImportance]);
 
   /** Aliments déjà mangés (tout l'historique) : priorité aux suggestions déjà connues. */
@@ -380,7 +382,7 @@ function AdviceBody({
  * peut être bonne ou mauvaise par hasard.
  */
 export function DayAdviceCard({ totals, date }: { totals: Nutrients; date?: string }) {
-  const targets = useTargets();
+  const targets = useTargets(date);
 
   const [scope, setScope] = useState<AdviceScope>('jour');
   const [halfLife, setHalfLife] = useState(DECAY_HALF_LIFE_DEFAULT);
@@ -434,6 +436,7 @@ export function DayAdviceCard({ totals, date }: { totals: Nutrients; date?: stri
             key={scope}
             totals={scope === 'jour' ? totals : recentTotals}
             scope={scope}
+            date={scope === 'jour' ? anchor : undefined}
             exceeded={exceeded}
             windowSize={recentDays.length}
             gate={scope === 'jour' ? { progress } : undefined}

@@ -25,7 +25,8 @@ export type KvKey =
   | 'mutedDays'
   | 'dayNotes'
   | 'nutrientImportance'
-  | 'nutrientTargets';
+  | 'nutrientTargets'
+  | 'dailyCalorieGoals';
 
 /** Une entité : d'où lire ses lignes `[id, payload]` et sa référence brute (fast-path diff). */
 interface EntitySpec {
@@ -71,6 +72,7 @@ export const KV_SELECTORS: Record<KvKey, (s: StoreState) => unknown> = {
   dayNotes: (s) => s.dayNotes,
   nutrientImportance: (s) => s.nutrientImportance,
   nutrientTargets: (s) => s.nutrientTargets,
+  dailyCalorieGoals: (s) => s.dailyCalorieGoals,
 };
 
 export const KV_KEYS = Object.keys(KV_SELECTORS) as KvKey[];

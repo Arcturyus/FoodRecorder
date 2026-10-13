@@ -17,6 +17,7 @@ import { WEIGHT_METRICS } from '../weight/types';
 import type { SunExposure } from '../sun/vitaminD';
 import type { NutrientKey } from '../nutrition/types';
 import { backupCounts } from './backupCounts';
+import { normalizeCalorieGoals, type DailyCalorieGoals } from '../nutrition/calorieGoals';
 
 /**
  * Réglages de l'appareil (moteur d'extraction, modèles). Sauvegardés pour ne pas
@@ -61,6 +62,7 @@ export interface BackupData {
   nutrientImportance?: Partial<Record<NutrientKey, number>>;
   /** Cibles (AJR / optimal) réglées à la main. Absent des vieilles sauvegardes. */
   nutrientTargets?: TargetOverrides;
+  dailyCalorieGoals?: DailyCalorieGoals;
   /** Réglages d'extraction / dictée (hors clé API). Absent des vieilles sauvegardes. */
   settings?: BackupSettings;
 }
@@ -84,6 +86,7 @@ export function buildBackup(): BackupData {
     dayNotes: s.dayNotes,
     nutrientImportance: s.nutrientImportance,
     nutrientTargets: s.nutrientTargets,
+    dailyCalorieGoals: s.dailyCalorieGoals,
     settings: {
       sttEngine: s.sttEngine,
       sttModel: s.sttModel,
@@ -148,6 +151,7 @@ export function importBackup(text: string): string {
     dayNotes: b.dayNotes ?? {},
     nutrientImportance: b.nutrientImportance ?? {},
     nutrientTargets: b.nutrientTargets ?? {},
+    dailyCalorieGoals: normalizeCalorieGoals(b.dailyCalorieGoals),
     // Champ par champ (et non `...b.settings`) : un fichier bricolé ne doit pas
     // pouvoir injecter n'importe quelle clé dans le store.
     ...(b.settings
@@ -173,6 +177,7 @@ export function importBackup(text: string): string {
     [c.notes, 'note(s) de jour'],
     [c['jours réglés'], 'jour(s) comptés / non comptés réglés'],
     [c.importances, 'importance(s) de nutriment réglée(s)'],
+    [c['objectifs journaliers'], 'objectif(s) calorique(s) journalier(s)'],
   ];
   const extraText = extras.filter(([n]) => n > 0).map(([n, label]) => `${n} ${label}`);
   return (
