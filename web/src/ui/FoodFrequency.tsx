@@ -12,6 +12,8 @@ import {
 import type { FoodFrequency, NutrientContribution } from '../nutrition/frequency';
 import { NUTRIENT_GROUPS } from '../nutrition/groups';
 import { EXTRA_NUTRIENT_META } from '../nutrition/rda';
+import { FOOD_BY_ID } from '../nutrition/foods';
+import { validFoodPrice } from '../nutrition/price';
 import { useTargets } from './useTargets';
 import type { Target } from '../nutrition/targets';
 import type { Food, FoodCategory, NutrientKey } from '../nutrition/types';
@@ -167,7 +169,7 @@ export function FoodConsumption() {
             Choisissez un nutriment : voici les aliments qui vous l'apportent le plus sur la période, et à quel point.
             Cliquez-en un pour voir son apport jour par jour.
           </p>
-          <NutrientContributorsPanel entries={freqEntries} range={range} days={days} gran={gran} />
+          <NutrientContributorsPanel entries={freqEntries} range={range} days={days} gran={gran} foods={foods} />
         </>
       )}
     </div>
@@ -378,10 +380,15 @@ function FoodPairsPanel({ entries, range }: { entries: JournalEntry[]; range: { 
 // ---------------------------------------------------------------------------
 
 const CONTRIB_TOP_N = 12;
+type ContributionMetric = NutrientKey | 'prix';
 
 /** Valeur d'un nutriment : 1 décimale sous 10, entier au-delà (comme Stats). */
 function fmtVal(v: number): string {
   return fmt(v, v < 10 ? 1 : 0);
+}
+
+function fmtContributionValue(v: number, isPrice: boolean): string {
+  return isPrice ? fmt(v, 2) : fmtVal(v);
 }
 
 function nutrientLabel(key: NutrientKey, targetByKey: Map<NutrientKey, Target>): string {
@@ -392,9 +399,60 @@ function nutrientUnit(key: NutrientKey, targetByKey: Map<NutrientKey, Target>): 
   return targetByKey.get(key)?.unit ?? EXTRA_NUTRIENT_META[key]?.unit ?? '';
 }
 
+function priceContributions(entries: JournalEntry[], range: { start: string; end: string }, foods: Food[]) {
+  const byId = new Map(foods.map((food) => [food.id, food]));
+  const map = new Map<string, NutrientContribution & { dateSet: Set<string> }>();
+  let missingPriceItems = 0;
+
+  for (const entry of entries) {
+    if (entry.date < range.start || entry.date > range.end) continue;
+    for (const item of entry.items) {
+      if (item.id === 'sun-day') continue;
+      const food = item.foodId ? byId.get(item.foodId) ?? FOOD_BY_ID.get(item.foodId) : undefined;
+      const price = validFoodPrice(food?.price);
+      if (!price || !Number.isFinite(item.grams) || item.grams <= 0) {
+        missingPriceItems++;
+        continue;
+      }
+      const value = item.grams * price.eurPerKg / 1000;
+      if (value <= 0) continue;
+      const key = item.foodId ?? `nom:${normalize(item.nomAffiche)}`;
+      let contribution = map.get(key);
+      if (!contribution) {
+        contribution = {
+          key,
+          foodId: item.foodId,
+          nom: item.nomAffiche,
+          total: 0,
+          occurrences: 0,
+          jours: 0,
+          grammes: 0,
+          derniere: entry.date,
+          parDate: new Map(),
+          dateSet: new Set(),
+        };
+        map.set(key, contribution);
+      }
+      contribution.nom = item.nomAffiche;
+      contribution.total += value;
+      contribution.occurrences++;
+      contribution.grammes += item.grams;
+      contribution.parDate.set(entry.date, (contribution.parDate.get(entry.date) ?? 0) + value);
+      contribution.dateSet.add(entry.date);
+      if (entry.date > contribution.derniere) contribution.derniere = entry.date;
+    }
+  }
+
+  const contributions = [...map.values()]
+    .map(({ dateSet, ...contribution }) => ({ ...contribution, jours: dateSet.size }))
+    .sort((a, b) => b.total - a.total || a.nom.localeCompare(b.nom, 'fr'));
+  return { contributions, missingPriceItems };
+}
+
 /** Contexte de lecture partagé par les lignes et l'info-bulle. */
 interface ContribCtx {
   unit: string;
+  isPrice: boolean;
   /** Apport total, tous aliments confondus (dénominateur des parts). */
   grandTotal: number;
   /** Jours enregistrés servant de base aux moyennes par jour. */
@@ -416,8 +474,14 @@ function ContributionCard({ c, ctx }: { c: NutrientContribution; ctx: ContribCtx
         </span>
       </div>
       <div className="hc-rows" style={{ marginTop: 8 }}>
-        <div><span>Apporté sur la période</span><span className="mono">{fmtVal(c.total)} {ctx.unit}</span></div>
-        <div><span>Soit par jour</span><span className="mono">{fmtVal(perDay)} {ctx.unit}/j</span></div>
+        <div>
+          <span>{ctx.isPrice ? 'Prix estimé connu' : 'Apporté sur la période'}</span>
+          <span className="mono">{fmtContributionValue(c.total, ctx.isPrice)} {ctx.unit}</span>
+        </div>
+        <div>
+          <span>{ctx.isPrice ? 'Moyenne estimée par jour' : 'Soit par jour'}</span>
+          <span className="mono">{fmtContributionValue(perDay, ctx.isPrice)} {ctx.unit}/j</span>
+        </div>
         {pctOptimal !== null && (
           <div>
             <span>De l'optimal/j</span>
@@ -447,23 +511,26 @@ function NutrientContributorsPanel({
   range,
   days,
   gran,
+  foods,
 }: {
   entries: JournalEntry[];
   range: { start: string; end: string };
   days: number;
   gran: Granularity;
+  foods: Food[];
 }) {
   const sunExposures = useStore((s) => s.sunExposures);
-  const [nutrient, setNutrient] = useState<NutrientKey>('fer');
+  const [nutrient, setNutrient] = useState<ContributionMetric>('fer');
   const [openKey, setOpenKey] = useState<string | null>(null);
   const [showAll, setShowAll] = useState(false);
   const [tip, setTip] = useState<{ c: NutrientContribution; x: number; y: number } | null>(null);
 
   const targets = useTargets();
   const targetByKey = useMemo(() => new Map(targets.map((t) => [t.key, t])), [targets]);
-  const target = targetByKey.get(nutrient) ?? null;
-  const unit = nutrientUnit(nutrient, targetByKey);
-  const label = nutrientLabel(nutrient, targetByKey);
+  const isPrice = nutrient === 'prix';
+  const target = isPrice ? null : targetByKey.get(nutrient) ?? null;
+  const unit = isPrice ? '€' : nutrientUnit(nutrient, targetByKey);
+  const label = isPrice ? 'Prix estimé' : nutrientLabel(nutrient, targetByKey);
 
   /** Jours réellement enregistrés dans la plage : base honnête des moyennes/j. */
   const recordedDays = useMemo(() => {
@@ -474,7 +541,9 @@ function NutrientContributorsPanel({
     return set.size;
   }, [entries, range]);
 
+  const priceResult = useMemo(() => priceContributions(entries, range, foods), [entries, range, foods]);
   const contributions = useMemo(() => {
+    if (isPrice) return priceResult.contributions;
     const list = nutrientContributions(entries, range, nutrient);
     if (nutrient !== 'vitD') return list;
     // Le soleil compte comme un apport de vitamine D (comme l'onglet Jour et les
@@ -501,7 +570,7 @@ function NutrientContributorsPanel({
       parDate,
     };
     return [...list, sun].sort((a, b) => b.total - a.total);
-  }, [entries, range, nutrient, sunExposures]);
+  }, [entries, range, nutrient, isPrice, priceResult, sunExposures]);
 
   const grandTotal = contributions.reduce((a, c) => a + c.total, 0);
   const maxTotal = contributions.length > 0 ? contributions[0].total : 0;
@@ -524,9 +593,9 @@ function NutrientContributorsPanel({
   const perDay = grandTotal / Math.max(1, recordedDays);
   const pctOptimal = target && target.optimal > 0 ? (perDay / target.optimal) * 100 : null;
   const isLimit = target?.goal === 'limit';
-  const ctx: ContribCtx = { unit, grandTotal, recordedDays, target };
+  const ctx: ContribCtx = { unit, isPrice, grandTotal, recordedDays, target };
 
-  function selectNutrient(k: NutrientKey) {
+  function selectNutrient(k: ContributionMetric) {
     setNutrient(k);
     setOpenKey(null);
     setShowAll(false);
@@ -537,9 +606,10 @@ function NutrientContributorsPanel({
       <div className="row" style={{ gap: 8, alignItems: 'center', flexWrap: 'wrap', marginBottom: 8 }}>
         <select
           value={nutrient}
-          onChange={(e) => selectNutrient(e.target.value as NutrientKey)}
-          aria-label="Nutriment analysé"
+          onChange={(e) => selectNutrient(e.target.value as ContributionMetric)}
+          aria-label="Nutriment ou prix analysé"
         >
+          <option value="prix">Prix estimé (€)</option>
           {NUTRIENT_GROUPS.map((g) => (
             <optgroup key={g.title} label={g.title}>
               {g.keys.map((k) => (
@@ -554,19 +624,30 @@ function NutrientContributorsPanel({
       </div>
 
       {contributions.length === 0 || grandTotal <= 0 ? (
-        <div className="empty">Aucun apport de {label} enregistré sur cette période.</div>
+        <div className="empty">
+          {isPrice
+            ? 'Aucun prix connu pour les aliments consommés sur cette période.'
+            : `Aucun apport de ${label} enregistré sur cette période.`}
+        </div>
       ) : (
         <>
           <div className="hint" style={{ marginTop: 0 }}>
-            <strong>{fmtVal(grandTotal)} {unit}</strong> au total sur la période, soit{' '}
-            <strong>{fmtVal(perDay)} {unit}/j</strong> sur {fmt(recordedDays)} jour(s) enregistré(s) ({fmt(days)} j de
-            période)
-            {pctOptimal !== null && (
+            {isPrice ? (
               <>
-                {' '}— {fmt(pctOptimal)} % de l'optimal ({fmt(target!.optimal)} {unit}/j)
+                Prix estimé d'après les prix actuels connus : <strong>{fmt(grandTotal, 2)} €</strong> sur la période, soit{' '}
+                <strong>{fmt(perDay, 2)} €/j</strong> sur {fmt(recordedDays)} jour(s) enregistré(s) ({fmt(days)} j de période).
+                {priceResult.missingPriceItems > 0 && (
+                  <> {fmt(priceResult.missingPriceItems)} consommation(s) sans prix connu sont exclues.</>
+                )}
               </>
-            )}
-            .{' '}
+            ) : (
+              <>
+                <strong>{fmtVal(grandTotal)} {unit}</strong> au total sur la période, soit{' '}
+                <strong>{fmtVal(perDay)} {unit}/j</strong> sur {fmt(recordedDays)} jour(s) enregistré(s) ({fmt(days)} j de période)
+                {pctOptimal !== null && (
+                  <> — {fmt(pctOptimal)} % de l'optimal ({fmt(target!.optimal)} {unit}/j)</>
+                )}
+                .{' '}
             {contributions.length >= 5 && (
               <>
                 Les 5 premiers aliments fournissent {fmt(topFivePct)} % du total ; il en faut {fmt(nFor80)} pour
@@ -575,6 +656,8 @@ function NutrientContributorsPanel({
             )}
             {isLimit && ' Ici, être en tête n’est pas une bonne nouvelle : ce sont les principaux apporteurs de ce que vous cherchez à limiter.'}
             {nutrient === 'vitD' && ' ☀️ L’exposition au soleil est comptée comme un apport.'}
+              </>
+            )}
           </div>
 
           {shown.map((c) => {
@@ -595,7 +678,7 @@ function NutrientContributorsPanel({
                   <span style={{ width: `${maxTotal > 0 ? (c.total / maxTotal) * 100 : 0}%` }} />
                 </div>
                 <span className="mono small" style={{ textAlign: 'right' }}>
-                  {fmt(part)} % · {fmtVal(c.total)} {unit}
+                  {fmt(part)} % · {fmtContributionValue(c.total, isPrice)} {unit}
                 </span>
               </div>
             );
@@ -729,19 +812,19 @@ function ContributionDetail({
       <div className="row" style={{ justifyContent: 'space-between', alignItems: 'baseline', gap: 8, flexWrap: 'wrap' }}>
         <strong>{c.nom}</strong>
         <span className="small mono">
-          {fmtVal(c.total)} {ctx.unit} · {fmtVal(perDay)} {ctx.unit}/j
+          {fmtContributionValue(c.total, ctx.isPrice)} {ctx.unit} · {fmtContributionValue(perDay, ctx.isPrice)} {ctx.unit}/j
           {pctOptimal !== null && ` · ${fmt(pctOptimal)} % de l'optimal`}
         </span>
       </div>
       <p className="small" style={{ margin: '4px 0 8px' }}>
-        Ce que cet aliment a apporté {gran === 'jour' ? 'chaque jour' : gran === 'semaine' ? 'chaque semaine' : 'chaque mois'} (
-        {fmt(c.jours)} jour(s) d'apport ; la moyenne par jour est lissée sur tous les jours enregistrés, y compris ceux
+        Évolution du {ctx.isPrice ? 'prix estimé' : 'nutriment apporté'} par {gran === 'jour' ? 'jour' : gran === 'semaine' ? 'semaine' : 'mois'} (
+        {fmt(c.jours)} jour(s) avec cet aliment ; la moyenne par jour est lissée sur tous les jours enregistrés, y compris ceux
         sans cet aliment).
       </p>
       <PeriodBars
         buckets={buckets}
         valueOf={(d) => c.parDate.get(d) ?? 0}
-        format={(v) => `${fmtVal(v)} ${ctx.unit}`}
+        format={(v) => `${fmtContributionValue(v, ctx.isPrice)} ${ctx.unit}`}
         range={range}
       />
     </div>
