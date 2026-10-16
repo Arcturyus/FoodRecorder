@@ -68,16 +68,16 @@ export interface RdaEntry {
   /** Justification de la cible optimale ou de la limite. */
   optimalNote?: string;
   /**
-   * Seuil de CARENCE réelle, dans l'unité du nutriment (goal `atLeast`
-   * uniquement) : en dessous, un effet délétère est documenté dans le guide
-   * (`NUTRIENT_GUIDE[key].low`), pas juste « sous l'AJR ». Absent quand le
-   * guide ne fixe aucun chiffre net ou dit explicitement qu'il n'y a pas de
-   * carence connue — mieux vaut ne rien afficher qu'inventer un seuil.
+   * Repère bas documenté, dans l'unité du nutriment (goal `atLeast` uniquement).
+   * Il peut s'agir d'un seuil clinique ou d'un repère populationnel, précisé par
+   * `lowLabel` et `lowNote`. Absent quand aucun chiffre net n'est établi.
    * Protéines, lipides et fer le calculent à la volée dans `computeTargets`
    * (poids/kcal/sexe) plutôt que de le fixer ici.
    */
   lowThreshold?: number;
-  /** Effet en une phrase courte si l'apport reste sous `lowThreshold`. */
+  /** Libellé du repère bas si ce n'est pas un seuil clinique de carence. */
+  lowLabel?: string;
+  /** Explication courte du repère si l'apport reste sous `lowThreshold`. */
   lowNote?: string;
 }
 
@@ -234,9 +234,10 @@ export const RDA: RdaEntry[] = [
   {
     key: 'vitA', label: 'Vitamine A', unit: 'µg', rda: 750, goal: 'atLeast', optimalFactor: 1,
     role: 'Vision, immunité et renouvellement de la peau et des muqueuses.',
-    optimalNote: 'Vitamine liposoluble toxique en excès (rétinol) : ne pas pousser au-dessus de l\'AJR.',
+    optimalNote: 'Le total se mesure en équivalents rétinol. La limite supérieure concerne le rétinol préformé, pas le bêta-carotène alimentaire.',
     lowThreshold: 300,
-    lowNote: 'Héméralopie (vision nocturne) en premier signe, puis xérophtalmie.',
+    lowLabel: 'repère moyen OMS',
+    lowNote: 'Apport moyen visant à prévenir la xérophtalmie : 300 µg ER/j chez l’homme et 270 chez la femme. Ce repère alimentaire ne diagnostique pas une carence individuelle.',
   },
   {
     key: 'vitC', label: 'Vitamine C', unit: 'mg', rda: 110, goal: 'atLeast', optimalFactor: 2.7, upper: 2000, toxic: 3000,

@@ -1,7 +1,6 @@
 import { useMemo } from 'react';
 import type { NutrientKey, Nutrients, NullableNutrientKey } from '../nutrition/types';
 import { EMPTY_NUTRIENTS, isNullableNutrientKey } from '../nutrition/types';
-import { addNutrients } from '../nutrition/compute';
 import type { DayCost } from '../nutrition/price';
 import { PRICE_NOTE } from '../nutrition/price';
 import type { JournalItem } from '../store/store';
@@ -32,12 +31,19 @@ interface SubPart {
   /** Ce que la part vaut pour la santé, en trois mots (légende). */
   hint: string;
   color: string;
+  /** Fraction of the raw value that contributes to the parent total. */
+  factor?: number;
 }
 
 const OMEGA3_PARTS: SubPart[] = [
-  { key: 'omega3Ala', short: 'ALA', hint: 'végétal, mal converti', color: 'var(--accent)' },
+  { key: 'omega3Ala', short: 'ALA', hint: 'végétal, contribution pondérée ÷ 10', color: 'var(--accent)', factor: 0.1 },
   { key: 'omega3Epa', short: 'EPA', hint: 'marin, direct', color: 'var(--accent-2)' },
   { key: 'omega3Dha', short: 'DHA', hint: 'marin, direct', color: 'var(--ia)' },
+];
+
+const VITAMIN_A_PARTS: SubPart[] = [
+  { key: 'vitARetinol', short: 'Rétinol', hint: 'préformé, limite supérieure', color: 'var(--danger)' },
+  { key: 'vitABetaCarotene', short: 'β-carotène', hint: 'provitamine A alimentaire, ÷ 12 en ER', color: 'var(--accent-2)', factor: 1 / 12 },
 ];
 
 const AG_SATURES_PARTS: SubPart[] = [
@@ -48,6 +54,7 @@ const AG_SATURES_PARTS: SubPart[] = [
 /** Sous-détail associé à un nutriment, s'il en a un. */
 const PARTS_BY_KEY: Partial<Record<NutrientKey, SubPart[]>> = {
   omega3: OMEGA3_PARTS,
+  vitA: VITAMIN_A_PARTS,
   agSatures: AG_SATURES_PARTS,
 };
 
@@ -59,6 +66,8 @@ interface Contribution {
   amount: number;
   /** Valeur de chaque sous-part pour CET aliment (même ordre que `parts`). */
   parts: number[];
+  /** Copper values missing from one or more entries grouped under this name. */
+  unknownCount: number;
 }
 
 /**
@@ -71,9 +80,11 @@ function topContributors(items: JournalItem[], key: NutrientKey, parts: SubPart[
   const byName = new Map<string, Contribution>();
   for (const it of items) {
     const v = it.nutrients[key];
-    if (v == null || v <= 0) continue;
-    const cur = byName.get(it.nomAffiche) ?? { nom: it.nomAffiche, amount: 0, parts: parts.map(() => 0) };
-    cur.amount += v;
+    if (v == null && key !== 'cuivre') continue;
+    if (v != null && v <= 0) continue;
+    const cur = byName.get(it.nomAffiche) ?? { nom: it.nomAffiche, amount: 0, parts: parts.map(() => 0), unknownCount: 0 };
+    cur.amount += v ?? 0;
+    if (v == null) cur.unknownCount++;
     // `?? 0` : un item peut venir d'un snapshot antérieur à l'ajout d'un
     // sous-nutriment — un trou doit rester un 0, jamais un NaN affiché.
     parts.forEach((p, i) => {
@@ -81,7 +92,12 @@ function topContributors(items: JournalItem[], key: NutrientKey, parts: SubPart[
     });
     byName.set(it.nomAffiche, cur);
   }
-  return [...byName.values()].sort((a, b) => b.amount - a.amount).slice(0, limit);
+  const ranked = [...byName.values()].sort((a, b) => b.amount - a.amount);
+  const leading = ranked.filter((item) => item.amount > 0).slice(0, limit);
+  // Une donnée inconnue de cuivre reste visible, même si six aliments connus
+  // apportent déjà une valeur positive.
+  const missing = ranked.filter((item) => item.unknownCount > 0 && !leading.includes(item));
+  return [...leading, ...missing];
 }
 
 /**
@@ -91,15 +107,20 @@ function topContributors(items: JournalItem[], key: NutrientKey, parts: SubPart[
  * gris est la part non détaillée (chaînes courtes des laitages, C12…) : la
  * montrer évite de laisser croire que la somme fait le total.
  */
-function PartsBar({ parts, values, amount, max }: { parts: SubPart[]; values: number[]; amount: number; max: number }) {
-  const sum = values.reduce((a, v) => a + v, 0);
+function PartsBar({ parts, values, amount, max, unit }: { parts: SubPart[]; values: number[]; amount: number; max: number; unit: string }) {
+  const weighted = values.map((value, index) => value * (parts[index].factor ?? 1));
+  const sum = weighted.reduce((a, v) => a + v, 0);
   const rest = Math.max(0, amount - sum);
   const scale = max > 0 ? amount / max : 0;
   if (amount <= 0) return null;
   return (
     <div className="bd-parts" style={{ width: `${Math.max(4, scale * 100)}%` }}>
       {parts.map((p, i) => (
-        <span key={p.key} style={{ flexGrow: values[i], background: p.color }} title={`${p.short} ${fmt(values[i], 2)}`} />
+        <span
+          key={p.key}
+          style={{ flexGrow: weighted[i], background: p.color }}
+          title={`${p.short} ${fmt(values[i], 2)} ${unit}${p.factor && p.factor !== 1 ? ` · contribution ${fmt(weighted[i], 2)} ${unit}` : ''}`}
+        />
       ))}
       {rest > 0.005 && <span style={{ flexGrow: rest, background: REST_COLOR, opacity: 0.45 }} title={`non détaillé ${fmt(rest, 2)}`} />}
     </div>
@@ -112,23 +133,25 @@ function Breakdown({
   nutrientKey,
   unit,
   total,
+  vitAReference,
 }: {
   items: JournalItem[];
   nutrientKey: NutrientKey;
   unit: string;
   total: number;
+  vitAReference?: { ajr: number; lowThreshold?: number };
 }) {
   const parts = PARTS_BY_KEY[nutrientKey] ?? [];
   const contribs = useMemo(() => topContributors(items, nutrientKey, parts), [items, nutrientKey, parts]);
-  const max = contribs[0]?.amount ?? 0;
-  // Une barre ne se justifie que si au moins un aliment a un détail connu.
-  const showParts = parts.length > 0 && contribs.some((c) => c.parts.some((v) => v > 0));
+  const max = Math.max(0, ...contribs.map((contribution) => contribution.amount));
+  const showParts = parts.length > 0;
+  const copperUnknownCount = nutrientKey === 'cuivre' ? items.filter((item) => item.nutrients.cuivre == null).length : 0;
   return (
     <div className="breakdown" role="tooltip">
-      {nutrientKey === 'vitA' && <VitaminABreakdown totals={items.reduce<Nutrients>((sum, item) => addNutrients(sum, item.nutrients), { ...EMPTY_NUTRIENTS, cuivre: 0, vitARetinol: 0, vitABetaCarotene: 0 })} />}
-      {nutrientKey === 'cuivre' && items.some((item) => item.nutrients.cuivre == null) && (
+      {nutrientKey === 'vitA' && <VitaminABreakdown items={items} total={total} reference={vitAReference} />}
+      {copperUnknownCount > 0 && (
         <div className="small" style={{ marginBottom: 8, color: 'var(--warn)' }}>
-          Donnée de cuivre inconnue pour {items.filter((item) => item.nutrients.cuivre == null).length} aliment(s) ; le total du jour est incomplet.
+          Donnée de cuivre inconnue pour {copperUnknownCount} aliment(s) ; elles sont comptées à 0 dans ce graphique. Le total connu peut être inférieur au total réel.
         </div>
       )}
       <div className="bd-title">Principaux apports</div>
@@ -143,12 +166,15 @@ function Breakdown({
                 <span className="bd-val mono">
                   {fmt(c.amount, c.amount < 10 ? 1 : 0)} {unit}
                   {total > 0 && <span className="bd-pct"> · {fmt((c.amount / total) * 100)}%</span>}
+                  {c.unknownCount > 0 && <span className="bd-pct"> · {c.amount > 0 ? 'partiel, une valeur inconnue' : 'inconnu compté 0'}</span>}
                 </span>
                 {showParts && (
                   <>
-                    <PartsBar parts={parts} values={c.parts} amount={c.amount} max={max} />
+                    <PartsBar parts={parts} values={c.parts} amount={c.amount} max={max} unit={unit} />
                     <span className="bd-parts-text mono">
-                      {parts.map((p, i) => `${p.short} ${fmt(c.parts[i], 2)}`).join(' · ')}
+                      {c.parts.some((value) => value > 0)
+                        ? parts.map((p, i) => `${p.short} ${fmt(c.parts[i], 2)}${p.factor && p.factor !== 1 ? ` (≈ ${fmt(c.parts[i] * p.factor, 2)} ${unit} dans le total)` : ''}`).join(' · ')
+                        : `non détaillé ${fmt(c.amount, 2)} ${unit}`}
                     </span>
                   </>
                 )}
@@ -176,16 +202,46 @@ function Breakdown({
 }
 
 /** Détail visible au survol : le total reste en équivalents rétinol. */
-export function VitaminABreakdown({ totals }: { totals: Nutrients }) {
-  const retinol = totals.vitARetinol;
-  const beta = totals.vitABetaCarotene;
-  const n = (value: number | null) => value == null ? 'donnée inconnue' : `${fmt(value, 1)} µg`;
+export function VitaminABreakdown({ items, totals, total, reference }: {
+  items?: JournalItem[];
+  totals?: Nutrients;
+  total?: number;
+  reference?: { ajr: number; lowThreshold?: number };
+}) {
+  const retinol = items
+    ? items.reduce((sum, item) => sum + (item.nutrients.vitARetinol ?? 0), 0)
+    : totals?.vitARetinol ?? 0;
+  const retinolUnknown = items?.filter((item) => item.nutrients.vitARetinol == null).length ?? 0;
+  const beta = items
+    ? items.reduce((sum, item) => sum + (item.nutrients.vitABetaCarotene ?? 0), 0)
+    : totals?.vitABetaCarotene ?? 0;
+  const betaUnknown = items?.filter((item) => item.nutrients.vitABetaCarotene == null).length ?? 0;
+  const retinolText = items
+    ? `${fmt(retinol, 1)} µg connus${retinolUnknown > 0 ? ` · ${retinolUnknown} aliment(s) sans détail` : ''}`
+    : totals?.vitARetinol == null ? 'donnée inconnue' : `${fmt(retinol, 1)} µg`;
+  const betaText = items
+    ? `${fmt(beta, 1)} µg connus${betaUnknown > 0 ? ` · ${betaUnknown} aliment(s) sans détail` : ''}`
+    : totals?.vitABetaCarotene == null ? 'donnée inconnue' : `${fmt(beta, 1)} µg`;
+  const betaERText = items
+    ? `${fmt(beta / 12, 1)} µg ER connus${betaUnknown > 0 ? ` · ${betaUnknown} aliment(s) sans détail` : ''}`
+    : totals?.vitABetaCarotene == null ? 'équivalent inconnu' : `${fmt(beta / 12, 1)} µg ER`;
+  const totalER = total ?? totals?.vitA ?? 0;
   return (
     <div className="small" style={{ marginBottom: 8 }}>
       <div className="bd-title">Vitamine A · composition</div>
-      <div>Rétinol : <span className="mono">{n(retinol)}</span></div>
-      <div>Bêta-carotène : <span className="mono">{n(beta)}</span> <span style={{ opacity: 0.8 }}>(÷ 12 = équivalents rétinol)</span></div>
-      <div style={{ marginTop: 3, opacity: 0.8 }}>vitA = rétinol + bêta-carotène / 12 ; la limite de 3 000 µg/j concerne le rétinol seul.</div>
+      <div>
+        <i aria-hidden="true" style={{ display: 'inline-block', width: 7, height: 7, borderRadius: 2, marginRight: 4, verticalAlign: 'middle', background: VITAMIN_A_PARTS[0].color }} />
+        Rétinol préformé : <span className="mono">{retinolText}</span>
+      </div>
+      <div>
+        <i aria-hidden="true" style={{ display: 'inline-block', width: 7, height: 7, borderRadius: 2, marginRight: 4, verticalAlign: 'middle', background: VITAMIN_A_PARTS[1].color }} />
+        Bêta-carotène : <span className="mono">{betaText}</span> <span style={{ opacity: 0.8}}>(soit {betaERText})</span>
+      </div>
+      <div>Total suivi : <span className="mono">{fmt(totalER, 1)} µg ER</span>.</div>
+      <div style={{ marginTop: 3, opacity: 0.8 }}>
+        L’AJR du profil est {reference ? `${fmt(reference.ajr)} µg ER/j` : '750 µg ER/j (homme) ou 650 (femme)'} ; le repère bas est {reference?.lowThreshold != null ? `${fmt(reference.lowThreshold)} µg ER/j` : '300 µg ER/j (homme) ou 270 (femme)'}, un besoin moyen OMS pour prévenir la xérophtalmie, pas un diagnostic individuel.
+      </div>
+      <div style={{ marginTop: 3, opacity: 0.8 }}>La limite supérieure EFSA de 3 000 µg/j s’applique au rétinol préformé seul ; aucune limite supérieure n’est établie pour le bêta-carotène alimentaire.</div>
     </div>
   );
 }
@@ -351,11 +407,13 @@ function LowThresholdNote({
   value,
   threshold,
   unit,
+  label,
   note,
 }: {
   value: number | null;
   threshold: number;
   unit: string;
+  label?: string;
   note?: string;
 }) {
   if (value == null) return null;
@@ -367,7 +425,7 @@ function LowThresholdNote({
       data-tip={note}
     >
       {below && '⚠️ '}
-      seuil de carence {fmt(threshold, threshold < 10 ? 1 : 0)} {unit} · moy. 7 j {fmt(value, value < 10 ? 1 : 0)} {unit}
+      {label ?? 'seuil de carence'} {fmt(threshold, threshold < 10 ? 1 : 0)} {unit} · moy. 7 j {fmt(value, value < 10 ? 1 : 0)} {unit}
     </div>
   );
 }
@@ -419,6 +477,14 @@ export function Totals({
 }) {
   const targets = useTargets(date);
   const recentAvg = useTrailingAverage(date ?? todayStr(), LOW_THRESHOLD_WINDOW);
+  const copperCoverage = useMemo(() => ({
+    knownTotal: items.reduce((sum, item) => sum + (item.nutrients.cuivre ?? 0), 0),
+    unknownCount: items.filter((item) => item.nutrients.cuivre == null).length,
+  }), [items]);
+  const displayValue = (key: NutrientKey) => {
+    const value = totals[key];
+    return key === 'cuivre' && value == null ? copperCoverage.knownTotal : value;
+  };
 
   const kcalT = targets.find((t) => t.key === 'kcal')!;
   const goalForDate = useCalorieGoals(kcalT.optimal);
@@ -446,7 +512,7 @@ export function Totals({
   const grid =
     sort === 'famille'
       ? gridAll
-      : [...gridAll].sort((a, b) => urgencyScore(a, totals[a.key]) - urgencyScore(b, totals[b.key]));
+      : [...gridAll].sort((a, b) => urgencyScore(a, displayValue(a.key)) - urgencyScore(b, displayValue(b.key)));
 
   return (
     <div className="panel">
@@ -519,7 +585,7 @@ export function Totals({
       {open && (
       <div className="totals-grid" style={{ marginTop: 14 }}>
         {grid.map((t) => {
-          const value = totals[t.key];
+          const value = displayValue(t.key);
 
           if (value == null) {
             return (
@@ -571,6 +637,9 @@ export function Totals({
               <div className="value mono">
                 {fmt(value, value < 10 ? 1 : 0)} <small>{t.unit}</small>
               </div>
+              {t.key === 'cuivre' && copperCoverage.unknownCount > 0 && (
+                <div className="small mono">Inconnues comptées à 0 · {copperCoverage.unknownCount} aliment(s)</div>
+              )}
               <div className={`bar ${barClass}`}>
                 <span style={{ width: `${Math.min(100, pctOpt)}%` }} />
                 {distinct && (
@@ -580,7 +649,7 @@ export function Totals({
                   <i
                     className="mark low"
                     style={{ left: `${Math.min(100, (t.lowThreshold / t.optimal) * 100)}%` }}
-                    data-tip={`Seuil de carence documenté : ${fmt(t.lowThreshold)} ${t.unit}`}
+                    data-tip={`${t.lowLabel ?? 'Seuil de carence documenté'} : ${fmt(t.lowThreshold)} ${t.unit}${t.lowNote ? ` · ${t.lowNote}` : ''}`}
                   />
                 )}
               </div>
@@ -594,11 +663,18 @@ export function Totals({
                   value={recentAvg ? recentAvg[t.key] : null}
                   threshold={t.lowThreshold}
                   unit={t.unit}
+                  label={t.lowLabel}
                   note={t.lowNote}
                 />
               )}
               {t.key === 'omega3' && <Omega3Breakdown totals={totals} />}
-              <Breakdown items={items} nutrientKey={t.key} unit={t.unit} total={value} />
+              <Breakdown
+                items={items}
+                nutrientKey={t.key}
+                unit={t.unit}
+                total={value}
+                vitAReference={t.key === 'vitA' ? { ajr: t.ajr, lowThreshold: t.lowThreshold } : undefined}
+              />
             </div>
           );
         })}

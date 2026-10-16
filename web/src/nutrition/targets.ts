@@ -261,9 +261,11 @@ export interface Target {
   upper?: number;
   /** Dose où des effets délétères ont été observés (cf. `RdaEntry.toxic`). */
   toxic?: number;
-  /** Seuil de carence réelle (cf. `RdaEntry.lowThreshold`) — absent si le guide n'en fixe aucun. */
+  /** Repère bas documenté (cf. `RdaEntry.lowThreshold`) — absent si aucun chiffre net n'est établi. */
   lowThreshold?: number;
-  /** Effet documenté sous `lowThreshold` (cf. `RdaEntry.lowNote`). */
+  /** Libellé alternatif du repère bas si ce n'est pas un seuil clinique de carence. */
+  lowLabel?: string;
+  /** Explication documentée du repère bas (cf. `RdaEntry.lowNote`). */
   lowNote?: string;
   /** Compat. : vrai si c'est une limite (goal === 'limit'). */
   upperLimit?: boolean;
@@ -375,6 +377,7 @@ export function computeTargets(
       ...(r.upper !== undefined ? { upper: r.upper } : {}),
       ...(r.toxic !== undefined ? { toxic: r.toxic } : {}),
       ...(r.lowThreshold !== undefined ? { lowThreshold: r.lowThreshold } : {}),
+      ...(r.lowLabel !== undefined ? { lowLabel: r.lowLabel } : {}),
       ...(r.lowNote !== undefined ? { lowNote: r.lowNote } : {}),
     };
 
@@ -415,6 +418,12 @@ export function computeTargets(
     // celui de l'homme : la cible retenue est donc une moyenne, pas un maximum.
     if (r.key === 'fer' && sexe === 'femme') {
       return { ...base, ajr: 15, optimal: 18, lowThreshold: 10 };
+    }
+    // EFSA exprime les apports de référence en équivalents rétinol (ER) :
+    // 750 µg/j chez l'homme et 650 chez la femme. Le repère bas OMS pour
+    // prévenir la xérophtalmie est lui aussi exprimé en ER : 300 et 270 µg/j.
+    if (r.key === 'vitA' && sexe === 'femme') {
+      return { ...base, ajr: 650, optimal: 650, lowThreshold: 270 };
     }
     // Références nutritionnelles ANSES 2021 : AS de 1,9 mg/j chez l'homme
     // adulte et 1,5 mg/j chez la femme adulte.

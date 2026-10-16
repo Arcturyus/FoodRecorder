@@ -311,10 +311,10 @@ function TargetSlider({ t, def, ctl }: { t: Target; def: Target; ctl: TargetCont
   const high = toDisplay(t[highField]);
   const pct = (v: number) => `${Math.min(100, Math.max(0, (v / max) * 100))}%`;
 
-  // Seuil de CARENCE réelle (`lowThreshold`), quand le guide en fixe un : c'est
+  // Repère bas documenté (`lowThreshold`), quand le guide en fixe un : c'est
   // le repère qu'on cherche quand on baisse une cible (« à partir d'où est-ce
   // que ça devient un problème ? »), et il ne figurait nulle part sur le rail.
-  const carence = t.goal === 'atLeast' && t.lowThreshold ? toDisplay(t.lowThreshold) : null;
+  const lowMark = t.goal === 'atLeast' && t.lowThreshold ? toDisplay(t.lowThreshold) : null;
 
   const railRef = useRef<HTMLDivElement>(null);
   const lowRef = useRef<HTMLInputElement>(null);
@@ -388,11 +388,11 @@ function TargetSlider({ t, def, ctl }: { t: Target; def: Target; ctl: TargetCont
             ne pas être carencé, jusqu'à la cible » ; pour une limite, la marge
             encore acceptable. */}
         <span className="tgt-fill" style={{ left: pct(low), right: `calc(100% - ${pct(high)})` }} />
-        {carence != null && carence <= max && (
+        {lowMark != null && lowMark <= max && (
           <i
             className="tgt-mark is-low"
-            style={{ left: pct(carence) }}
-            data-tip={`Carence à partir de ${tv(carence)} ${unit} — ${t.lowNote ?? 'seuil de déficit documenté'}`}
+            style={{ left: pct(lowMark) }}
+            data-tip={`${t.lowLabel ?? 'Carence à partir de'} ${tv(lowMark)} ${unit}${t.lowNote ? ` · ${t.lowNote}` : ' · seuil de déficit documenté'}`}
           />
         )}
         <i
