@@ -36,14 +36,14 @@ interface SubPart {
 }
 
 const OMEGA3_PARTS: SubPart[] = [
-  { key: 'omega3Ala', short: 'ALA', hint: 'végétal, contribution pondérée ÷ 10', color: 'var(--accent)', factor: 0.1 },
+  { key: 'omega3Ala', short: 'ALA', hint: 'valeur brute affichée · compte ÷ 10', color: 'var(--accent)', factor: 0.1 },
   { key: 'omega3Epa', short: 'EPA', hint: 'marin, direct', color: 'var(--accent-2)' },
   { key: 'omega3Dha', short: 'DHA', hint: 'marin, direct', color: 'var(--ia)' },
 ];
 
 const VITAMIN_A_PARTS: SubPart[] = [
   { key: 'vitARetinol', short: 'Rétinol', hint: 'préformé, limite supérieure', color: 'var(--danger)' },
-  { key: 'vitABetaCarotene', short: 'β-carotène', hint: 'provitamine A alimentaire, ÷ 12 en ER', color: 'var(--accent-2)', factor: 1 / 12 },
+  { key: 'vitABetaCarotene', short: 'β-carotène', hint: 'valeur brute affichée · compte ÷ 12 en ER', color: 'var(--accent-2)', factor: 1 / 12 },
 ];
 
 const AG_SATURES_PARTS: SubPart[] = [
@@ -108,17 +108,25 @@ function topContributors(items: JournalItem[], key: NutrientKey, parts: SubPart[
  * montrer évite de laisser croire que la somme fait le total.
  */
 function PartsBar({ parts, values, amount, max, unit }: { parts: SubPart[]; values: number[]; amount: number; max: number; unit: string }) {
+  const hasScaledParts = parts.some((part) => part.factor != null && part.factor !== 1);
+  const hasRawDetail = values.some((value) => value > 0);
   const weighted = values.map((value, index) => value * (parts[index].factor ?? 1));
-  const sum = weighted.reduce((a, v) => a + v, 0);
-  const rest = Math.max(0, amount - sum);
-  const scale = max > 0 ? amount / max : 0;
-  if (amount <= 0) return null;
+  // Les barres ALA / bêta-carotène comparent les quantités réellement présentes
+  // dans chaque aliment. Le total et le classement, eux, restent en équivalents.
+  // Pour les nutriments sans facteur, le reliquat non détaillé reste comparable
+  // au total et apparaît en gris comme avant.
+  const shownValues = hasScaledParts && hasRawDetail ? values : weighted;
+  const shownAmount = hasScaledParts && hasRawDetail ? values.reduce((sum, value) => sum + value, 0) : amount;
+  const shownSum = shownValues.reduce((sum, value) => sum + value, 0);
+  const rest = hasScaledParts && hasRawDetail ? 0 : Math.max(0, amount - shownSum);
+  const scale = max > 0 ? shownAmount / max : 0;
+  if (shownAmount <= 0) return null;
   return (
     <div className="bd-parts" style={{ width: `${Math.max(4, scale * 100)}%` }}>
       {parts.map((p, i) => (
         <span
           key={p.key}
-          style={{ flexGrow: weighted[i], background: p.color }}
+          style={{ flexGrow: shownValues[i], background: p.color }}
           title={`${p.short} ${fmt(values[i], 2)} ${unit}${p.factor && p.factor !== 1 ? ` · contribution ${fmt(weighted[i], 2)} ${unit}` : ''}`}
         />
       ))}
@@ -143,7 +151,11 @@ function Breakdown({
 }) {
   const parts = PARTS_BY_KEY[nutrientKey] ?? [];
   const contribs = useMemo(() => topContributors(items, nutrientKey, parts), [items, nutrientKey, parts]);
-  const max = Math.max(0, ...contribs.map((contribution) => contribution.amount));
+  const hasScaledParts = parts.some((part) => part.factor != null && part.factor !== 1);
+  const barAmount = (contribution: Contribution) => hasScaledParts && contribution.parts.some((value) => value > 0)
+    ? contribution.parts.reduce((sum, value) => sum + value, 0)
+    : contribution.amount;
+  const max = Math.max(0, ...contribs.map(barAmount));
   const showParts = parts.length > 0;
   const copperUnknownCount = nutrientKey === 'cuivre' ? items.filter((item) => item.nutrients.cuivre == null).length : 0;
   return (
@@ -170,7 +182,7 @@ function Breakdown({
                 </span>
                 {showParts && (
                   <>
-                    <PartsBar parts={parts} values={c.parts} amount={c.amount} max={max} unit={unit} />
+                    <PartsBar parts={parts} values={c.parts} amount={barAmount(c)} max={max} unit={unit} />
                     <span className="bd-parts-text mono">
                       {c.parts.some((value) => value > 0)
                         ? parts.map((p, i) => `${p.short} ${fmt(c.parts[i], 2)}${p.factor && p.factor !== 1 ? ` (≈ ${fmt(c.parts[i] * p.factor, 2)} ${unit} dans le total)` : ''}`).join(' · ')
