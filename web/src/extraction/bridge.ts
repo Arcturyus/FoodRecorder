@@ -75,7 +75,9 @@ export interface CliExecutionStatus {
  */
 export async function callBridge(req: BridgeRequest): Promise<string> {
   const { signal, model, onStatus, ...payload } = req;
-  const requestId = onStatus ? crypto.randomUUID() : undefined;
+  // Le suivi d'exécution n'existe que dans le pont navigateur. En Node (tests),
+  // ne pas lancer de poll parallèle qui interférerait avec le transport mocké.
+  const requestId = onStatus && typeof window !== 'undefined' ? crypto.randomUUID() : undefined;
   const statusAbort = new AbortController();
   let polling = false;
   let latestStatus: CliExecutionStatus | undefined;
@@ -96,7 +98,7 @@ export async function callBridge(req: BridgeRequest): Promise<string> {
       polling = false;
     }
   };
-  const pollTimer = requestId ? window.setInterval(() => { void pollStatus(); }, 500) : undefined;
+  const pollTimer = requestId ? globalThis.setInterval(() => { void pollStatus(); }, 500) : undefined;
   if (requestId) void pollStatus();
   try {
     const res = await fetch(ENDPOINT, {
@@ -126,7 +128,7 @@ export async function callBridge(req: BridgeRequest): Promise<string> {
     }
     throw error;
   } finally {
-    if (pollTimer !== undefined) window.clearInterval(pollTimer);
+    if (pollTimer !== undefined) globalThis.clearInterval(pollTimer);
     statusAbort.abort();
   }
 }
