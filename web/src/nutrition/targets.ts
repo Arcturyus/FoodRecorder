@@ -416,6 +416,11 @@ export function computeTargets(
     if (r.key === 'fer' && sexe === 'femme') {
       return { ...base, ajr: 15, optimal: 18, lowThreshold: 10 };
     }
+    // Références nutritionnelles ANSES 2021 : AS de 1,9 mg/j chez l'homme
+    // adulte et 1,5 mg/j chez la femme adulte.
+    if (r.key === 'cuivre' && sexe === 'femme') {
+      return { ...base, ajr: 1.5, optimal: 1.5 };
+    }
     const factor = r.optimalFactor ?? 1;
     return { ...base, ajr: r.rda, optimal: roundTarget(r.rda * factor) };
   });

@@ -1,7 +1,7 @@
 import type { JournalEntry } from '../store/store';
 import { isDayCounted, todayStr } from '../store/store';
-import type { Food, NutrientKey, Nutrients } from './types';
-import { EMPTY_NUTRIENTS } from './types';
+import type { Food, NutrientKey, Nutrients, NullableNutrientKey } from './types';
+import { EMPTY_NUTRIENTS, isNullableNutrientKey } from './types';
 import type { SunExposure } from '../sun/vitaminD';
 import { sunVitDForDate } from '../sun/vitaminD';
 import { vitaminDFlux } from '../sun/vitaminDStatus';
@@ -33,8 +33,16 @@ export function computePeriodNutrition(input: PeriodNutritionInput, options: Per
   for (const entry of input.entries) for (const item of entry.items) {
     if (options.excludeSupplements && item.foodId && supplementIds.has(item.foodId)) continue;
     let total = byDate.get(entry.date);
-    if (!total) { total = { ...EMPTY_NUTRIENTS }; byDate.set(entry.date, total); }
-    for (const key of KEYS) total[key] += item.nutrients[key] ?? 0;
+    if (!total) {
+      total = { ...item.nutrients };
+      byDate.set(entry.date, total);
+      continue;
+    }
+    for (const key of KEYS) {
+      const value = item.nutrients[key];
+      if (isNullableNutrientKey(key)) total[key] = total[key] == null || value == null ? null : total[key] + value;
+      else total[key] += value ?? 0;
+    }
   }
   const byDateVitD = new Map<string, Nutrients>();
   for (const [date, total] of byDate) {
@@ -42,7 +50,7 @@ export function computePeriodNutrition(input: PeriodNutritionInput, options: Per
     byDateVitD.set(date, sun ? { ...total, vitD: total.vitD + sun } : total);
   }
   for (const [date, muted] of Object.entries(input.mutedDays)) if (muted === false && !byDate.has(date)) {
-    byDateVitD.set(date, { ...EMPTY_NUTRIENTS, vitD: options.includeSun ? sunVitDForDate(input.sunExposures, date) : 0 });
+    byDateVitD.set(date, { ...EMPTY_NUTRIENTS, cuivre: 0, vitARetinol: 0, vitABetaCarotene: 0, vitD: options.includeSun ? sunVitDForDate(input.sunExposures, date) : 0 });
   }
   const windowDates = datesInRange(options.range).filter((d) => options.includeToday || d !== todayStr());
   const recorded = windowDates.filter((d) => isDayCounted(input.mutedDays, byDate.has(d), d));
@@ -50,8 +58,20 @@ export function computePeriodNutrition(input: PeriodNutritionInput, options: Per
   if (recorded.length) {
     if (options.decayOn) averages = decayWeightedTotals(weighDates(recorded, byDateVitD, options.halfLife));
     else {
-      for (const date of recorded) for (const key of KEYS) averages[key] += byDateVitD.get(date)![key];
-      for (const key of KEYS) averages[key] /= recorded.length;
+      const knownDays: Record<NullableNutrientKey, number> = { cuivre: 0, vitARetinol: 0, vitABetaCarotene: 0 };
+      for (const date of recorded) for (const key of KEYS) {
+        const value = byDateVitD.get(date)![key];
+        if (isNullableNutrientKey(key)) {
+          if (value != null) {
+            averages[key] = (averages[key] ?? 0) + value;
+            knownDays[key]++;
+          }
+        } else averages[key] += value ?? 0;
+      }
+      for (const key of KEYS) {
+        if (isNullableNutrientKey(key)) averages[key] = knownDays[key] > 0 ? averages[key]! / knownDays[key] : null;
+        else averages[key] /= recorded.length;
+      }
     }
   }
   const vitDByDate = new Map<string, number>();

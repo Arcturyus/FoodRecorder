@@ -9,7 +9,7 @@ import {
 import { useStore, resyncEntries, dayTotals } from '../src/store/store';
 import type { JournalEntry, JournalItem } from '../src/store/store';
 import { FOOD_BY_ID } from '../src/nutrition/foods';
-import { EMPTY_NUTRIENTS, type ExtractedItem, type Nutrients } from '../src/nutrition/types';
+import { EMPTY_NUTRIENTS, NULLABLE_NUTRIENT_KEYS, type ExtractedItem, type Nutrients } from '../src/nutrition/types';
 import { scaleNutrients } from '../src/nutrition/compute';
 
 /**
@@ -150,7 +150,7 @@ describe('migration vers la banque personnelle', () => {
     expect(r.entries[0].items[0].foodId).toBe(r.entries[1].items[0].foodId);
   });
 
-  it('complète les nutriments absents d’une vieille estimation (sinon : NaN à l’affichage)', () => {
+  it('complète les nutriments absents d’une vieille estimation sans transformer une donnée inconnue en zéro', () => {
     // Un `iaEstime` persisté avant l'ajout d'un nutriment ne porte que quelques
     // clés. Repéré au navigateur : « G NaN · L NaN » sur les lignes de banque.
     const partiel: JournalItem = {
@@ -163,7 +163,10 @@ describe('migration vers la banque personnelle', () => {
     });
     const n = r.customFoods[0].n;
     expect(n.kcal).toBe(250);
-    for (const [k, v] of Object.entries(n)) expect(Number.isFinite(v), `${k} = ${v}`).toBe(true);
+    const nullable = new Set<string>(NULLABLE_NUTRIENT_KEYS);
+    for (const [k, v] of Object.entries(n)) {
+      expect(v === null ? nullable.has(k) : Number.isFinite(v), `${k} = ${v}`).toBe(true);
+    }
   });
 
   it('laisse tel quel un item que rien ne résout (aucune valeur à lui donner)', () => {

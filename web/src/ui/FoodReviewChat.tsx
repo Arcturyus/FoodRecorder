@@ -17,7 +17,8 @@ import { fmt } from './format';
 import { useBankUsage } from './useBankUsage';
 
 /** Décimales utiles selon l'ordre de grandeur (0,0004 µg de B12 ne doit pas s'afficher « 0 »). */
-function val(v: number): string {
+function val(v: number | null): string {
+  if (v == null) return 'inconnu';
   if (v === 0) return '0';
   if (Math.abs(v) >= 10) return fmt(v);
   if (Math.abs(v) >= 0.1) return fmt(v, 2);
@@ -151,7 +152,7 @@ function DiffTable({ food, fiche, onApply }: { food: Food; fiche: ReviewFiche; o
       {diff.map((d) => (
         <div className="small" key={d.key}>
           {d.label} : <span className="mono">{val(d.avant)}</span> →{' '}
-          <span className="mono" style={{ color: d.apres > d.avant ? 'var(--good)' : 'var(--warn)' }}>
+          <span className="mono" style={{ color: d.apres != null && d.avant != null && d.apres > d.avant ? 'var(--good)' : 'var(--warn)' }}>
             {val(d.apres)}
           </span>
         </div>

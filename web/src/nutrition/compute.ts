@@ -1,5 +1,5 @@
 import type { ComputedItem, ExtractedItem, Food, Nutrients, NutrientKey, Unit } from './types';
-import { EMPTY_NUTRIENTS } from './types';
+import { EMPTY_NUTRIENTS, isNullableNutrientKey } from './types';
 import { splitSaturated } from './foods';
 import { matchFood } from './match';
 import type { RecentCounts } from './match';
@@ -44,7 +44,11 @@ export function scaleNutrients(n: Nutrients, grams: number): Nutrients {
   const factor = grams / 100;
   const out = { ...EMPTY_NUTRIENTS };
   // `?? 0` : un snapshot persisté peut manquer des clés ajoutées depuis (sinon NaN).
-  for (const k of Object.keys(out) as NutrientKey[]) out[k] = (n[k] ?? 0) * factor;
+  for (const k of Object.keys(out) as NutrientKey[]) {
+    const value = n[k];
+    if (isNullableNutrientKey(k)) out[k] = value == null ? null : value * factor;
+    else out[k] = (value ?? 0) * factor;
+  }
   return out;
 }
 
@@ -64,6 +68,12 @@ export function scaleNutrients(n: Nutrients, grams: number): Nutrients {
  */
 export function normalizeNutrients(n: Partial<Nutrients> | undefined): Nutrients {
   const out = { ...EMPTY_NUTRIENTS, ...(n ?? {}) };
+  for (const k of ['cuivre', 'vitARetinol', 'vitABetaCarotene'] as const) {
+    if (out[k] == null) out[k] = null;
+  }
+  if (out.vitARetinol != null && out.vitABetaCarotene != null) {
+    out.vitA = out.vitARetinol + out.vitABetaCarotene / 12;
+  }
   if (out.agSatures > 0 && out.agSaturesLdl === 0 && out.agSaturesStearique === 0) {
     Object.assign(out, splitSaturated(out.agSatures, 'autre'));
   }
@@ -72,7 +82,10 @@ export function normalizeNutrients(n: Partial<Nutrients> | undefined): Nutrients
 
 export function addNutrients(a: Nutrients, b: Nutrients): Nutrients {
   const out = { ...EMPTY_NUTRIENTS };
-  for (const k of Object.keys(out) as NutrientKey[]) out[k] = (a[k] ?? 0) + (b[k] ?? 0);
+  for (const k of Object.keys(out) as NutrientKey[]) {
+    if (isNullableNutrientKey(k)) out[k] = a[k] == null || b[k] == null ? null : a[k] + b[k];
+    else out[k] = (a[k] ?? 0) + (b[k] ?? 0);
+  }
   return out;
 }
 
@@ -132,7 +145,6 @@ export function computeItems(items: ExtractedItem[], foods: Food[], recentCounts
 }
 
 export function totalNutrients(items: ComputedItem[]): Nutrients {
-  return items.reduce((acc, it) => (it.nutrients ? addNutrients(acc, it.nutrients) : acc), {
-    ...EMPTY_NUTRIENTS,
-  });
+  const knownZero: Nutrients = { ...EMPTY_NUTRIENTS, cuivre: 0, vitARetinol: 0, vitABetaCarotene: 0 };
+  return items.reduce((acc, it) => (it.nutrients ? addNutrients(acc, it.nutrients) : acc), knownZero);
 }

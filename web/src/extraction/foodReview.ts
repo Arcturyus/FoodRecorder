@@ -18,6 +18,7 @@
 
 import { z } from 'zod';
 import { EMPTY_NUTRIENTS } from '../nutrition/types';
+import { NULLABLE_NUTRIENT_KEYS } from '../nutrition/types';
 import type { Food, FoodCategory, FoodPrice, NutrientKey, Nutrients } from '../nutrition/types';
 import { nutrientLabelOf } from '../nutrition/rda';
 import type { ExtractionMode } from '../store/store';
@@ -33,9 +34,15 @@ const CATEGORIES = [
   'sucre-snack', 'matiere-grasse', 'boisson', 'plat', 'supplement', 'autre',
 ] as const;
 
+const NULLABLE_NUTRIENT_SET = new Set<NutrientKey>(NULLABLE_NUTRIENT_KEYS);
 const nutrimentsSchema = z.object(
-  Object.fromEntries(NUTRIENT_KEYS.map((k) => [k, z.number().nonnegative().optional()])),
-) as z.ZodType<Partial<Record<NutrientKey, number>>>;
+  Object.fromEntries(NUTRIENT_KEYS.map((k) => [
+    k,
+    NULLABLE_NUTRIENT_SET.has(k)
+      ? z.number().nonnegative().nullable().optional()
+      : z.number().nonnegative().optional(),
+  ])),
+) as z.ZodType<Partial<Nutrients>>;
 
 const reviewSchema = z.object({
   reponse: z.string().min(1),
@@ -83,7 +90,7 @@ Réponds UNIQUEMENT avec un objet JSON, sans texte autour :
 
 - "reponse" : 1 à 4 phrases en français, adressées à l'utilisateur. Explique ton raisonnement et cite les ordres de grandeur qui te font trancher. Pas de formule de politesse, pas de Markdown.
 - "fiche" : null si les valeurs actuelles te paraissent correctes — c'est un cas NORMAL et fréquent, ne propose pas un changement pour justifier ta présence. Sinon, la fiche corrigée COMPLÈTE.
-- Quand tu proposes une fiche, "nutriments" doit contenir TOUS les champs (n'en omets AUCUN ; mets 0 si négligeable), même ceux que tu ne changes pas.
+- Quand tu proposes une fiche, "nutriments" doit contenir TOUS les champs. Pour cuivre, rétinol et bêta-carotène, utilise null si la donnée manque ; 0 seulement si une source confirme zéro. Ne remplace pas une valeur connue du total vitA si les deux formes détaillées ne sont pas connues.
 - "grammesParPiece" : uniquement si l'aliment se compte en pièces/portions.
 - "prixEurKg" : ordre de grandeur du prix en France, région parisienne, par kg de produit consommé. "confiancePrix" vaut "faible", "moyenne" ou "forte". Si le prix existant manque, estime-le dans la fiche proposée ; ne mets jamais zéro pour inconnu.
 
@@ -104,15 +111,15 @@ function resumeFiche(f: ReviewFiche): string {
 
 /** Description de l'aliment relu, avec ses valeurs actuelles et son usage réel. */
 function describeFood(food: Food, usage?: ReviewUsage): string {
-  const lignes = NUTRIENT_KEYS.filter((k) => (food.n[k] ?? 0) !== 0)
-    .map((k) => `${k}=${food.n[k]}`)
+  const lignes = NUTRIENT_KEYS.filter((k) => food.n[k] == null || food.n[k] !== 0)
+    .map((k) => `${k}=${food.n[k] == null ? 'inconnu' : food.n[k]}`)
     .join(', ');
   const parts = [
     `Aliment : « ${food.nom} »`,
     `Catégorie actuelle : ${food.categorie}`,
     food.pieceGrams ? `Poids d'une pièce : ${food.pieceGrams} g` : null,
     `Prix actuel : ${food.price ? `${food.price.eurPerKg} €/kg (confiance ${food.price.confidence})` : 'inconnu'}`,
-    `Valeurs actuelles pour 100 g (les champs à 0 sont omis) : ${lignes || 'aucune'}`,
+    `Valeurs actuelles pour 100 g (les champs connus à 0 sont omis ; les nouvelles valeurs inconnues sont explicites) : ${lignes || 'aucune'}`,
   ];
   if (usage && usage.occurrences > 0) {
     parts.push(
@@ -229,8 +236,8 @@ export async function reviewFood(
 export interface FicheDiff {
   key: NutrientKey;
   label: string;
-  avant: number;
-  apres: number;
+  avant: number | null;
+  apres: number | null;
 }
 
 /**
@@ -241,8 +248,12 @@ export interface FicheDiff {
 export function ficheDiff(food: Food, fiche: ReviewFiche): FicheDiff[] {
   const out: FicheDiff[] = [];
   for (const key of NUTRIENT_KEYS) {
-    const avant = food.n[key] ?? 0;
-    const apres = fiche.nutriments[key] ?? 0;
+    const avant = food.n[key];
+    const apres = fiche.nutriments[key];
+    if (avant == null || apres == null) {
+      if (avant !== apres) out.push({ key, label: nutrientLabelOf(key), avant: avant ?? null, apres: apres ?? null });
+      continue;
+    }
     const seuil = Math.max(Math.abs(avant) * 0.01, 1e-6);
     if (Math.abs(apres - avant) <= seuil) continue;
     out.push({ key, label: nutrientLabelOf(key), avant, apres });

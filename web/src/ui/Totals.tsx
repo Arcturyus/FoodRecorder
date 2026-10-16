@@ -1,6 +1,7 @@
 import { useMemo } from 'react';
-import type { NutrientKey, Nutrients } from '../nutrition/types';
-import { EMPTY_NUTRIENTS } from '../nutrition/types';
+import type { NutrientKey, Nutrients, NullableNutrientKey } from '../nutrition/types';
+import { EMPTY_NUTRIENTS, isNullableNutrientKey } from '../nutrition/types';
+import { addNutrients } from '../nutrition/compute';
 import type { DayCost } from '../nutrition/price';
 import { PRICE_NOTE } from '../nutrition/price';
 import type { JournalItem } from '../store/store';
@@ -70,7 +71,7 @@ function topContributors(items: JournalItem[], key: NutrientKey, parts: SubPart[
   const byName = new Map<string, Contribution>();
   for (const it of items) {
     const v = it.nutrients[key];
-    if (v <= 0) continue;
+    if (v == null || v <= 0) continue;
     const cur = byName.get(it.nomAffiche) ?? { nom: it.nomAffiche, amount: 0, parts: parts.map(() => 0) };
     cur.amount += v;
     // `?? 0` : un item peut venir d'un snapshot antérieur à l'ajout d'un
@@ -124,6 +125,12 @@ function Breakdown({
   const showParts = parts.length > 0 && contribs.some((c) => c.parts.some((v) => v > 0));
   return (
     <div className="breakdown" role="tooltip">
+      {nutrientKey === 'vitA' && <VitaminABreakdown totals={items.reduce<Nutrients>((sum, item) => addNutrients(sum, item.nutrients), { ...EMPTY_NUTRIENTS, cuivre: 0, vitARetinol: 0, vitABetaCarotene: 0 })} />}
+      {nutrientKey === 'cuivre' && items.some((item) => item.nutrients.cuivre == null) && (
+        <div className="small" style={{ marginBottom: 8, color: 'var(--warn)' }}>
+          Donnée de cuivre inconnue pour {items.filter((item) => item.nutrients.cuivre == null).length} aliment(s) ; le total du jour est incomplet.
+        </div>
+      )}
       <div className="bd-title">Principaux apports</div>
       {contribs.length === 0 ? (
         <div className="bd-empty">Aucun apport aujourd'hui.</div>
@@ -164,6 +171,21 @@ function Breakdown({
           )}
         </>
       )}
+    </div>
+  );
+}
+
+/** Détail visible au survol : le total reste en équivalents rétinol. */
+export function VitaminABreakdown({ totals }: { totals: Nutrients }) {
+  const retinol = totals.vitARetinol;
+  const beta = totals.vitABetaCarotene;
+  const n = (value: number | null) => value == null ? 'donnée inconnue' : `${fmt(value, 1)} µg`;
+  return (
+    <div className="small" style={{ marginBottom: 8 }}>
+      <div className="bd-title">Vitamine A · composition</div>
+      <div>Rétinol : <span className="mono">{n(retinol)}</span></div>
+      <div>Bêta-carotène : <span className="mono">{n(beta)}</span> <span style={{ opacity: 0.8 }}>(÷ 12 = équivalents rétinol)</span></div>
+      <div style={{ marginTop: 3, opacity: 0.8 }}>vitA = rétinol + bêta-carotène / 12 ; la limite de 3 000 µg/j concerne le rétinol seul.</div>
     </div>
   );
 }
@@ -291,6 +313,7 @@ function useTrailingAverage(anchor: string, days: number): Nutrients | null {
     const filled = new Set(entries.map((e) => e.date));
     const sum: Nutrients = { ...EMPTY_NUTRIENTS };
     const keys = Object.keys(sum) as NutrientKey[];
+    const knownDays: Record<NullableNutrientKey, number> = { cuivre: 0, vitARetinol: 0, vitABetaCarotene: 0 };
     let n = 0;
     for (let age = 1; age <= days; age++) {
       const date = shiftDays(anchor, age);
@@ -298,12 +321,22 @@ function useTrailingAverage(anchor: string, days: number): Nutrients | null {
       const t = dayTotals(entries, date);
       const sun = sunVitDForDate(sunExposures, date);
       const withSun = sun > 0 ? { ...t, vitD: t.vitD + sun } : t;
-      for (const k of keys) sum[k] += withSun[k];
+      for (const k of keys) {
+        if (isNullableNutrientKey(k)) {
+          if (withSun[k] != null) {
+            sum[k] = (sum[k] ?? 0) + withSun[k]!;
+            knownDays[k]++;
+          }
+        } else sum[k] += withSun[k] ?? 0;
+      }
       n++;
     }
     if (n === 0) return null;
     const avg: Nutrients = { ...EMPTY_NUTRIENTS };
-    for (const k of keys) avg[k] = sum[k] / n;
+    for (const k of keys) {
+      if (isNullableNutrientKey(k)) avg[k] = knownDays[k] > 0 ? sum[k]! / knownDays[k] : null;
+      else avg[k] = sum[k] / n;
+    }
     return avg;
   }, [entries, mutedDays, sunExposures, anchor, days]);
 }
@@ -354,7 +387,8 @@ type GridSort = 'famille' | 'urgence';
  * Un nutriment sans cible chiffrée ne peut pas être classé : il vaut 1, soit la
  * position d'un nutriment tout juste à sa cible, plutôt qu'une fausse urgence.
  */
-export function urgencyScore(t: Target, value: number): number {
+export function urgencyScore(t: Target, value: number | null): number {
+  if (value == null) return Number.POSITIVE_INFINITY;
   if (t.goal === 'limit') {
     const ratio = t.ajr > 0 ? value / t.ajr : 0;
     return ratio > 1 ? -ratio : 2 + (1 - ratio);
@@ -422,16 +456,19 @@ export function Totals({
           <span className="l">kcal · obj. {fmt(kcalT.optimal)}</span>
           <Breakdown items={items} nutrientKey="kcal" unit="kcal" total={totals.kcal} />
         </div>
-        {headline.map((t) => (
-          <div className="m has-breakdown" key={t.key} tabIndex={0}>
-            <span className="v mono">
-              {fmt(totals[t.key])}
-              <span style={{ fontSize: 13 }}> {t.unit}</span>
-            </span>
-            <span className="l">{t.label} · obj. {fmt(t.optimal)}</span>
-            <Breakdown items={items} nutrientKey={t.key} unit={t.unit} total={totals[t.key]} />
-          </div>
-        ))}
+        {headline.map((t) => {
+          const value = totals[t.key] ?? 0;
+          return (
+            <div className="m has-breakdown" key={t.key} tabIndex={0}>
+              <span className="v mono">
+                {fmt(value)}
+                <span style={{ fontSize: 13 }}> {t.unit}</span>
+              </span>
+              <span className="l">{t.label} · obj. {fmt(t.optimal)}</span>
+              <Breakdown items={items} nutrientKey={t.key} unit={t.unit} total={value} />
+            </div>
+          );
+        })}
         <div className="m has-breakdown" tabIndex={0}>
           <span className="v mono">{cost.pricedItems > 0 || cost.complete ? fmt(cost.knownEur, 2) : '—'}<span style={{ fontSize: 13 }}> €</span></span>
           <span className="l">Prix estimé{cost.complete ? '' : ` · partiel (${cost.missingNames.length} sans prix)`}</span>
@@ -483,6 +520,17 @@ export function Totals({
       <div className="totals-grid" style={{ marginTop: 14 }}>
         {grid.map((t) => {
           const value = totals[t.key];
+
+          if (value == null) {
+            return (
+              <div className="stat has-breakdown" key={t.key} tabIndex={0}>
+                <div className="label">{t.label}</div>
+                <div className="value mono">inconnu <small>{t.unit}</small></div>
+                <div className="small mono">Donnée manquante pour au moins un aliment saisi.</div>
+                <Breakdown items={items} nutrientKey={t.key} unit={t.unit} total={0} />
+              </div>
+            );
+          }
 
           if (t.goal === 'limit') {
             // On cherche le plus bas possible : échelle 0 → plafond (ajr),

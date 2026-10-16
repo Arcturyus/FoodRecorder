@@ -108,7 +108,7 @@ function extractJson(text: string): unknown | null {
 export async function extractImageWithCli(
   imageBase64: string,
   mediaType: string,
-  options: { archive?: boolean; attempts?: number } = {},
+  options: { archive?: boolean; attempts?: number; model?: string } = {},
 ): Promise<{ items: ExtractedItem[]; source: CliSource }> {
   const attempts = Math.max(1, Math.min(options.attempts ?? 2, 2));
   let lastError: unknown;
@@ -117,6 +117,7 @@ export async function extractImageWithCli(
       const text = await callBridge({
         prompt: `${IMAGE_SYSTEM_PROMPT}\n\nJSON :`,
         label: 'photo',
+        model: options.model,
         image: { data: imageBase64, mediaType },
         archive: options.archive,
       });

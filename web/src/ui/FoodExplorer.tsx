@@ -136,7 +136,7 @@ const NUT: { key: ChartKey; label: string; unit: string }[] = [
 const NUT_LABEL = new Map(NUT.map((n) => [n.key, n.label]));
 const NUT_UNIT = new Map(NUT.map((n) => [n.key, n.unit]));
 
-const val = (f: Food, k: ChartKey) => k === 'prix' ? f.price?.eurPerKg ?? Number.NaN : f.n[k];
+const val = (f: Food, k: ChartKey) => k === 'prix' ? f.price?.eurPerKg ?? Number.NaN : f.n[k] ?? Number.NaN;
 const axisTitle = (k: ChartKey) => k === 'prix' ? 'Prix (€/kg)' : `${NUT_LABEL.get(k)} (${NUT_UNIT.get(k)}) /100 g`;
 const pointValue = (k: ChartKey, amount: number) => k === 'prix' ? `${fmt(amount, 2)} €/kg` : `${fmt(amount, amount < 10 ? 1 : 0)} ${NUT_UNIT.get(k)} /100 g`;
 
@@ -564,10 +564,8 @@ function ScatterView() {
   }
   const zoomed = zoomX.k > 1.001 || zoomY.k > 1.001 || Math.abs(zoomX.x) > 0.5 || Math.abs(zoomY.y) > 0.5;
 
-  // Un aliment sans donnée mesurée équivaut à 0 (pas exclu) : voir EMPTY_NUTRIENTS.
-  // Seuls les points sans AUCUNE valeur sur les deux axes (0 partout) sont retirés,
-  // sans lien avec l'échelle log — sinon un aliment à 0 g sur un axe minimisé (ex.
-  // AG saturés des légumes) disparaîtrait alors qu'il a une vraie valeur.
+  // Les valeurs inconnues deviennent NaN et les axes correspondants excluent
+  // l'aliment ; un zéro mesuré reste un zéro et garde sa voie dédiée en échelle log.
   const points = useMemo(() => {
     return chartFoods
       .filter((f) => !hideCats.has(f.categorie))

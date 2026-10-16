@@ -5,6 +5,7 @@ import type { RdaEntry } from '../nutrition/rda';
 import { useTargets } from './useTargets';
 import { useStore, useEffectiveFoods, useCloudConfig } from '../store/store';
 import { EMPTY_NUTRIENTS } from '../nutrition/types';
+import { normalizeNutrients } from '../nutrition/compute';
 import { PRICE_NOTE } from '../nutrition/price';
 import type { Food, FoodCategory, NutrientKey, Nutrients } from '../nutrition/types';
 import { FOODS } from '../nutrition/foods';
@@ -27,11 +28,15 @@ const BASE_MACRO_KEYS = new Set<keyof Nutrients>(['kcal', 'proteines', 'glucides
  * Champs de micros optionnels exposés dans le formulaire d'ajout / d'édition :
  * tous les nutriments du type `Nutrients` sauf les 4 macros de base ci-dessus,
  * pour que rien (collagène, créatine, iode, vitamines, AG détaillés…) ne soit
- * impossible à corriger — un champ non renseigné reste traité comme zéro.
+ * impossible à corriger — les nouveaux champs gardent `null` quand la source
+ * ne fournit pas de valeur.
  */
-const OPTIONAL_MICROS: { key: keyof Nutrients; label: string }[] = RDA.filter(
-  (r: RdaEntry) => !BASE_MACRO_KEYS.has(r.key) && !r.parent,
-).map((r) => ({ key: r.key, label: `${r.label} (${r.unit})` }));
+const OPTIONAL_MICROS: { key: keyof Nutrients; label: string }[] = [
+  ...RDA.filter((r: RdaEntry) => !BASE_MACRO_KEYS.has(r.key) && !r.parent)
+    .map((r) => ({ key: r.key, label: `${r.label} (${r.unit})` })),
+  { key: 'vitARetinol', label: 'Vitamine A · rétinol (µg)' },
+  { key: 'vitABetaCarotene', label: 'Vitamine A · bêta-carotène (µg)' },
+];
 
 /**
  * Sous-détails d'un nutriment composite : ils ont leur propre bloc de saisie
@@ -639,7 +644,13 @@ function FoodForm({ food, submitLabel, onDone }: { food?: Food; submitLabel: str
       aliases: aliases.split(',').map((a) => a.trim()).filter(Boolean),
       pieceGrams: piece ? parseFloat(piece) : undefined,
       categorie,
-      n: { ...EMPTY_NUTRIENTS, ...n },
+      n: normalizeNutrients({
+        ...EMPTY_NUTRIENTS,
+        ...n,
+        ...((n.vitARetinol != null && n.vitABetaCarotene != null)
+          ? { vitA: n.vitARetinol + n.vitABetaCarotene / 12 }
+          : {}),
+      }),
       ...(food && priceNumber === (food.price?.eurPerKg ?? null) && confiancePrix === (food.price?.confidence ?? 'moyenne')
         ? {}
         : { price: priceNumber === null ? null : { eurPerKg: priceNumber, confidence: confiancePrix, date: new Date().toISOString().slice(0, 10), origin: prixOrigine } }),
@@ -655,7 +666,7 @@ function FoodForm({ food, submitLabel, onDone }: { food?: Food; submitLabel: str
   return (
     <div className="food-form">
       <p className="small" style={{ marginTop: 0 }}>
-        Valeurs pour 100 g. Seules les calories sont obligatoires ; le reste est optionnel.
+        Valeurs pour 100 g. Seules les calories sont obligatoires. Pour cuivre, rétinol et bêta-carotène, un champ vide signifie « inconnu » ; saisissez 0 seulement si la source confirme zéro.
       </p>
       <div className="row wrap-form">
         <label className="field">
@@ -846,13 +857,13 @@ function NutrientRanking({ foods, jamaisManges }: { foods: Food[]; jamaisManges?
     () =>
       // Les compléments (produits purs très concentrés) sont exclus : sinon un
       // comprimé de vitamine C écraserait tous les vrais aliments du classement.
-      foods.filter((f) => f.categorie !== 'supplement' && (key === 'prix' ? !!f.price : f.n[key] > 0))
-        .sort((a, b) => key === 'prix' ? a.price!.eurPerKg - b.price!.eurPerKg : b.n[key] - a.n[key])
+      foods.filter((f) => f.categorie !== 'supplement' && (key === 'prix' ? !!f.price : f.n[key] != null && f.n[key]! > 0))
+        .sort((a, b) => key === 'prix' ? a.price!.eurPerKg - b.price!.eurPerKg : b.n[key]! - a.n[key]!)
         .slice(0, TOP_N),
     [foods, key],
   );
 
-  const maxFood = ranked.length ? (key === 'prix' ? ranked[ranked.length - 1].price!.eurPerKg : ranked[0].n[key]) : 0;
+  const maxFood = ranked.length ? (key === 'prix' ? ranked[ranked.length - 1].price!.eurPerKg : ranked[0].n[key] ?? 0) : 0;
   const scaleMax = Math.max(maxFood, t?.ajr ?? 0, t?.optimal ?? 0) || 1;
   const ajrPos = ((t?.ajr ?? 0) / scaleMax) * 100;
   const optPos = ((t?.optimal ?? 0) / scaleMax) * 100;
@@ -891,7 +902,7 @@ function NutrientRanking({ foods, jamaisManges }: { foods: Food[]; jamaisManges?
           <div className="empty">Aucun aliment renseigné pour cet élément.</div>
         ) : (
           ranked.map((f, i) => {
-            const value = key === 'prix' ? f.price!.eurPerKg : f.n[key];
+            const value = key === 'prix' ? f.price!.eurPerKg : f.n[key]!;
             const pctAjr = t && t.ajr > 0 ? (value / t.ajr) * 100 : 0;
             const pctOpt = t && t.optimal > 0 ? (value / t.optimal) * 100 : 0;
             return (

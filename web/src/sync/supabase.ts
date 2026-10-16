@@ -1,4 +1,5 @@
 import { createClient, type SupabaseClient } from '@supabase/supabase-js';
+import type { BridgeModel } from '../extraction/bridge';
 
 /**
  * Synchronisation optionnelle entre appareils via une table Supabase partagée
@@ -51,6 +52,10 @@ export interface ImagePayload extends StampedPayload {
   mediaType: string;
   /** Message d'erreur si l'extraction a échoué (cf. markImageProcessed) — sinon absent. */
   error?: string;
+  /** Modèle demandé pour la prochaine tentative de cette seule photo. */
+  retryModel?: string;
+  /** Catalogue du CLI joint par le poste d'analyse pour les autres appareils. */
+  availableModels?: BridgeModel[];
 }
 
 /** Une photo conservée après un échec d'analyse, proposée à l'utilisateur pour décision. */
@@ -302,18 +307,62 @@ export async function markImageProcessed(id: string, payload: Omit<ImagePayload,
 }
 
 /** Remet une photo échouée dans la file, sans toucher à son image. */
-export async function retryFailedImage(id: string, payload: ImagePayload): Promise<void> {
+export async function retryFailedImage(id: string, payload: ImagePayload, model?: string): Promise<void> {
   if (!supabase) return;
   const { error: _error, ...retryPayload } = payload;
+  const requestedModel = model?.trim();
   await withRetry('relance de la photo', () =>
-    supabase!.from('sync_queue').update({ processed: false, payload: retryPayload }).eq('id', id),
+    supabase!.from('sync_queue').update({
+      processed: false,
+      payload: { ...retryPayload, ...(requestedModel ? { retryModel: requestedModel } : {}) },
+    }).eq('id', id),
   );
 }
 
-/** Supprime définitivement une photo échouée et son entrée de file. */
+/** Publie le catalogue Codex avec la photo en erreur pour les autres appareils du profil. */
+export async function setFailedImageModels(
+  id: string,
+  payload: ImagePayload,
+  models: BridgeModel[],
+): Promise<void> {
+  if (!supabase || models.length === 0) return;
+  await withRetry('partage des modèles de réessai', () =>
+    supabase!.from('sync_queue')
+      .update({ payload: { ...payload, availableModels: models } })
+      .eq('id', id)
+      .eq('kind', 'image')
+      .eq('processed', true)
+      .not('payload->>error', 'is', null),
+  );
+}
+
+/** Retire une photo échouée en purgeant son image et son erreur de la file. */
 export async function deleteFailedImage(id: string): Promise<void> {
   if (!supabase) return;
-  await withRetry('suppression de la photo', () =>
-    supabase!.from('sync_queue').delete().eq('id', id),
-  );
+  await withRetry('suppression de la photo', async () => {
+    const { data, error } = await supabase!
+      .from('sync_queue')
+      .update({ processed: true, payload: { dismissed: true } })
+      .eq('id', id)
+      .eq('kind', 'image')
+      .eq('processed', true)
+      .not('payload->>error', 'is', null)
+      .select('id')
+      .maybeSingle();
+    if (error || data) return { error };
+
+    // An update filtered by RLS may return no row and no error. Check whether
+    // another attempt already removed it or the write was silently filtered.
+    const { data: current, error: readError } = await supabase!
+      .from('sync_queue')
+      .select('payload')
+      .eq('id', id)
+      .eq('kind', 'image')
+      .maybeSingle();
+    if (readError) return { error: readError };
+    if (!current) return { error: null };
+    const payload = current.payload as Record<string, unknown> | null;
+    if (payload?.dismissed === true && !payload.imageBase64 && !payload.error) return { error: null };
+    return { error: { message: 'Supabase a ignoré la suppression de la photo (droits RLS).' } };
+  });
 }

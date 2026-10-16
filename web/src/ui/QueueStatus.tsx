@@ -84,6 +84,8 @@ export function QueueStatus() {
   const [open, setOpen] = useState(false);
   const [actionId, setActionId] = useState<string | null>(null);
   const [actionError, setActionError] = useState<string | null>(null);
+  const [modelPickerId, setModelPickerId] = useState<string | null>(null);
+  const [retryModels, setRetryModels] = useState<Record<string, string>>({});
 
   useEffect(() => {
     reset();
@@ -115,12 +117,13 @@ export function QueueStatus() {
   // sans affordance de clic qui n'ouvrirait rien.
   const depliable = pendingItems.length > 0 || failedImages.length > 0;
 
-  const retry = async (image: FailedImage) => {
+  const retry = async (image: FailedImage, model?: string) => {
     setActionError(null);
     setActionId(image.id);
     try {
-      await retryFailedImage(image.id, image.payload);
+      await retryFailedImage(image.id, image.payload, model);
       setFailedImages(failedImages.filter((item) => item.id !== image.id));
+      setModelPickerId(null);
       setPending(
         { ...pending, image: pending.image + 1 },
         [...pendingItems, {
@@ -189,10 +192,51 @@ export function QueueStatus() {
                     <button type="button" className="small" disabled={actionId !== null} onClick={() => retry(image)}>
                       {actionId === image.id ? 'Relance…' : 'Retenter maintenant'}
                     </button>
+                    {image.payload.availableModels?.length ? (
+                      <button
+                        type="button"
+                        className="small"
+                        disabled={actionId !== null}
+                        onClick={() => setModelPickerId(modelPickerId === image.id ? null : image.id)}
+                      >
+                        {modelPickerId === image.id ? 'Fermer' : 'Autre modèle…'}
+                      </button>
+                    ) : (
+                      <span className="queue-status-model-note">Liste des modèles en attente de l’ordinateur.</span>
+                    )}
                     <button type="button" className="small danger" disabled={actionId !== null} onClick={() => remove(image)}>
                       Supprimer
                     </button>
                   </span>
+                  {modelPickerId === image.id && image.payload.availableModels && (
+                    <div className="queue-status-model-picker">
+                      <label htmlFor={`retry-model-${image.id}`}>Modèle pour cette tentative</label>
+                      <select
+                        id={`retry-model-${image.id}`}
+                        value={retryModels[image.id] ?? ''}
+                        disabled={actionId !== null}
+                        onChange={(event) => setRetryModels((currentModels) => ({
+                          ...currentModels,
+                          [image.id]: event.target.value,
+                        }))}
+                      >
+                        <option value="">Choisir un modèle…</option>
+                        {image.payload.availableModels.map((model) => (
+                          <option key={model.id} value={model.id}>
+                            {model.label}{model.isDefault ? ' · recommandé par Codex' : ''}
+                          </option>
+                        ))}
+                      </select>
+                      <button
+                        type="button"
+                        className="small"
+                        disabled={actionId !== null || !retryModels[image.id]}
+                        onClick={() => retry(image, retryModels[image.id])}
+                      >
+                        {actionId === image.id ? 'Relance…' : 'Retenter avec ce modèle'}
+                      </button>
+                    </div>
+                  )}
                 </li>
               ))}
             </ul>

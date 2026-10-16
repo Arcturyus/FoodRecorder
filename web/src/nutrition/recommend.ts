@@ -1,5 +1,5 @@
 import type { Food, Nutrients, NutrientKey } from './types';
-import { EMPTY_NUTRIENTS } from './types';
+import { EMPTY_NUTRIENTS, isNullableNutrientKey } from './types';
 import type { Target } from './targets';
 import { RATIOS, computeRatio } from './ratios';
 import { RDA } from './rda';
@@ -123,6 +123,7 @@ export function computeGaps(
   for (const t of targets) {
     if (t.key === 'kcal') continue; // hors score (voir en-tête)
     const avg = averages[t.key];
+    if (avg == null) continue; // absence de source : ne pas la noter comme un manque
     if (t.goal === 'limit') {
       // Malus proportionnel à la proximité du plafond : déjà sensible sous le
       // plafond (un apport à 80 % du plafond n'est pas « gratuit »), et qui
@@ -168,7 +169,7 @@ export function computeGaps(
 
     if (up) {
       const t = byKey.get(up);
-      if (t && t.goal === 'atLeast') {
+      if (t && t.goal === 'atLeast' && averages[up] != null) {
         const g = gaps.get(up);
         if (g) {
           g.weight += boost;
@@ -177,7 +178,7 @@ export function computeGaps(
         } else {
           // Nutriment déjà couvert en absolu mais que le rapport réclame quand même.
           gaps.set(up, {
-            key: up, target: t, avg: averages[up], missing: 0,
+            key: up, target: t, avg: averages[up]!, missing: 0,
             need: sev * t.optimal, weight: boost, ratioBoost: def.label,
           });
         }
@@ -185,11 +186,11 @@ export function computeGaps(
     }
     if (down) {
       const t = byKey.get(down);
-      if (t) {
+      if (t && averages[down] != null) {
         const cap = t.goal === 'limit' ? t.ajr : t.optimal;
         const prev = penalties.get(down);
         if (prev) prev.weight += boost;
-        else penalties.set(down, { key: down, target: t, avg: averages[down], weight: boost, cap, reason: def.label });
+        else penalties.set(down, { key: down, target: t, avg: averages[down]!, weight: boost, cap, reason: def.label });
       }
     }
   }
@@ -257,7 +258,9 @@ export function scoreFood(food: Food, analysis: GapAnalysis, params: RecoParams)
 
   let positive = 0;
   for (const g of analysis.gaps) {
-    const amount = food.n[g.key] * factor;
+    const rawAmount = food.n[g.key];
+    if (rawAmount == null) continue;
+    const amount = rawAmount * factor;
     if (amount <= 0 || g.target.optimal <= 0) continue;
     // Cappée au manque restant : sur-couvrir un manque n'apporte plus de points.
     const points = g.weight * (Math.min(amount, g.need) / g.target.optimal);
@@ -268,7 +271,9 @@ export function scoreFood(food: Food, analysis: GapAnalysis, params: RecoParams)
 
   let negative = 0;
   for (const p of analysis.penalties) {
-    const amount = food.n[p.key] * factor;
+    const rawAmount = food.n[p.key];
+    if (rawAmount == null) continue;
+    const amount = rawAmount * factor;
     if (amount <= 0 || p.cap <= 0) continue;
     const points = p.weight * Math.min(3, amount / p.cap);
     if (points <= 0) continue;
@@ -347,8 +352,20 @@ export function decayWeightedTotals(days: WeightedDay[]): Nutrients {
   const sum = days.reduce((a, d) => a + d.weight, 0);
   if (sum <= 0) return out;
   const keys = Object.keys(EMPTY_NUTRIENTS) as NutrientKey[];
-  for (const d of days) for (const k of keys) out[k] += (d.totals[k] ?? 0) * d.weight;
-  for (const k of keys) out[k] /= sum;
+  const knownWeight = { cuivre: 0, vitARetinol: 0, vitABetaCarotene: 0 };
+  for (const d of days) for (const k of keys) {
+    const value = d.totals[k];
+    if (isNullableNutrientKey(k)) {
+      if (value != null) {
+        out[k] = (out[k] ?? 0) + value * d.weight;
+        knownWeight[k] += d.weight;
+      }
+    } else out[k] += (value ?? 0) * d.weight;
+  }
+  for (const k of keys) {
+    if (isNullableNutrientKey(k)) out[k] = knownWeight[k] > 0 ? out[k]! / knownWeight[k] : null;
+    else out[k] /= sum;
+  }
   return out;
 }
 
@@ -424,15 +441,15 @@ export function topSourcesFor(
 ): Suggestion[] {
   const exclFactor = opts.excludeFactor ?? 1;
   const candidates = foods
-    .filter((f) => (f.categorie === 'supplement') === opts.supplements && f.n[key] > 0)
+    .filter((f) => (f.categorie === 'supplement') === opts.supplements && f.n[key] != null && f.n[key]! > 0)
     .map((f) => {
       const portionG = portionGrams(f);
-      return { food: f, portionG, amount: f.n[key] * (portionG / 100) };
+      return { food: f, portionG, amount: f.n[key]! * (portionG / 100) };
     })
     // On écarte les sources dont le nutriment « opposé » dépasse `excludeFactor ×`
     // le nutriment visé : elles aggraveraient le rapport qu'on cherche à corriger
     // (ex. sources de potassium très salées quand on veut corriger K/Na).
-    .filter((s) => !opts.exclude || s.food.n[opts.exclude] * (s.portionG / 100) <= exclFactor * s.amount)
+    .filter((s) => !opts.exclude || s.food.n[opts.exclude] == null || s.food.n[opts.exclude]! * (s.portionG / 100) <= exclFactor * s.amount)
     .sort((a, b) => Math.min(b.amount, need) - Math.min(a.amount, need) || b.amount - a.amount);
 
   let picked: Suggestion[];
@@ -532,7 +549,7 @@ export function dayAdvice(
     const imp = importance(t.key);
     if (imp <= 0) continue; // nutriment mis en sourdine : aucun conseil
     const v = totals[t.key];
-    if (v <= t.ajr) continue;
+    if (v == null || v <= t.ajr) continue;
     scored.push({
       rank: (300 + Math.min(2, v / t.ajr)) * imp,
       item: {
@@ -592,11 +609,12 @@ export function dayAdvice(
   const lagging = targets
     .filter((t) => t.goal === 'atLeast' && t.key !== 'kcal' && t.optimal > 0 && importance(t.key) > 0)
     .filter((t) => !MACRO_SECONDARY_KEYS.includes(t.key))
-    .map((t) => ({ t, relCov: totals[t.key] / t.optimal / p }))
+    .filter((t) => totals[t.key] != null)
+    .map((t) => ({ t, relCov: (totals[t.key] ?? 0) / t.optimal / p }))
     .filter(({ relCov }) => relCov < DAY_LAG_THRESHOLD);
 
   for (const { t, relCov } of lagging) {
-    const need = t.optimal - totals[t.key];
+    const need = t.optimal - (totals[t.key] ?? 0);
     scored.push({
       rank: 100 * (1 - relCov) * importance(t.key),
       item: {
@@ -692,8 +710,10 @@ export function lowestCoverage(
     .filter((t) => t.goal === 'atLeast' && t.key !== 'kcal' && t.optimal > 0)
     .filter((t) => !MACRO_SECONDARY_KEYS.includes(t.key))
     .filter((t) => !LOWEST_EXCLUDED.includes(t.key) && importance(t.key) > 0)
+    .filter((t) => totals[t.key] != null)
     .map((t) => {
-      const coverage = totals[t.key] / t.optimal / p;
+      const value = totals[t.key] ?? 0;
+      const coverage = value / t.optimal / p;
       return { t, coverage, rank: (1 - Math.min(1, coverage)) * importance(t.key) };
     })
     .filter(({ coverage }) => coverage < 1); // rien à dire d'un nutriment déjà couvert
@@ -705,12 +725,12 @@ export function lowestCoverage(
     .sort((a, b) => b.rank - a.rank || a.coverage - b.coverage);
 
   return [...raw, ...ranked.slice(0, Math.max(0, limit - raw.length))].map(({ t, coverage }) => {
-    const missing = Math.max(0, t.optimal - totals[t.key]);
+    const missing = Math.max(0, t.optimal - (totals[t.key] ?? 0));
     // Pas de `consumedIds` ici : sur UNE seule suggestion, la garantie « au
     // moins un aliment déjà mangé » remplacerait la meilleure source par une
     // source familière parfois bien plus pauvre.
     const best = topSourcesFor(t.key, missing || t.optimal, foods, { supplements: false, limit: 1 })[0];
-    return { target: t, value: totals[t.key], coverage, missing, best: best ?? null };
+    return { target: t, value: totals[t.key] ?? 0, coverage, missing, best: best ?? null };
   });
 }
 
@@ -805,7 +825,7 @@ export function macroAdvice(
   const lagging = MACRO_SECONDARY_KEYS
     .map((key) => targets.find((t) => t.key === key))
     .filter((t): t is Target => !!t && t.optimal > 0 && importance(t.key) > 0)
-    .map((t) => ({ target: t, remaining: Math.max(0, t.optimal - totals[t.key]), relCov: totals[t.key] / t.optimal / p }))
+    .map((t) => ({ target: t, remaining: Math.max(0, t.optimal - (totals[t.key] ?? 0)), relCov: (totals[t.key] ?? 0) / t.optimal / p }))
     .filter((m) => m.relCov < DAY_LAG_THRESHOLD && m.remaining > 0);
 
   // Ton adaptatif : protéines en retard sur les calories ⇒ viser maigre & très protéiné.
@@ -883,7 +903,7 @@ function rankMacroFoods(
       const protFill = protLeft > 0 ? Math.min(prot, protLeft) / protDen : 0;
       let laggingBonus = 0;
       for (const m of ctx.lagging) {
-        const amt = f.n[m.target.key] * factor;
+        const amt = (f.n[m.target.key] ?? 0) * factor;
         if (amt > 0) laggingBonus += (0.3 * Math.min(amt, m.remaining)) / Math.max(m.remaining, 1);
       }
       // Tant qu'il manque des protéines, chaque calorie « coûte » (malus adaptatif :

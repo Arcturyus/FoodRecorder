@@ -1,6 +1,6 @@
 import { useStore, todayStr, nowTime, effectiveFoods, recentFoodCounts, cloudConfigOf } from '../store/store';
 import { extractWithCli, extractImageWithCli } from '../extraction/cliExtract';
-import { checkBridge } from '../extraction/bridge';
+import { checkBridge, currentCli, listBridgeModels, type BridgeModel } from '../extraction/bridge';
 import { verifyMatches } from '../extraction/verify';
 import { extractSun } from '../extraction/sun';
 import { extractWeight, completeWeightEntry } from '../extraction/weight';
@@ -15,6 +15,7 @@ import {
   pendingItemOf,
   markProcessed,
   markImageProcessed,
+  setFailedImageModels,
   isSyncConfigured,
   type PendingItem,
   type SyncKind,
@@ -24,6 +25,17 @@ import { useQueueStatus, pendingTotal, type PendingCounts } from './queueStatus'
 import type { BackgroundActivityReporter, BackgroundWorkerActivity } from './workerActivity';
 
 let running = false;
+
+async function loadRetryModels(): Promise<BridgeModel[]> {
+  if (currentCli() !== 'codex') return [];
+  try {
+    const result = await listBridgeModels('codex');
+    return result.source === 'account' ? result.models : [];
+  } catch (error) {
+    console.warn('[sync] impossible de lire les modèles Codex disponibles', error);
+    return [];
+  }
+}
 
 /**
  * Un « tick » de la file d'attente, à appeler périodiquement (voir App.tsx) : si ce poste a le
@@ -95,6 +107,14 @@ export async function runSyncTick(reportActivity?: BackgroundActivityReporter): 
       fetchFailedImages(),
     ]);
     queue.setFailedImages(failedImages);
+    const failedRowsToPublishModels = failedImages
+      .filter((image) => !image.payload.availableModels?.length)
+      .map((image) => ({ id: image.id, payload: image.payload }));
+    let retryModelsPromise: Promise<BridgeModel[]> | null = null;
+    const getRetryModels = () => {
+      retryModelsPromise ??= loadRetryModels();
+      return retryModelsPromise;
+    };
     const counts: PendingCounts = {
       transcript: pendingTranscripts.length,
       image: pendingImages.length,
@@ -178,7 +198,11 @@ export async function runSyncTick(reportActivity?: BackgroundActivityReporter): 
       let source: string | undefined;
       let result: unknown;
       try {
-        const res = await extractImageWithCli(row.payload.imageBase64, row.payload.mediaType, { archive: false, attempts: 2 });
+        const res = await extractImageWithCli(row.payload.imageBase64, row.payload.mediaType, {
+          archive: false,
+          attempts: 2,
+          model: row.payload.retryModel,
+        });
         source = res.source;
         if (res.items.length > 0) {
           const items = await verify(res.items);
@@ -199,7 +223,9 @@ export async function runSyncTick(reportActivity?: BackgroundActivityReporter): 
       } catch (e) {
         failure = (e as Error).message;
         console.error('[sync] échec extraction photo', row.id, e);
-        await markImageProcessed(row.id, { ...row.payload, error: failure });
+        const failedPayload = { ...row.payload, error: failure };
+        await markImageProcessed(row.id, failedPayload);
+        failedRowsToPublishModels.push({ id: row.id, payload: failedPayload });
       }
       finish(row.id, 'image', failure);
       publishActivity({
@@ -307,6 +333,24 @@ export async function runSyncTick(reportActivity?: BackgroundActivityReporter): 
     // Une photo qui vient d'échouer est devenue une décision utilisateur : on la
     // recharge tout de suite pour afficher « Retenter » sans attendre le prochain tick.
     queue.setFailedImages(await fetchFailedImages());
+
+    if (failedRowsToPublishModels.length > 0) {
+      void getRetryModels().then(async (models) => {
+        if (models.length === 0) return;
+        await Promise.all(failedRowsToPublishModels.map(async (image) => {
+          try {
+            await setFailedImageModels(image.id, image.payload, models);
+          } catch (error) {
+            console.warn('[sync] impossible de partager les modèles de réessai', image.id, error);
+          }
+        }));
+        try {
+          queue.setFailedImages(await fetchFailedImages());
+        } catch (error) {
+          console.warn('[sync] impossible de rafraîchir les photos en erreur', error);
+        }
+      });
+    }
 
     // Le rejeu des résultats traités par d'AUTRES appareils est pris en charge par
     // la sync d'état (profileSync, toujours active ici — cf. garde en tête de

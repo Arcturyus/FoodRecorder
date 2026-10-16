@@ -20,6 +20,9 @@ export const CLI_LABELS: Record<CliBridge, string> = {
   codex: 'Codex',
 };
 
+/** Modèle Codex utilisé par FoodRecorder quand aucun modèle n'est choisi dans ses réglages. */
+const DEFAULT_CODEX_MODEL = 'gpt-6-luna';
+
 /** CLI actuellement choisi dans les Réglages. */
 export function currentCli(): CliBridge {
   return useStore.getState().cliBridge;
@@ -32,11 +35,15 @@ export function currentCliLabel(): string {
 
 /** Modèle explicitement choisi pour le CLI actif, ou défaut géré par le CLI. */
 export function currentCliModel(): string | undefined {
-  return useStore.getState().cliModels[currentCli()]?.trim() || undefined;
+  const cli = currentCli();
+  const configured = useStore.getState().cliModels[cli]?.trim();
+  return configured || (cli === 'codex' ? DEFAULT_CODEX_MODEL : undefined);
 }
 
 export interface BridgeRequest {
   prompt: string;
+  /** Remplace le modèle enregistré pour cet appel seulement. */
+  model?: string;
   /** Nomme le fichier d'archive côté serveur (photo/repas/verify/soleil…). */
   label?: string;
   /** Relève le délai d'attente pour un appel lourd assumé par l'utilisateur. */
@@ -54,11 +61,11 @@ export interface BridgeRequest {
  * la commande en échec — l'appelant décide s'il replie ou remonte.
  */
 export async function callBridge(req: BridgeRequest): Promise<string> {
-  const { signal, ...payload } = req;
+  const { signal, model, ...payload } = req;
   const res = await fetch(ENDPOINT, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ ...payload, cli: currentCli(), model: currentCliModel() }),
+    body: JSON.stringify({ ...payload, cli: currentCli(), model: model?.trim() || currentCliModel() }),
     signal,
   });
   const data = (await res.json().catch(() => ({}))) as { text?: string; error?: string };

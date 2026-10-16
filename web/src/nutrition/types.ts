@@ -1,7 +1,8 @@
 /**
  * Valeurs nutritionnelles pour 100 g d'aliment.
- * Unités : kcal ; g pour macros/fibres/créatine/collagène ; mg pour fer→sodium, vitC, vitE ;
- * µg pour sélénium, iode, vitA (EAR), vitD, B9, B12, K1, K2.
+ * Unités : kcal ; g pour macros/fibres/créatine/collagène ; mg pour minéraux, vitC et vitE ;
+ * µg pour sélénium, iode, vitamines A/D/B9/B12/K1/K2. Pour cuivre et les sous-types de
+ * vitamine A, `null` signifie inconnu tandis que 0 est une valeur connue.
  */
 export interface Nutrients {
   kcal: number;
@@ -59,12 +60,15 @@ export interface Nutrients {
   potassium: number;
   calcium: number;
   zinc: number;
+  cuivre: number | null; // mg
   sodium: number;
   // oligo-éléments (µg)
   selenium: number;
   iode: number;
   // vitamines
   vitA: number; // µg équivalent rétinol
+  vitARetinol: number | null; // µg rétinol préformé
+  vitABetaCarotene: number | null; // µg bêta-carotène brut
   vitC: number; // mg
   vitD: number; // µg
   vitE: number; // mg
@@ -83,6 +87,14 @@ export interface Nutrients {
 }
 
 export type NutrientKey = keyof Nutrients;
+
+/** Nutrients for which an absent source value must remain unknown, not zero. */
+export const NULLABLE_NUTRIENT_KEYS = ['cuivre', 'vitARetinol', 'vitABetaCarotene'] as const;
+export type NullableNutrientKey = (typeof NULLABLE_NUTRIENT_KEYS)[number];
+
+export function isNullableNutrientKey(key: NutrientKey): key is NullableNutrientKey {
+  return key === 'cuivre' || key === 'vitARetinol' || key === 'vitABetaCarotene';
+}
 
 export const UNITS = [
   'g',
@@ -210,9 +222,10 @@ export const EMPTY_NUTRIENTS: Nutrients = {
   agSatures: 0, agSaturesLdl: 0, agSaturesStearique: 0,
   agTrans: 0, agMonoInsatures: 0, agPolyInsatures: 0, omega3: 0, omega6: 0, omega9: 0,
   omega3Ala: 0, omega3Epa: 0, omega3Dha: 0,
-  fer: 0, magnesium: 0, potassium: 0, calcium: 0, zinc: 0, sodium: 0,
+  fer: 0, magnesium: 0, potassium: 0, calcium: 0, zinc: 0, cuivre: null, sodium: 0,
   selenium: 0, iode: 0,
-  vitA: 0, vitC: 0, vitD: 0, vitE: 0, vitK1: 0, vitK2: 0,
+  vitA: 0, vitARetinol: null, vitABetaCarotene: null,
+  vitC: 0, vitD: 0, vitE: 0, vitK1: 0, vitK2: 0,
   vitB1: 0, vitB2: 0, vitB3: 0, vitB5: 0, vitB6: 0, vitB9: 0, vitB12: 0,
   creatine: 0, collagene: 0,
 };

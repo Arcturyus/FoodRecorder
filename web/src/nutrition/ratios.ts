@@ -97,7 +97,7 @@ function statusFor(def: RatioDef, value: number): RatioStatus {
 export function computeRatio(def: RatioDef, totals: Nutrients): RatioResult {
   const den = totals[def.den];
   const num = totals[def.num];
-  if (!den || den <= 0 || num <= 0) {
+  if (den == null || num == null || den <= 0 || num <= 0) {
     return { def, value: null, status: 'na', text: '—' };
   }
   const value = num / den;

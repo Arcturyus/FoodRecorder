@@ -19,8 +19,8 @@ export const DETAIL_GROUPS: { title: string; keys: NutrientKey[] }[] = [
       'omega6', 'omega9',
     ],
   },
-  { title: 'Minéraux', keys: ['fer', 'magnesium', 'potassium', 'calcium', 'zinc', 'sodium', 'selenium', 'iode'] },
-  { title: 'Vitamines', keys: ['vitA', 'vitC', 'vitD', 'vitE', 'vitK1', 'vitK2', 'vitB1', 'vitB2', 'vitB3', 'vitB5', 'vitB6', 'vitB9', 'vitB12'] },
+  { title: 'Minéraux', keys: ['fer', 'magnesium', 'potassium', 'calcium', 'zinc', 'cuivre', 'sodium', 'selenium', 'iode'] },
+  { title: 'Vitamines', keys: ['vitA', 'vitARetinol', 'vitABetaCarotene', 'vitC', 'vitD', 'vitE', 'vitK1', 'vitK2', 'vitB1', 'vitB2', 'vitB3', 'vitB5', 'vitB6', 'vitB9', 'vitB12'] },
   { title: 'Autres', keys: ['creatine', 'collagene'] },
 ];
 
@@ -36,6 +36,8 @@ export const SHORT_LABELS: Partial<Record<NutrientKey, string>> = {
   omega3Ala: 'ALA',
   omega3Epa: 'EPA',
   omega3Dha: 'DHA',
+  vitARetinol: 'rétinol',
+  vitABetaCarotene: 'bêta-carotène',
 };
 
 /** Valeurs de départ du formulaire d'ajustement (vide = zéro, pour ne pas saisir des « 0 »). */
@@ -64,8 +66,16 @@ export function draftToContribution(
   for (const g of groups) {
     for (const k of g.keys) {
       const raw = draft[k];
-      out[k] = !raw ? 0 : parseFloat(raw.replace(',', '.')) || 0;
+      if (raw) out[k] = parseFloat(raw.replace(',', '.')) || 0;
+      else if (k === 'cuivre' || k === 'vitARetinol' || k === 'vitABetaCarotene') {
+        // Vide = conserver l'état de connaissance actuel : null reste inconnu,
+        // tandis qu'un zéro explicitement saisi reste zéro.
+        out[k] = current[k] ?? null;
+      } else out[k] = 0;
     }
+  }
+  if (out.vitARetinol != null && out.vitABetaCarotene != null) {
+    out.vitA = out.vitARetinol + out.vitABetaCarotene / 12;
   }
   return out;
 }

@@ -3,11 +3,12 @@ import { scaleLinear, scaleLog } from 'd3-scale';
 import { line as d3line, arc as d3arc, pie as d3pie } from 'd3-shape';
 import { max as d3max } from 'd3-array';
 import type { Target } from '../nutrition/targets';
+import { EXTRA_NUTRIENT_META } from '../nutrition/rda';
 import { RATIOS, computeRatio } from '../nutrition/ratios';
-import type { NutrientKey, Nutrients } from '../nutrition/types';
-import { EMPTY_NUTRIENTS } from '../nutrition/types';
+import type { NutrientKey, Nutrients, NullableNutrientKey } from '../nutrition/types';
+import { EMPTY_NUTRIENTS, isNullableNutrientKey } from '../nutrition/types';
 import { NUTRIENT_GROUPS } from '../nutrition/groups';
-import { Omega3Breakdown } from './Totals';
+import { Omega3Breakdown, VitaminABreakdown } from './Totals';
 import {
   PeriodSelector,
   GranularitySelector,
@@ -219,11 +220,22 @@ export function Stats() {
       buckets.map((b) => {
         if (b.dates.length === 1) return byDateVitD.get(b.dates[0])!;
         const a = { ...EMPTY_NUTRIENTS };
+        const knownDays: Record<NullableNutrientKey, number> = { cuivre: 0, vitARetinol: 0, vitABetaCarotene: 0 };
         for (const d of b.dates) {
           const t = byDateVitD.get(d)!;
-          for (const k of NUT_KEYS) a[k] += t[k];
+          for (const k of NUT_KEYS) {
+            if (isNullableNutrientKey(k)) {
+              if (t[k] != null) {
+                a[k] = (a[k] ?? 0) + t[k]!;
+                knownDays[k]++;
+              }
+            } else a[k] += t[k];
+          }
         }
-        for (const k of NUT_KEYS) a[k] /= b.dates.length;
+        for (const k of NUT_KEYS) {
+          if (isNullableNutrientKey(k)) a[k] = knownDays[k] > 0 ? a[k]! / knownDays[k] : null;
+          else a[k] /= b.dates.length;
+        }
         return a;
       }),
     [buckets, byDateVitD],
@@ -277,6 +289,30 @@ export function Stats() {
           };
         }
 
+        const component = COMPONENT_SERIES[id as NutrientKey];
+        if (component) {
+          const parent = targetByKey.get(component.parent);
+          const parentObjective = parent
+            ? parent.goal === 'limit' ? parent.ajr : refMode === 'ajr' ? parent.ajr : parent.optimal
+            : 0;
+          const objective = parentObjective * component.parentUnits;
+          const key = id as NutrientKey;
+          const values = bucketAverages.map((a) => a[key]);
+          const raws = values.map((value) => value == null || objective <= 0 ? null : (value / objective) * 100);
+          const ma = smooth(raws);
+          const meta = EXTRA_NUTRIENT_META[key]!;
+          return {
+            id,
+            kind: 'nutrient' as const,
+            label: meta.label,
+            unit: meta.unit,
+            goal: parent?.goal ?? 'atLeast',
+            color,
+            objective,
+            points: values.map((value, k) => point(k, value, raws[k], ma[k])),
+          };
+        }
+
         // Nutriment : % = apport / objectif (plafond pour les « limites », sinon
         // optimal ou AJR selon `refMode`).
         const t = targetByKey.get(id as NutrientKey)!;
@@ -293,7 +329,7 @@ export function Stats() {
         }
         const objective = t.goal === 'limit' ? t.ajr : refMode === 'ajr' ? t.ajr : t.optimal;
         const values = bucketAverages.map((a) => a[id as NutrientKey]);
-        const raws = values.map((v) => (objective > 0 ? (v / objective) * 100 : 0));
+        const raws = values.map((v) => (v == null || objective <= 0 ? null : (v / objective) * 100));
         const ma = smooth(raws);
         return {
           id,
@@ -468,6 +504,7 @@ export function Stats() {
           {gran !== 'jour' &&
             ` Un point = ${gran === 'semaine' ? 'une semaine' : 'un mois'} (${buckets.length} au total), en moyenne PAR JOUR des jours enregistrés — comparable à la cible journalière.`}
           {selected.includes('vitD') && ' La vitamine D inclut l\'apport du soleil ☀️.'}
+          {selected.some((id) => COMPONENT_SERIES[id as NutrientKey]) && ' Pour un sous-type, 100 % représente la quantité qui équivaut à la cible du nutriment parent après conversion ; la valeur affichée au survol reste la quantité brute.'}
           {refMode === 'ajr' && !historicalCalories && " Nutriments à couvrir : la ligne 100 % est l'AJR (réglage « Référence 100 % » ci-dessus). Les rapports gardent leur propre cible."}
           {decayOn
             ? ` Chaque point de la courbe épaisse est la moyenne pondérée des ${decayWindowDays(halfLife)} ${granularityUnit(gran)} qui le précèdent (demi-vie ${halfLife} ${granularityUnit(gran)}) : une carence comblée depuis s'efface, une carence installée reste. La courbe brute reste en trait fin.`
@@ -802,13 +839,22 @@ function MultiTrend({
  */
 const PICKER_GROUPS = NUTRIENT_GROUPS;
 
+/** Sous-types traçables sans créer d'objectifs ni de lignes de couverture supplémentaires. */
+const COMPONENT_SERIES: Partial<Record<NutrientKey, { parent: NutrientKey; parentUnits: number }>> = {
+  omega3Ala: { parent: 'omega3', parentUnits: 10 },
+  omega3Epa: { parent: 'omega3', parentUnits: 1 },
+  omega3Dha: { parent: 'omega3', parentUnits: 1 },
+  vitARetinol: { parent: 'vitA', parentUnits: 1 },
+  vitABetaCarotene: { parent: 'vitA', parentUnits: 12 },
+};
+
 /**
  * Comparaison de recherche : insensible à la casse ET aux accents — « selenium »
  * doit trouver « Sélénium », sinon la frappe rapide ne ramène rien. Hors composant :
  * recréée à chaque rendu, elle invaliderait le mémo de la liste à chaque frappe.
  */
 function norm(v: string): string {
-  return v.normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase();
+  return v.normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase().replace(/[^a-z0-9]/g, '');
 }
 
 /** Un élément sélectionnable de la tendance : nutriment ou rapport. */
@@ -857,8 +903,17 @@ function SeriesPicker({
     for (const g of PICKER_GROUPS) {
       for (const k of g.keys) {
         const t = targetByKey.get(k);
-        if (t) out.push({ id: k, label: t.label, group: g.title, title: t.role });
+        if (t) out.push({ id: k, label: k === 'vitA' ? 'Vitamine A · total' : t.label, group: g.title, title: t.role });
       }
+    }
+    for (const [key, meta] of Object.entries(EXTRA_NUTRIENT_META) as [NutrientKey, { label: string; unit: string }][]) {
+      if (!COMPONENT_SERIES[key]) continue;
+      out.push({
+        id: key,
+        label: meta.label,
+        group: 'Détails',
+        title: `Constituant détaillé. 100 % représente la quantité qui équivaudrait à la cible du parent ${COMPONENT_SERIES[key]!.parent} selon la conversion utilisée.`,
+      });
     }
     return out;
   }, [targets]);
@@ -875,12 +930,11 @@ function SeriesPicker({
     const rank = (label: string) => {
       const l = norm(label);
       if (l.startsWith(q)) return 0;
-      if (l.split(/[^a-z0-9]+/).some((w) => w.startsWith(q))) return 1;
-      return l.includes(q) ? 2 : 3;
+      return l.includes(q) ? 1 : 2;
     };
     return free
       .map((i) => ({ i, r: rank(i.label) }))
-      .filter((x) => x.r < 3)
+      .filter((x) => x.r < 2)
       .sort((a, b) => a.r - b.r)
       .map((x) => x.i);
   }, [items, selected, q]);
@@ -975,27 +1029,28 @@ const CAP = 150;
 
 interface CovRow {
   t: Target;
-  avg: number;
-  pct: number;
+  avg: number | null;
+  pct: number | null;
   isLimit: boolean;
   /** Répartition ALA/EPA/DHA moyenne/j — renseignée uniquement pour la ligne oméga-3. */
   omega3Detail?: { omega3Ala: number; omega3Epa: number; omega3Dha: number };
+  vitADetail?: { vitARetinol: number | null; vitABetaCarotene: number | null };
 }
 
 /** Contenu de l'info-bulle riche d'un nutriment (suivi souris). */
-function CoverageCard({ t, avg, pct, isLimit, omega3Detail }: CovRow) {
-  const covered = pct >= 100;
-  const color = isLimit ? (pct > 100 ? 'var(--danger)' : 'var(--accent-2)') : covered ? 'var(--accent-2)' : 'var(--warn)';
-  const bg = isLimit ? (pct > 100 ? 'rgba(239,93,93,0.18)' : 'rgba(123,201,111,0.16)') : covered ? 'rgba(123,201,111,0.16)' : 'rgba(245,166,35,0.16)';
+function CoverageCard({ t, avg, pct, isLimit, omega3Detail, vitADetail }: CovRow) {
+  const covered = pct != null && pct >= 100;
+  const color = pct == null ? 'var(--muted)' : isLimit ? (pct > 100 ? 'var(--danger)' : 'var(--accent-2)') : covered ? 'var(--accent-2)' : 'var(--warn)';
+  const bg = pct == null ? 'rgba(154,162,177,0.12)' : isLimit ? (pct > 100 ? 'rgba(239,93,93,0.18)' : 'rgba(123,201,111,0.16)') : covered ? 'rgba(123,201,111,0.16)' : 'rgba(245,166,35,0.16)';
   return (
     <div style={{ maxWidth: 240 }}>
       <div className="row" style={{ justifyContent: 'space-between', alignItems: 'baseline', gap: 8 }}>
         <strong>{t.label}</strong>
-        <span className="hc-badge" style={{ background: bg, color }}>{fmt(pct)} %</span>
+        <span className="hc-badge" style={{ background: bg, color }}>{pct == null ? 'n.d.' : `${fmt(pct)} %`}</span>
       </div>
       <div className="small" style={{ margin: '6px 0 8px' }}>{t.role}</div>
       <div className="hc-rows">
-        <div><span>Apport moyen</span><span className="mono">{fmtVal(avg)} {t.unit}/j</span></div>
+        <div><span>Apport moyen</span><span className="mono">{avg == null ? 'donnée inconnue' : `${fmtVal(avg)} ${t.unit}/j`}</span></div>
         <div><span>AJR</span><span className="mono">{fmt(t.ajr)} {t.unit}</span></div>
         <div><span>{isLimit ? 'Idéal ≤' : 'Optimal'}</span><span className="mono">{fmt(t.optimal)} {t.unit}</span></div>
       </div>
@@ -1005,6 +1060,7 @@ function CoverageCard({ t, avg, pct, isLimit, omega3Detail }: CovRow) {
       {omega3Detail && (omega3Detail.omega3Ala > 0 || omega3Detail.omega3Epa > 0 || omega3Detail.omega3Dha > 0) && (
         <Omega3Breakdown totals={{ ...EMPTY_NUTRIENTS, ...omega3Detail }} />
       )}
+      {vitADetail && <VitaminABreakdown totals={{ ...EMPTY_NUTRIENTS, vitA: avg ?? 0, ...vitADetail }} />}
       {t.optimalNote && <div className="small" style={{ marginTop: 8, opacity: 0.9 }}>💡 {t.optimalNote}</div>}
       <div className="small" style={{ marginTop: 8, color: 'var(--accent)' }}>Cliquez pour l'ajouter à la tendance</div>
     </div>
@@ -1036,22 +1092,28 @@ function CoverageList({
     .map((t) => ({
       t,
       avg: averages[t.key],
-      pct: atLeastRef(t) > 0 ? (averages[t.key] / atLeastRef(t)) * 100 : 0,
+      pct: averages[t.key] == null ? null : atLeastRef(t) > 0 ? (averages[t.key]! / atLeastRef(t)) * 100 : 0,
       isLimit: false,
       ...(t.key === 'omega3'
         ? { omega3Detail: { omega3Ala: averages.omega3Ala, omega3Epa: averages.omega3Epa, omega3Dha: averages.omega3Dha } }
         : {}),
+      ...(t.key === 'vitA'
+        ? { vitADetail: { vitARetinol: averages.vitARetinol, vitABetaCarotene: averages.vitABetaCarotene } }
+        : {}),
     }))
-    .sort((a, b) => a.pct - b.pct);
+    .sort((a, b) => (a.pct ?? Number.POSITIVE_INFINITY) - (b.pct ?? Number.POSITIVE_INFINITY));
   const limits: CovRow[] = targets
     .filter((t) => t.goal === 'limit')
-    .map((t) => ({ t, avg: averages[t.key], pct: t.ajr > 0 ? (averages[t.key] / t.ajr) * 100 : 0, isLimit: true }))
-    .sort((a, b) => b.pct - a.pct);
+    .map((t) => {
+      const avg = averages[t.key];
+      return { t, avg, pct: avg == null ? null : t.ajr > 0 ? (avg / t.ajr) * 100 : 0, isLimit: true };
+    })
+    .sort((a, b) => (b.pct ?? Number.NEGATIVE_INFINITY) - (a.pct ?? Number.NEGATIVE_INFINITY));
 
   function row(r: CovRow) {
     const { t, avg, pct, isLimit } = r;
-    const width = (Math.min(pct, CAP) / CAP) * 100;
-    const barClass = isLimit ? (pct > 100 ? 'over' : avg <= t.optimal ? 'good' : '') : pct >= 100 ? 'good' : '';
+    const width = pct == null ? 0 : (Math.min(pct, CAP) / CAP) * 100;
+    const barClass = pct == null ? '' : isLimit ? (pct > 100 ? 'over' : avg != null && avg <= t.optimal ? 'good' : '') : pct >= 100 ? 'good' : '';
     // Repère à 100 % = la référence qui sert au calcul de `pct` (plafond pour les
     // « à limiter », sinon optimal ou AJR selon `refMode`) ; l'autre repère se
     // place proportionnellement, borné à CAP pour rester dans la barre.
@@ -1078,7 +1140,7 @@ function CoverageList({
           <span className={`mark ${primaryIsAjr ? 'ajr' : 'opti'}`} style={{ left: `${(100 / CAP) * 100}%` }} />
         </div>
         <span className="mono small" style={{ textAlign: 'right' }}>
-          {fmtVal(avg)} {t.unit}/j · {fmt(pct)} %
+          {avg == null ? 'donnée inconnue' : `${fmtVal(avg)} ${t.unit}/j · ${pct == null ? 'n.d.' : `${fmt(pct)} %`}`}
         </span>
       </div>
     );

@@ -197,6 +197,12 @@ export const RDA: RdaEntry[] = [
     lowNote: 'Le corps puise dans l\'os pour maintenir la calcémie : perte osseuse silencieuse.',
   },
   {
+    key: 'cuivre', label: 'Cuivre', unit: 'mg', rda: 1.9, goal: 'atLeast', upper: 5,
+    role: 'Cofacteur enzymatique impliqué dans le métabolisme du fer, la production d’énergie, le tissu conjonctif et le système nerveux.',
+    optimalNote: 'Référence ANSES (AS) : 1,9 mg/j chez l’homme adulte et 1,5 mg/j chez la femme adulte. Aucun bénéfice établi à viser au-dessus.',
+    lowNote: 'L’apport satisfaisant est de 1,9 mg/j chez l’homme et de 1,5 mg/j chez la femme (ANSES) ; une estimation alimentaire basse ne suffit pas à diagnostiquer une carence.',
+  },
+  {
     key: 'zinc', label: 'Zinc', unit: 'mg', rda: 11, goal: 'atLeast', optimalFactor: 1.1, upper: 25, toxic: 50,
     role: 'Immunité, synthèse protéique, testostérone et cicatrisation.',
     optimalNote: 'Pertes par la sueur chez le sportif ; ne pas dépasser durablement 25 mg (antagonise le cuivre).',
@@ -226,7 +232,7 @@ export const RDA: RdaEntry[] = [
     lowNote: 'Goitre, hypothyroïdie ; critique en début de grossesse (développement cérébral fœtal).',
   },
   {
-    key: 'vitA', label: 'Vitamine A', unit: 'µg', rda: 750, goal: 'atLeast', optimalFactor: 1, upper: 3000, toxic: 7500,
+    key: 'vitA', label: 'Vitamine A', unit: 'µg', rda: 750, goal: 'atLeast', optimalFactor: 1,
     role: 'Vision, immunité et renouvellement de la peau et des muqueuses.',
     optimalNote: 'Vitamine liposoluble toxique en excès (rétinol) : ne pas pousser au-dessus de l\'AJR.',
     lowThreshold: 300,
@@ -327,6 +333,8 @@ export const EXTRA_NUTRIENT_META: Partial<Record<NutrientKey, { label: string; u
   omega3Ala: { label: 'Oméga 3 · ALA brut (végétal)', unit: 'g' },
   omega3Epa: { label: 'Oméga 3 · EPA brut', unit: 'g' },
   omega3Dha: { label: 'Oméga 3 · DHA brut', unit: 'g' },
+  vitARetinol: { label: 'Vitamine A · rétinol', unit: 'µg' },
+  vitABetaCarotene: { label: 'Vitamine A · bêta-carotène', unit: 'µg' },
 };
 
 /** Libellé lisible d'un nutriment, table AJR d'abord puis les extras. */

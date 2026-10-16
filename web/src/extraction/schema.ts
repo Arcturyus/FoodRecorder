@@ -14,12 +14,18 @@ const CATEGORIES = [
 
 /**
  * Nutriments estimés par l'IA (pour 100 g). Chaque clé est tolérée absente
- * (l'IA peut en oublier), puis complétée à 0 lors de la normalisation — mais le
- * prompt demande de TOUT renseigner.
+ * (l'IA peut en oublier), puis normalisée ; cuivre et les deux formes de vitA
+ * restent nulles si la source ne permet pas de les établir.
  */
+const NULLABLE_NUTRIENT_SET = new Set<NutrientKey>(['cuivre', 'vitARetinol', 'vitABetaCarotene']);
 const nutrimentsSchema = z.object(
-  Object.fromEntries(NUTRIENT_KEYS.map((k) => [k, z.number().nonnegative().optional()])),
-) as z.ZodType<Partial<Record<NutrientKey, number>>>;
+  Object.fromEntries(NUTRIENT_KEYS.map((k) => [
+    k,
+    NULLABLE_NUTRIENT_SET.has(k)
+      ? z.number().nonnegative().nullable().optional()
+      : z.number().nonnegative().optional(),
+  ])),
+) as z.ZodType<Partial<Nutrients>>;
 
 export const extractedItemSchema = z.object({
   aliment: z.string().min(1),
@@ -74,8 +80,14 @@ export const extractionJsonSchema = {
  * une répartition vide ferait mentir la ligne « dont » du bilan et sortirait
  * l'aliment du plafond qui compte.
  */
-function fullNutrients(partial: Partial<Record<NutrientKey, number>>, categorie?: FoodCategory): Nutrients {
+function fullNutrients(partial: Partial<Nutrients>, categorie?: FoodCategory): Nutrients {
   const n = { ...EMPTY_NUTRIENTS, ...partial };
+  // Preserve a total explicitly supplied by the source. Some tables (notably
+  // USDA RAE) also count provitamin A carotenoids other than beta-carotene, so
+  // it cannot always be reconstructed from these two tracked components.
+  if (partial.vitA == null && n.vitARetinol != null && n.vitABetaCarotene != null) {
+    n.vitA = n.vitARetinol + n.vitABetaCarotene / 12;
+  }
   if (n.agSatures > 0 && n.agSaturesLdl === 0 && n.agSaturesStearique === 0) {
     Object.assign(n, splitSaturated(n.agSatures, categorie ?? 'autre'));
   }
@@ -120,9 +132,10 @@ export const NUTRIMENTS_PROMPT_DOC = `Toutes les valeurs sont POUR 100 g d'alime
   · agSaturesStearique = stéarique C18:0, neutre sur le LDL (beurre de cacao donc chocolat noir, bœuf, agneau).
   · Leur somme est ≤ agSatures ; le reste (laurique C12, chaînes courtes des laitages, C20/C22 des oléagineux) n'est pas détaillé.
   · Ordres de grandeur, en part des AG saturés : matière grasse laitière ≈ 62 % / 18 % ; beurre de cacao ≈ 43 % / 56 % ; huile de palme ≈ 90 % / 8 % ; bœuf ≈ 66 % / 34 % ; agneau ≈ 54 % / 42 % ; volaille ≈ 76 % / 20 % ; poisson ≈ 78 % / 16 % ; végétal courant ≈ 85 % / 8 %.
-- fer, magnesium, potassium, calcium, zinc, sodium : mg
+- fer, magnesium, potassium, calcium, zinc, cuivre, sodium : mg
 - vitC, vitE, vitB1, vitB2, vitB3, vitB5, vitB6 : mg
-- selenium, iode, vitA, vitD, vitK1, vitK2, vitB9, vitB12 : µg (vitA en µg équivalent rétinol)
+- selenium, iode, vitA, vitARetinol, vitABetaCarotene, vitD, vitK1, vitK2, vitB9, vitB12 : µg (vitA en équivalent rétinol, vitARetinol en rétinol préformé, vitABetaCarotene en bêta-carotène brut)
+- cuivre, vitARetinol, vitABetaCarotene : utilise null si la valeur n'est pas disponible ; 0 uniquement si une source fiable confirme zéro. Pour la vitamine A, conserve le vitA total publié par la source. Ne le remplace pas par une somme de composants. Si le total manque et que rétinol et bêta-carotène sont connus, calcule-le selon la convention de cette source ; Ciqual 2025 utilise 1 µg rétinol = 1 µg ER et 1 µg bêta-carotène = 1/12 µg ER. Certaines conventions RAE incluent aussi d'autres caroténoïdes provitamine A.
 - creatine : g (viandes/poissons, 0 sinon)
 - collagene : g (sous-ensemble des proteines : tissus conjonctifs animaux — peau, tendons, os, morceaux gélatineux, gélatine. 0 pour tout végétal, laitage ou œuf)`;
 

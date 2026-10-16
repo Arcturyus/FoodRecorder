@@ -16,8 +16,8 @@
  */
 
 import { z } from 'zod';
-import type { ExtractedItem, Food, NutrientKey } from '../nutrition/types';
-import { EMPTY_NUTRIENTS } from '../nutrition/types';
+import type { ExtractedItem, Food, NutrientKey, Nutrients } from '../nutrition/types';
+import { EMPTY_NUTRIENTS, isNullableNutrientKey } from '../nutrition/types';
 import { matchFood } from '../nutrition/match';
 import type { RecentCounts } from '../nutrition/match';
 import { STRONG_DB_MATCH } from '../nutrition/compute';
@@ -46,8 +46,11 @@ const verdictSchema = z.object({
   quantiteMin: z.number().positive().optional(),
   quantiteMax: z.number().positive().optional(),
   nutriments: z
-    .object(Object.fromEntries(NUTRIENT_KEYS.map((k) => [k, z.number().nonnegative().optional()])))
-    .optional() as z.ZodType<Partial<Record<NutrientKey, number>> | undefined>,
+    .object(Object.fromEntries(NUTRIENT_KEYS.map((k) => [
+      k,
+      isNullableNutrientKey(k) ? z.number().nonnegative().nullable().optional() : z.number().nonnegative().optional(),
+    ])))
+    .optional() as z.ZodType<Partial<Nutrients> | undefined>,
 });
 
 const responseSchema = z.object({ verdicts: z.array(verdictSchema) });
@@ -87,7 +90,7 @@ Exemple :
 [0] dit : "tarte à la myrtille" (1 portion) — la base propose : "Myrtille"
 [1] dit : "pommes de terre vapeur" (200 g) — la base propose : "Pomme de terre (cuite à l'eau)"
 [2] dit : "poke bowl saumon avocat" (1 bol) — la base propose : RIEN (aucune correspondance)
-Sortie : {"verdicts":[{"i":0,"meme":false,"categorie":"sucre-snack","grammesParPiece":120,"quantiteMin":90,"quantiteMax":150,"nutriments":{"kcal":260,"proteines":3,"glucides":34,"lipides":12,"fibres":2,"agSatures":6,"agMonoInsatures":4,"agPolyInsatures":1,"omega3":0.1,"omega6":0.9,"omega9":3.5,"fer":0.8,"magnesium":10,"potassium":90,"calcium":20,"zinc":0.3,"sodium":150,"selenium":4,"iode":3,"vitA":60,"vitC":2,"vitD":0.3,"vitE":0.8,"vitK1":2,"vitK2":0.5,"vitB1":0.08,"vitB2":0.1,"vitB3":0.5,"vitB5":0.3,"vitB6":0.04,"vitB9":10,"vitB12":0.2,"creatine":0,"collagene":0}},{"i":1,"meme":true},{"i":2,"meme":false,"categorie":"plat","grammesParPiece":450,"quantiteMin":350,"quantiteMax":550,"nutriments":{"kcal":150,"proteines":9,"glucides":15,"lipides":6,"fibres":1.5,"agSatures":1.1,"agMonoInsatures":2.8,"agPolyInsatures":1.6,"omega3":0.6,"omega6":0.9,"omega9":2.6,"fer":0.5,"magnesium":22,"potassium":230,"calcium":18,"zinc":0.4,"sodium":320,"selenium":11,"iode":4,"vitA":20,"vitC":4,"vitD":2.5,"vitE":0.7,"vitK1":6,"vitK2":0.3,"vitB1":0.06,"vitB2":0.06,"vitB3":2.6,"vitB5":0.4,"vitB6":0.2,"vitB9":18,"vitB12":0.9,"creatine":0.1,"collagene":0.2}}]}`;
+Sortie : {"verdicts":[{"i":0,"meme":false,"categorie":"sucre-snack","grammesParPiece":120,"quantiteMin":90,"quantiteMax":150,"nutriments":{"kcal":260,"proteines":3,"glucides":34,"lipides":12,"fibres":2,"agSatures":6,"agMonoInsatures":4,"agPolyInsatures":1,"omega3":0.1,"omega6":0.9,"omega9":3.5,"fer":0.8,"magnesium":10,"potassium":90,"calcium":20,"zinc":0.3,"cuivre":null,"sodium":150,"selenium":4,"iode":3,"vitA":60,"vitARetinol":null,"vitABetaCarotene":null,"vitC":2,"vitD":0.3,"vitE":0.8,"vitK1":2,"vitK2":0.5,"vitB1":0.08,"vitB2":0.1,"vitB3":0.5,"vitB5":0.3,"vitB6":0.04,"vitB9":10,"vitB12":0.2,"creatine":0,"collagene":0}},{"i":1,"meme":true},{"i":2,"meme":false,"categorie":"plat","grammesParPiece":450,"quantiteMin":350,"quantiteMax":550,"nutriments":{"kcal":150,"proteines":9,"glucides":15,"lipides":6,"fibres":1.5,"agSatures":1.1,"agMonoInsatures":2.8,"agPolyInsatures":1.6,"omega3":0.6,"omega6":0.9,"omega9":2.6,"fer":0.5,"magnesium":22,"potassium":230,"calcium":18,"zinc":0.4,"cuivre":null,"sodium":320,"selenium":11,"iode":4,"vitA":20,"vitARetinol":null,"vitABetaCarotene":null,"vitC":4,"vitD":2.5,"vitE":0.7,"vitK1":6,"vitK2":0.3,"vitB1":0.06,"vitB2":0.06,"vitB3":2.6,"vitB5":0.4,"vitB6":0.2,"vitB9":18,"vitB12":0.9,"creatine":0.1,"collagene":0.2}}]}`;
 }
 
 function userPrompt(doubtful: Doubtful[]): string {
@@ -180,7 +183,13 @@ export async function verifyMatches(
     out[v.i] = {
       ...base,
       quantite,
-      nutriments: { ...EMPTY_NUTRIENTS, ...v.nutriments },
+      nutriments: {
+        ...EMPTY_NUTRIENTS,
+        ...v.nutriments,
+        ...(v.nutriments.vitARetinol != null && v.nutriments.vitABetaCarotene != null
+          ? { vitA: v.nutriments.vitARetinol + v.nutriments.vitABetaCarotene / 12 }
+          : {}),
+      },
       ...(v.categorie ? { categorie: v.categorie } : {}),
       ...(v.grammesParPiece ? { grammesParPiece: v.grammesParPiece } : {}),
       ...(v.prixEurKg ? { prixEurKg: v.prixEurKg, confiancePrix: v.confiancePrix ?? 'faible' } : {}),

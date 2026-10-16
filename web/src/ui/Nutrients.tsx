@@ -607,6 +607,16 @@ function NutrientDetail({ t, def, ctl }: { t: Target; def: Target; ctl: TargetCo
               <strong>À retenir</strong> — {g.tip}
             </div>
           )}
+          {g.sources && (
+            <div className="small" style={{ marginTop: 8, color: 'var(--muted)' }}>
+              <strong>Références</strong> : {g.sources.map((source, index) => (
+                <span key={source.url}>
+                  {index > 0 && ' · '}
+                  <a href={source.url} target="_blank" rel="noreferrer">{source.label}</a>
+                </span>
+              ))}
+            </div>
+          )}
         </>
       ) : (
         <div style={{ marginTop: 4 }}>{t.role}</div>

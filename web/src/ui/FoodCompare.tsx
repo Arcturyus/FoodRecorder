@@ -1,8 +1,8 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { scaleLinear } from 'd3-scale';
 import { extent, quantile } from 'd3-array';
-import { RDA } from '../nutrition/rda';
-import { NUTRIENT_GROUPS } from '../nutrition/groups';
+import { EXTRA_NUTRIENT_META, nutrientLabelOf, RDA } from '../nutrition/rda';
+import { NUTRIENT_GROUPS, NUTRIENT_KEYS } from '../nutrition/groups';
 import { portionGrams, effectiveImportance } from '../nutrition/recommend';
 import { pca2 } from '../nutrition/pca';
 import { tsne, mds } from '../nutrition/embed';
@@ -11,6 +11,7 @@ import { cheaperAlternatives } from '../nutrition/cheaperAlternatives';
 import { validFoodPrice } from '../nutrition/price';
 import { useStore } from '../store/store';
 import type { Food, FoodCategory, NutrientKey } from '../nutrition/types';
+import { isNullableNutrientKey } from '../nutrition/types';
 import { CATS, COLOR_BY_CAT, CatIcon, catSymbolPath, rescaleAxis } from './FoodExplorer';
 import { fmt } from './format';
 import { useBankUsage } from './useBankUsage';
@@ -43,8 +44,9 @@ const C = {
 const SLOT_COLOR = ['#5b8cff', '#f5a623'] as const;
 
 /**
- * Nutriments manipulables ici : tout sauf les calories (constantes en densité
- * /100 kcal). Deux univers distincts en découlent, parce que voir un nutriment
+ * Nutriments manipulables ici : tous les champs du modèle, y compris calories et
+ * détails sans AJR propre (ALA/EPA/DHA, rétinol, bêta-carotène). Deux univers
+ * distincts en découlent, parce que voir un nutriment
  * et le faire entrer dans un calcul ne demandent pas la même chose :
  *
  *  - `DISPLAY_KEYS` — ce qu'on peut AFFICHER (barres A/B, radar) : tout, y
@@ -55,15 +57,28 @@ const SLOT_COLOR = ['#5b8cff', '#f5a623'] as const;
  *    sous-détail est colinéaire avec son parent ; le garder compterait deux fois
  *    la même information et étirerait artificiellement l'axe « gras saturé ».
  */
-const NUT = RDA.filter((r) => r.key !== 'kcal').map((r) => ({ key: r.key, label: r.label, unit: r.unit }));
+const RDA_BY_KEY = new Map(RDA.map((r) => [r.key, r]));
+const NUT = NUTRIENT_KEYS.map((key) => {
+  const rda = RDA_BY_KEY.get(key);
+  const extra = EXTRA_NUTRIENT_META[key];
+  return { key, label: rda?.label ?? extra?.label ?? nutrientLabelOf(key), unit: rda?.unit ?? extra?.unit ?? '' };
+});
 const NUT_LABEL = new Map(NUT.map((n) => [n.key, n.label]));
 const NUT_UNIT = new Map(NUT.map((n) => [n.key, n.unit]));
 const NUT_RDA = new Map(RDA.map((r) => [r.key, r.rda]));
 const DISPLAY_KEYS = NUT.map((n) => n.key);
-const ANALYSIS_KEYS = RDA.filter((r) => r.key !== 'kcal' && !r.parent).map((r) => r.key);
+// Les champs inconnus (cuivre, détails de vitamine A) ne peuvent pas entrer dans
+// les distances comme s'ils valaient zéro. Les graphiques de comparaison, eux,
+// les proposent et indiquent explicitement les valeurs manquantes.
+const ANALYSIS_KEYS = RDA.filter((r) => r.key !== 'kcal' && !r.parent && !isNullableNutrientKey(r.key)).map((r) => r.key);
 
-/** Jeu de nutriments actifs par défaut : un représentant lisible par famille. */
-const DEFAULT_ACTIVE: NutrientKey[] = [
+/** Sélection par défaut du radar : un représentant lisible par famille. */
+const DEFAULT_RADAR_ACTIVE: NutrientKey[] = [
+  'kcal', 'proteines', 'fibres', 'agSatures', 'omega3', 'fer', 'magnesium',
+  'calcium', 'potassium', 'zinc', 'cuivre', 'alcool', 'vitA', 'vitARetinol', 'vitABetaCarotene', 'vitC', 'vitD', 'vitB12',
+];
+/** Petit sous-ensemble de nutriments connus pour calculer distances et projection. */
+const DEFAULT_ANALYSIS_ACTIVE: NutrientKey[] = [
   'proteines', 'fibres', 'agSatures', 'omega3', 'fer', 'magnesium',
   'calcium', 'potassium', 'zinc', 'vitC', 'vitD', 'vitB12',
 ];
@@ -77,13 +92,58 @@ const NORM_LABELS: Record<NormMode, string> = {
 
 /** Valeur d'un nutriment selon la normalisation choisie. */
 function normalizedValue(food: Food, key: NutrientKey, mode: NormMode): number {
-  const per100g = food.n[key] ?? 0;
+  const raw = food.n[key];
+  if (raw == null || !Number.isFinite(raw)) return Number.NaN;
+  const per100g = raw;
   if (mode === '100g') return per100g;
   if (mode === '100kcal') {
     const kcal = food.n.kcal;
-    return kcal > 0 ? per100g * (100 / kcal) : 0;
+    return kcal > 0 ? per100g * (100 / kcal) : Number.NaN;
   }
   return per100g * (portionGrams(food) / 100);
+}
+
+/** Pour les distances/projections : une base indéfinie (aliment à 0 kcal) vaut neutre. */
+function analysisValue(food: Food, key: NutrientKey, mode: NormMode): number {
+  const value = normalizedValue(food, key, mode);
+  return Number.isFinite(value) ? value : 0;
+}
+
+function ComparisonMetrics({ a, b, mode }: { a: Food; b: Food; mode: NormMode }) {
+  const perFood = (food: Food) => {
+    const grams = mode === '100g' ? 100 : mode === 'portion' ? portionGrams(food) : food.n.kcal > 0 ? 10_000 / food.n.kcal : null;
+    const kcal = grams == null ? null : food.n.kcal * grams / 100;
+    const price = validFoodPrice(food.price);
+    const euros = grams == null || !price ? null : price.eurPerKg * grams / 1000;
+    const amount = grams == null
+      ? 'quantité impossible à calculer'
+      : mode === '100kcal'
+        ? `100 kcal · ${fmt(grams, 1)} g`
+        : mode === '100g'
+          ? `100 g · ${fmt(kcal ?? 0, 1)} kcal`
+          : `1 portion · ${fmt(grams, 1)} g · ${fmt(kcal ?? 0, 1)} kcal`;
+    const priceUnit = mode === '100kcal' ? '€/100 kcal' : mode === '100g' ? '€/100 g' : '€/portion';
+    return { amount, euros, priceUnit };
+  };
+  const entries = [a, b].map((food) => ({ food, ...perFood(food) }));
+
+  return (
+    <div className="panel">
+      <h2 style={{ margin: 0, fontSize: 15 }}>Calories, quantité et prix</h2>
+      <div className="row" style={{ gap: 10, marginTop: 10, flexWrap: 'wrap' }}>
+        {entries.map(({ food, amount, euros, priceUnit }, index) => (
+          <div key={food.id} style={{ flex: '1 1 240px', padding: 10, border: `1px solid ${C.border}`, borderRadius: 8 }}>
+            <strong style={{ color: SLOT_COLOR[index] }}>{food.nom}</strong>
+            <div style={{ marginTop: 5 }}>{amount}</div>
+            <div className="small" style={{ marginTop: 3, color: C.muted }}>
+              Prix : {euros == null ? 'inconnu' : `${fmt(euros, euros < 1 ? 3 : 2)} ${priceUnit}`}
+            </div>
+          </div>
+        ))}
+      </div>
+      {mode === '100kcal' && <p className="small" style={{ marginBottom: 0, color: C.muted }}>Les calories sont fixées à 100 par aliment ; les grammes indiquent la quantité nécessaire pour les atteindre.</p>}
+    </div>
+  );
 }
 
 // ---------------------------------------------------------------------------
@@ -131,7 +191,7 @@ function NutrientChipsBlock({ sel, defaultKeys }: { sel: NutSel; defaultKeys: Nu
         <button className="ghost small" onClick={() => sel.setActive([])}>Aucun</button>
       </div>
       {NUTRIENT_GROUPS.map((g) => {
-        const keys = g.keys.filter((k) => k !== 'kcal' && sel.universeSet.has(k));
+        const keys = g.keys.filter((k) => sel.universeSet.has(k));
         if (keys.length === 0) return null;
         return (
           <div key={g.title} style={{ marginTop: 8 }}>
@@ -254,6 +314,7 @@ export function FoodCompare({
         />
       ) : (
         <>
+          <ComparisonMetrics a={foodA} b={foodB} mode={mode} />
           <DivergentBars a={foodA} b={foodB} mode={mode} />
           <RadarCompare a={foodA} b={foodB} mode={mode} />
         </>
@@ -564,7 +625,7 @@ function FoodPicker({
 const RATIO_CAP = 4;
 
 function DivergentBars({ a, b, mode }: { a: Food; b: Food; mode: NormMode }) {
-  const sel = useNutrientSelection(DEFAULT_ACTIVE, DISPLAY_KEYS);
+  const sel = useNutrientSelection(DISPLAY_KEYS, DISPLAY_KEYS);
   const keys = sel.activeKeys;
 
   const rows = useMemo(() => {
@@ -589,6 +650,7 @@ function DivergentBars({ a, b, mode }: { a: Food; b: Food; mode: NormMode }) {
       // A (plus riche, ratio>0) en haut : on lit la liste du plus « pro-A » au plus « pro-B ».
       .sort((x, y) => y.ratio - x.ratio);
   }, [a, b, keys, mode]);
+  const missing = keys.filter((k) => !Number.isFinite(normalizedValue(a, k, mode)) || !Number.isFinite(normalizedValue(b, k, mode)));
 
   const W = 680;
   const rowH = 22;
@@ -603,7 +665,7 @@ function DivergentBars({ a, b, mode }: { a: Food; b: Food; mode: NormMode }) {
   return (
     <div className="panel">
       <ChartHeader title="Écarts nutriment par nutriment" sel={sel} />
-      <NutrientChipsBlock sel={sel} defaultKeys={DEFAULT_ACTIVE} />
+      <NutrientChipsBlock sel={sel} defaultKeys={DISPLAY_KEYS} />
       <p className="small" style={{ marginTop: 6 }}>
         La barre s'étire du côté de l'aliment le plus riche ({NORM_LABELS[mode]}) :{' '}
         <span style={{ color: SLOT_COLOR[0] }}>◀ {a.nom}</span> à gauche,{' '}
@@ -676,6 +738,12 @@ function DivergentBars({ a, b, mode }: { a: Food; b: Food; mode: NormMode }) {
           </svg>
         </>
       )}
+      {missing.length > 0 && (
+        <p className="small" style={{ color: C.muted, marginBottom: 0 }}>
+          Données inconnues pour au moins un aliment : {missing.map((k) => NUT_LABEL.get(k)).join(' · ')}.
+          Ces nutriments ne sont pas traités comme des zéros.
+        </p>
+      )}
     </div>
   );
 }
@@ -685,7 +753,7 @@ function DivergentBars({ a, b, mode }: { a: Food; b: Food; mode: NormMode }) {
 // ---------------------------------------------------------------------------
 
 function RadarCompare({ a, b, mode }: { a: Food; b: Food; mode: NormMode }) {
-  const sel = useNutrientSelection(DEFAULT_ACTIVE, DISPLAY_KEYS);
+  const sel = useNutrientSelection(DEFAULT_RADAR_ACTIVE, DISPLAY_KEYS);
   const keys = sel.activeKeys;
 
   const axes = useMemo(() => {
@@ -698,6 +766,7 @@ function RadarCompare({ a, b, mode }: { a: Food; b: Food; mode: NormMode }) {
       })
       .filter((x) => x.max > 0);
   }, [a, b, keys, mode]);
+  const missing = keys.filter((k) => !Number.isFinite(normalizedValue(a, k, mode)) || !Number.isFinite(normalizedValue(b, k, mode)));
 
   const size = 460;
   const cx = size / 2;
@@ -712,7 +781,7 @@ function RadarCompare({ a, b, mode }: { a: Food; b: Food; mode: NormMode }) {
   return (
     <div className="panel">
       <ChartHeader title="Radar des profils" sel={sel} />
-      <NutrientChipsBlock sel={sel} defaultKeys={DEFAULT_ACTIVE} />
+      <NutrientChipsBlock sel={sel} defaultKeys={DEFAULT_RADAR_ACTIVE} />
       <p className="small" style={{ marginTop: 6 }}>
         Chaque axe est mis à l'échelle sur le plus riche des deux ({NORM_LABELS[mode]}) : la forme montre d'un coup
         d'œil où chacun domine. <span style={{ color: SLOT_COLOR[0] }}>■ {a.nom}</span>{' '}
@@ -758,6 +827,11 @@ function RadarCompare({ a, b, mode }: { a: Food; b: Food; mode: NormMode }) {
           <polygon points={polygon((ax) => ax.vb)} fill={SLOT_COLOR[1]} fillOpacity={0.2} stroke={SLOT_COLOR[1]} strokeWidth={2} />
         </svg>
       )}
+      {missing.length > 0 && (
+        <p className="small" style={{ color: C.muted, marginBottom: 0 }}>
+          Axes non tracés faute de données connues pour les deux aliments : {missing.map((k) => NUT_LABEL.get(k)).join(' · ')}.
+        </p>
+      )}
     </div>
   );
 }
@@ -777,7 +851,7 @@ function RadarCompare({ a, b, mode }: { a: Food; b: Food; mode: NormMode }) {
 function useNeighborData(foods: Food[], keys: NutrientKey[], mode: NormMode, weightFor: (k: NutrientKey) => number) {
   return useMemo(() => {
     const m = keys.length;
-    const raw: number[][] = foods.map((f) => keys.map((k) => normalizedValue(f, k, mode)));
+    const raw: number[][] = foods.map((f) => keys.map((k) => analysisValue(f, k, mode)));
     // Échelle robuste : 95ᵉ percentile de la colonne (repli sur le max si p95 = 0).
     const scale = new Array(m).fill(0);
     for (let j = 0; j < m; j++) {
@@ -827,7 +901,7 @@ function NeighborsPanel({
   weightFor: (k: NutrientKey) => number;
   onPick: (slot: 0 | 1, id: string) => void;
 }) {
-  const sel = useNutrientSelection(ANALYSIS_KEYS, ANALYSIS_KEYS);
+  const sel = useNutrientSelection(DEFAULT_ANALYSIS_ACTIVE, ANALYSIS_KEYS);
   const activeKeys = sel.activeKeys;
   const data = useNeighborData(foods, activeKeys, mode, weightFor);
   const [detailKey, setDetailKey] = useState<string | null>(null);
@@ -885,7 +959,7 @@ function NeighborsPanel({
   return (
     <div className="panel">
       <ChartHeader title="Substituts & compléments" sel={sel} />
-      <NutrientChipsBlock sel={sel} defaultKeys={DEFAULT_ACTIVE} />
+      <NutrientChipsBlock sel={sel} defaultKeys={DEFAULT_ANALYSIS_ACTIVE} />
       <p className="small" style={{ marginTop: 6 }}>
         <strong>Substituts</strong> = profil le plus proche en <em>forme</em> (similarité cosinus en %, indépendante de
         la concentration : par quoi remplacer sans changer l'équilibre nutritionnel).{' '}
@@ -1066,7 +1140,7 @@ function PcaBiplot({
   setHideCats: (s: Set<FoodCategory>) => void;
   onPick: (slot: 0 | 1, id: string) => void;
 }) {
-  const sel = useNutrientSelection(ANALYSIS_KEYS, ANALYSIS_KEYS);
+  const sel = useNutrientSelection(DEFAULT_ANALYSIS_ACTIVE, ANALYSIS_KEYS);
   const activeKeys = sel.activeKeys;
   const svgRef = useRef<SVGSVGElement>(null);
   const [hover, setHover] = useState<{ id: string; px: number; py: number } | null>(null);
@@ -1192,7 +1266,7 @@ function PcaBiplot({
   const result = useMemo(() => {
     if (activeKeys.length < 2) return null;
     const ids = bank.map((f) => f.id);
-    const matrix = bank.map((f) => activeKeys.map((k) => normalizedValue(f, k, mode)));
+    const matrix = bank.map((f) => activeKeys.map((k) => analysisValue(f, k, mode)));
     const weights = activeKeys.map((k) => weightFor(k));
     if (method === 'tsne') return { kind: 'tsne' as const, ...tsne({ ids, matrix, weights }) };
     if (method === 'mds') return { kind: 'mds' as const, ...mds({ ids, matrix, weights }) };
@@ -1242,7 +1316,7 @@ function PcaBiplot({
   return (
     <div className="panel">
       <ChartHeader title={`Carte de la banque — ${METHOD_LABEL[method]}`} sel={sel} />
-      <NutrientChipsBlock sel={sel} defaultKeys={DEFAULT_ACTIVE} />
+      <NutrientChipsBlock sel={sel} defaultKeys={DEFAULT_ANALYSIS_ACTIVE} />
 
       {!result ? (
         <div className="empty" style={{ marginTop: 8 }}>Activez au moins 2 nutriments pour tracer la carte.</div>

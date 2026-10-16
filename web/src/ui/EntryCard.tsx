@@ -555,10 +555,10 @@ function ItemDetail({ entryId, item }: { entryId: string; item: JournalItem }) {
             {g.keys.map((k) => {
               const t = byKey.get(k);
               if (!t) return null;
-              const value = item.nutrients[k] ?? 0;
-              const pct = t.optimal > 0 ? (value / t.optimal) * 100 : 0;
+              const value = item.nutrients[k];
+              const pct = value != null && t.optimal > 0 ? (value / t.optimal) * 100 : null;
               return (
-                <div className={`idg-cell${!editing && value <= 0 ? ' zero' : ''}${t.parent ? ' sub' : ''}`} key={k}>
+                <div className={`idg-cell${!editing && value != null && value <= 0 ? ' zero' : ''}${t.parent ? ' sub' : ''}`} key={k}>
                   <span className="idg-label" data-tip={SHORT_LABELS[k] ? t.label : undefined}>
                     {SHORT_LABELS[k] ?? t.label}
                   </span>
@@ -573,8 +573,8 @@ function ItemDetail({ entryId, item }: { entryId: string; item: JournalItem }) {
                     </span>
                   ) : (
                     <span className="idg-val mono">
-                      {fmt(value, value < 10 ? 1 : 0)} <small>{t.unit}</small>
-                      {t.goal !== 'limit' && value > 0 && <span className="idg-pct"> · {fmt(pct)}% obj.</span>}
+                      {value == null ? 'inconnu' : fmt(value, value < 10 ? 1 : 0)} <small>{t.unit}</small>
+                      {t.goal !== 'limit' && value != null && value > 0 && pct != null && <span className="idg-pct"> · {fmt(pct)}% obj.</span>}
                     </span>
                   )}
                 </div>

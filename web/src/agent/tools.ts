@@ -2,7 +2,7 @@ import { z } from 'zod';
 import { RDA, nutrientLabelOf } from '../nutrition/rda';
 import { computeTargets } from '../nutrition/targets';
 import type { FoodCategory, NutrientKey, Nutrients } from '../nutrition/types';
-import { EMPTY_NUTRIENTS } from '../nutrition/types';
+import { EMPTY_NUTRIENTS, isNullableNutrientKey } from '../nutrition/types';
 import { effectiveFoods, isDayCounted, useStore, todayStr } from '../store/store';
 import { caloriesByDate, resolveCalorieGoal } from '../nutrition/calorieGoals';
 import { groupIntoMeals } from '../ui/meals';
@@ -65,14 +65,15 @@ function nutrientRows(values: Nutrients, keys?: NutrientKey[], date?: string) {
     const meta = nutrientMeta.get(key);
     const baseTarget = byTarget.get(key);
     const target = key === 'kcal' && baseTarget && dailyGoal ? { ...baseTarget, optimal: dailyGoal.kcal } : baseTarget;
-    const value = round(values[key]);
+    const rawValue = values[key];
+    const value = isNullableNutrientKey(key) && rawValue == null ? null : round(rawValue as number);
     return {
       key,
       label: meta?.label ?? nutrientLabelOf(key),
       unit: meta?.unit ?? '',
       value,
       target: target ? { goal: target.goal, ajr: target.ajr, optimal: target.optimal } : null,
-      coveragePercent: target?.optimal ? round((value / target.optimal) * 100, 1) : null,
+      coveragePercent: value != null && target?.optimal ? round((value / target.optimal) * 100, 1) : null,
     };
   });
 }
@@ -89,10 +90,15 @@ function sumEntries(debut: string, fin: string, sansSupplements: boolean) {
       if (sansSupplements && item.foodId && supplementIds.has(item.foodId)) continue;
       let total = byDate.get(entry.date);
       if (!total) {
-        total = { ...EMPTY_NUTRIENTS };
+        total = { ...item.nutrients };
         byDate.set(entry.date, total);
+        continue;
       }
-      for (const key of nutrientKeys) total[key] += item.nutrients[key] ?? 0;
+      for (const key of nutrientKeys) {
+        const value = item.nutrients[key];
+        if (isNullableNutrientKey(key)) total[key] = total[key] == null || value == null ? null : total[key]! + value;
+        else total[key] += value ?? 0;
+      }
     }
   }
   return byDate;
@@ -393,7 +399,7 @@ const lireAlimentsBanque: AgentTool<z.infer<typeof lireAlimentsBanqueArgs>> = {
           key,
           label: nutrientMeta.get(key)?.label ?? nutrientLabelOf(key),
           unit: nutrientMeta.get(key)?.unit ?? '',
-          value: round(food.n[key]),
+          value: isNullableNutrientKey(key) && food.n[key] == null ? null : round(food.n[key] as number),
         })),
       } : {}),
     }));

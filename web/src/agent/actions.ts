@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import { EMPTY_NUTRIENTS, UNITS, type ExtractedItem, type Food, type FoodCategory, type NutrientKey } from '../nutrition/types';
+import { EMPTY_NUTRIENTS, isNullableNutrientKey, UNITS, type ExtractedItem, type Food, type FoodCategory, type NutrientKey, type Nutrients } from '../nutrition/types';
 import { RDA, nutrientLabelOf } from '../nutrition/rda';
 import { normalizeForMatch } from '../nutrition/normalize';
 import { estimatedPrice } from '../nutrition/price';
@@ -15,6 +15,10 @@ const date = z.string().regex(DATE_RE, 'Date attendue au format YYYY-MM-DD');
 const time = z.string().regex(TIME_RE, 'Heure attendue au format HH:MM');
 const units = z.enum(UNITS);
 const nutrientKeys = Object.keys(EMPTY_NUTRIENTS) as NutrientKey[];
+const partialNutrientsSchema = z.object(Object.fromEntries(nutrientKeys.map((key) => [
+  key,
+  (isNullableNutrientKey(key) ? z.number().min(0).nullable() : z.number().min(0)).optional(),
+]))).strict() as z.ZodType<Partial<Nutrients>>;
 const foodCategories = [
   'fruit', 'legume', 'feculent', 'viande', 'poisson', 'oeuf-laitier',
   'sucre-snack', 'matiere-grasse', 'boisson', 'plat', 'supplement', 'autre',
@@ -79,7 +83,7 @@ const foodModification = z.object({
   pieceGrams: z.number().positive().optional(),
   prixEurKg: z.number().finite().positive().nullable().optional(),
   confiancePrix: z.enum(['faible', 'moyenne', 'forte']).optional(),
-  nutriments: z.record(z.enum(nutrientKeys as [NutrientKey, ...NutrientKey[]]), z.number().min(0)).optional(),
+  nutriments: partialNutrientsSchema.optional(),
 }).superRefine((value, ctx) => {
   if (value.nom == null && value.aliases == null && value.categorie == null && value.pieceGrams == null && value.nutriments == null && value.prixEurKg === undefined) {
     ctx.addIssue({ code: z.ZodIssueCode.custom, message: 'Au moins une correction est requise.' });
@@ -118,8 +122,8 @@ const countedDayArgs = z.object({ date, compte: z.boolean() });
 type FoodModification = z.infer<typeof foodModification>;
 
 const completeNutrients = z.object(Object.fromEntries(
-  nutrientKeys.map((key) => [key, z.number().min(0)]),
-) as Record<NutrientKey, z.ZodNumber>);
+  nutrientKeys.map((key) => [key, isNullableNutrientKey(key) ? z.number().min(0).nullable() : z.number().min(0)]),
+)) as unknown as z.ZodType<Food['n']>;
 const foodCreation = z.object({
   nom: z.string().trim().min(1).max(120),
   aliases: aliasesSchema.default([]),
@@ -137,7 +141,9 @@ const createFoodArgs = foodCreation;
 type FoodCreation = z.input<typeof foodCreation>;
 const completeNutrientsJsonSchema = {
   type: 'object',
-  properties: Object.fromEntries(nutrientKeys.map((key) => [key, { type: 'number', minimum: 0 }])),
+  properties: Object.fromEntries(nutrientKeys.map((key) => [key, isNullableNutrientKey(key)
+    ? { type: ['number', 'null'], minimum: 0 }
+    : { type: 'number', minimum: 0 }])),
   required: nutrientKeys,
   additionalProperties: false,
 };
@@ -153,7 +159,7 @@ function foodChanges(modifications: FoodModification[]): AgentActionPreviewGroup
     if (change.categorie != null && change.categorie !== food.categorie) fields.push({ key: 'categorie', label: 'Catégorie', before: food.categorie, after: change.categorie });
     if (change.pieceGrams != null && change.pieceGrams !== food.pieceGrams) fields.push({ key: 'pieceGrams', label: 'Poids par pièce', before: food.pieceGrams ?? null, after: change.pieceGrams, unit: 'g' });
     if (change.prixEurKg !== undefined && change.prixEurKg !== (food.price?.eurPerKg ?? null)) fields.push({ key: 'prixEurKg', label: 'Prix estimé', before: food.price?.eurPerKg ?? null, after: change.prixEurKg, unit: '€/kg' });
-    for (const [key, after] of Object.entries(change.nutriments ?? {}) as [NutrientKey, number][]) {
+    for (const [key, after] of Object.entries(change.nutriments ?? {}) as [NutrientKey, Nutrients[NutrientKey]][]) {
       if (food.n[key] === after) continue;
       const meta = nutrientMeta.get(key);
       fields.push({ key, label: meta?.label ?? nutrientLabelOf(key), before: food.n[key], after, unit: `${meta?.unit ?? ''}/100 g` });
@@ -417,13 +423,13 @@ export const ACTION_TOOLS: AgentTool<unknown>[] = [
   confirmedTool('noter_jour', 'Prépare l’ajout ou le remplacement de la note d’un jour.', noteArgs, { type: 'object', properties: { date: { type: 'string' }, note: { type: 'string' } }, required: ['date', 'note'], additionalProperties: false }, (a) => ({ text: `${a.note.trim() ? 'Remplacer' : 'Effacer'} la note du ${a.date}${a.note.trim() ? ` par « ${a.note.trim()} »` : ''}.`, impact: '1 note de jour.' })),
   confirmedTool('modifier_objectif_nutriment', 'Modifie globalement une cible nutritionnelle.', targetArgs, { type: 'object', properties: { nutriment: { type: 'string', enum: nutrientKeys }, ajr: { type: 'number' }, optimal: { type: 'number' }, perKg: { type: 'boolean' } }, required: ['nutriment'], additionalProperties: false }, (a) => ({ text: `Modifier la cible globale ${RDA.find((r) => r.key === a.nutriment)?.label ?? a.nutriment}.`, impact: 'Tous les bilans, couvertures et recommandations futurs utilisant cette cible.' })),
   confirmedTool('modifier_profil', 'Modifie des champs du profil personnel.', profileArgs, { type: 'object', properties: { sexe: { type: 'string' }, poids: { type: 'number' }, activite: { type: 'string' }, objectif: { type: 'string' }, deficitPct: { type: 'number' }, surplusPct: { type: 'number' }, protParKg: { type: 'number' } }, additionalProperties: false }, (a) => ({ text: `Modifier le profil : ${Object.entries(a).map(([k, v]) => `${k}=${v}`).join(', ')}.`, impact: 'Recalcul global des objectifs et recommandations dépendant du profil.' })),
-  confirmedTool('modifier_aliment_global', 'Modifie le nom, les alias, la catégorie, le poids par pièce ou le prix estimé et certains nutriments d’une fiche. Le champ aliases remplace toute la liste, ce qui permet une suppression explicite. Les nutriments non fournis restent strictement inchangés.', editFoodArgs, { type: 'object', properties: { id: { type: 'string' }, nom: { type: 'string' }, aliases: { type: 'array', items: { type: 'string' } }, categorie: { type: 'string', enum: foodCategories }, pieceGrams: { type: 'number' }, prixEurKg: { type: ['number', 'null'], exclusiveMinimum: 0 }, confiancePrix: { type: 'string', enum: ['faible', 'moyenne', 'forte'] }, nutriments: { type: 'object', additionalProperties: { type: 'number', minimum: 0 } } }, required: ['id'], additionalProperties: false }, (a) => {
+  confirmedTool('modifier_aliment_global', 'Modifie le nom, les alias, la catégorie, le poids par pièce ou le prix estimé et certains nutriments d’une fiche. Pour cuivre, rétinol et bêta-carotène, null signifie inconnu et 0 signifie zéro connu. Les nutriments non fournis restent strictement inchangés.', editFoodArgs, { type: 'object', properties: { id: { type: 'string' }, nom: { type: 'string' }, aliases: { type: 'array', items: { type: 'string' } }, categorie: { type: 'string', enum: foodCategories }, pieceGrams: { type: 'number' }, prixEurKg: { type: ['number', 'null'], exclusiveMinimum: 0 }, confiancePrix: { type: 'string', enum: ['faible', 'moyenne', 'forte'] }, nutriments: { type: 'object', properties: Object.fromEntries(nutrientKeys.map((key) => [key, isNullableNutrientKey(key) ? { type: ['number', 'null'], minimum: 0 } : { type: 'number', minimum: 0 }])), additionalProperties: false } }, required: ['id'], additionalProperties: false }, (a) => {
     const changes = foodChanges([a]);
     if (!changes.length) throw new Error('Aucune modification effective.');
     const s = useStore.getState(); const n = s.entries.flatMap((e) => e.items).filter((i) => i.foodId === a.id).length;
     return { text: `Modifier la fiche ${changes[0].label}.`, impact: `${changes[0].fields.length} champ(s) ; ${n} item(s) d’historique seront recalculés.`, changes };
   }),
-  confirmedTool('modifier_aliments_banque', 'Modifie atomiquement jusqu’à 100 aliments déjà adoptés : nom, alias, catégorie prix estimé et/ou valeurs nutritionnelles partielles. aliases remplace la liste complète, pour pouvoir retirer des synonymes. Une seule confirmation affiche tous les avant/après ; soit tout est appliqué, soit rien.', editFoodsArgs, { type: 'object', properties: { modifications: { type: 'array', minItems: 1, maxItems: 100, items: { type: 'object', properties: { id: { type: 'string' }, nom: { type: 'string' }, aliases: { type: 'array', items: { type: 'string' } }, categorie: { type: 'string', enum: foodCategories }, pieceGrams: { type: 'number' }, prixEurKg: { type: ['number', 'null'], exclusiveMinimum: 0 }, confiancePrix: { type: 'string', enum: ['faible', 'moyenne', 'forte'] }, nutriments: { type: 'object', additionalProperties: { type: 'number', minimum: 0 } } }, required: ['id'], additionalProperties: false } } }, required: ['modifications'], additionalProperties: false }, (a) => {
+  confirmedTool('modifier_aliments_banque', 'Modifie atomiquement jusqu’à 100 aliments déjà adoptés : nom, alias, catégorie prix estimé et/ou valeurs nutritionnelles partielles. aliases remplace la liste complète, pour pouvoir retirer des synonymes. null signifie inconnu pour cuivre, rétinol et bêta-carotène ; 0 signifie zéro connu. Une seule confirmation affiche tous les avant/après ; soit tout est appliqué, soit rien.', editFoodsArgs, { type: 'object', properties: { modifications: { type: 'array', minItems: 1, maxItems: 100, items: { type: 'object', properties: { id: { type: 'string' }, nom: { type: 'string' }, aliases: { type: 'array', items: { type: 'string' } }, categorie: { type: 'string', enum: foodCategories }, pieceGrams: { type: 'number' }, prixEurKg: { type: ['number', 'null'], exclusiveMinimum: 0 }, confiancePrix: { type: 'string', enum: ['faible', 'moyenne', 'forte'] }, nutriments: { type: 'object', properties: Object.fromEntries(nutrientKeys.map((key) => [key, isNullableNutrientKey(key) ? { type: ['number', 'null'], minimum: 0 } : { type: 'number', minimum: 0 }])), additionalProperties: false } }, required: ['id'], additionalProperties: false } } }, required: ['modifications'], additionalProperties: false }, (a) => {
     const changes = foodChanges(a.modifications);
     if (!changes.length) throw new Error('Aucune modification effective.');
     const ids = new Set(changes.map((row) => row.id));

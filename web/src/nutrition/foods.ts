@@ -1,9 +1,12 @@
 import type { Food, FoodCategory, Nutrients, Unit } from './types';
 import { EMPTY_NUTRIENTS } from './types';
+import { CIQUAL_2025_MICROS } from './ciqual2025Micros';
 import { seedPriceFor } from './priceSeed';
 
 /**
  * Base d'aliments curée — valeurs pour 100 g, approximations CIQUAL 2020 / USDA.
+ * Cuivre et détails de vitamine A : valeurs Ciqual 2025 appariées dans
+ * `ciqual2025Micros.ts` ; les absences de cette source ne sont pas inventées.
  * vitK2 et créatine : valeurs manuelles (littérature), absentes des tables officielles.
  * vitB1/B2/B3/B5/B6 en mg pour 100 g (thiamine, riboflavine, niacine, panto., pyridoxine).
  * Les poids par pièce sont des moyennes ; le poids donné par l'utilisateur prime toujours.
@@ -152,17 +155,34 @@ function f(
   n: Partial<Nutrients>,
   opts: { piece?: number; unitGrams?: Partial<Record<Unit, number>> } = {},
 ): Food {
-  const { omega3Ala = 0, omega3Epa = 0, omega3Dha = 0 } = n;
+  const sourceMicros = CIQUAL_2025_MICROS[id];
+  const enrichedNutrients: Partial<Nutrients> = sourceMicros
+    ? {
+        ...n,
+        cuivre: sourceMicros.cuivre,
+        ...(sourceMicros.vitA == null ? {} : { vitA: sourceMicros.vitA }),
+        vitARetinol: sourceMicros.vitARetinol,
+        vitABetaCarotene: sourceMicros.vitABetaCarotene,
+      }
+    : n;
+  const { omega3Ala = 0, omega3Epa = 0, omega3Dha = 0 } = enrichedNutrients;
   // Si une répartition ALA/EPA/DHA est fournie, `omega3` (utilisé par cibles/
   // rapports/score) devient l'équivalent pondéré ; sinon on garde la valeur
   // explicite éventuelle (aliments non encore détaillés).
   const omega3 =
     omega3Ala > 0 || omega3Epa > 0 || omega3Dha > 0
       ? omega3Ala / ALA_EQUIVALENT_DIVISOR + omega3Epa + omega3Dha
-      : (n.omega3 ?? 0);
+      : (enrichedNutrients.omega3 ?? 0);
   // Répartition des AG saturés : dérivée du profil de l'aliment (ou de sa
   // catégorie), sauf si la ligne la donne explicitement.
-  const split = splitSaturated(n.agSatures ?? 0, categorie, id);
+  const split = splitSaturated(enrichedNutrients.agSatures ?? 0, categorie, id);
+  // Keep a source-provided total. It can include alpha-carotene and
+  // beta-cryptoxanthin in RAE datasets, neither of which is tracked here.
+  const vitA = enrichedNutrients.vitA ?? (
+    enrichedNutrients.vitARetinol != null && enrichedNutrients.vitABetaCarotene != null
+      ? enrichedNutrients.vitARetinol + enrichedNutrients.vitABetaCarotene / 12
+      : 0
+  );
   const food: Food = {
     id,
     nom,
@@ -170,7 +190,7 @@ function f(
     aliases,
     pieceGrams: opts.piece,
     unitGrams: opts.unitGrams,
-    n: { ...EMPTY_NUTRIENTS, ...split, ...n, omega3 },
+    n: { ...EMPTY_NUTRIENTS, ...split, ...enrichedNutrients, omega3, vitA },
   };
   return { ...food, price: seedPriceFor(food, 'catalogue') };
 }

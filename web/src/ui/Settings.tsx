@@ -306,7 +306,7 @@ export function Settings() {
                   placeholder="gpt-6-luna"
                   autoComplete="off"
                 />
-                <span className="small">Laisser vide pour utiliser le modèle configuré par Codex.</span>
+                <span className="small">Laisser vide pour utiliser GPT-6 Luna. Un modèle saisi ici remplace ce défaut.</span>
               </label>
               <label className="field" style={{ flex: '1 1 260px' }}>
                 Modèle Claude Code
