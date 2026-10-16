@@ -53,6 +53,19 @@ export interface BridgeRequest {
   image?: { data: string; mediaType: string };
   /** Permet au chat agent d'interrompre un tour long. */
   signal?: AbortSignal;
+  /** Remonte au chat le processus CLI actuellement lancé, sans son prompt. */
+  onStatus?: (status: CliExecutionStatus) => void;
+}
+
+export interface CliExecutionStatus {
+  state: 'starting' | 'running' | 'stopping' | 'completed' | 'failed' | 'stopped';
+  cli: CliBridge;
+  command: string;
+  pid?: number;
+  startedAt: number;
+  lastOutputAt: number;
+  stdoutBytes: number;
+  stderrBytes: number;
 }
 
 /**
@@ -61,16 +74,61 @@ export interface BridgeRequest {
  * la commande en échec — l'appelant décide s'il replie ou remonte.
  */
 export async function callBridge(req: BridgeRequest): Promise<string> {
-  const { signal, model, ...payload } = req;
-  const res = await fetch(ENDPOINT, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ ...payload, cli: currentCli(), model: model?.trim() || currentCliModel() }),
-    signal,
-  });
-  const data = (await res.json().catch(() => ({}))) as { text?: string; error?: string };
-  if (!res.ok || data.error) throw new Error(data.error || `HTTP ${res.status}`);
-  return data.text ?? '';
+  const { signal, model, onStatus, ...payload } = req;
+  const requestId = onStatus ? crypto.randomUUID() : undefined;
+  const statusAbort = new AbortController();
+  let polling = false;
+  let latestStatus: CliExecutionStatus | undefined;
+  const pollStatus = async () => {
+    if (!requestId || polling || statusAbort.signal.aborted) return;
+    polling = true;
+    try {
+      const statusRes = await fetch(`${ENDPOINT}?status=${encodeURIComponent(requestId)}`, { signal: statusAbort.signal });
+      if (!statusRes.ok) return;
+      const status = await statusRes.json() as CliExecutionStatus | null;
+      if (status?.state) {
+        latestStatus = status;
+        onStatus?.(status);
+      }
+    } catch {
+      // Le diagnostic reste facultatif ; la réponse du CLI contient l'erreur principale.
+    } finally {
+      polling = false;
+    }
+  };
+  const pollTimer = requestId ? window.setInterval(() => { void pollStatus(); }, 500) : undefined;
+  if (requestId) void pollStatus();
+  try {
+    const res = await fetch(ENDPOINT, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ ...payload, ...(requestId ? { requestId } : {}), cli: currentCli(), model: model?.trim() || currentCliModel() }),
+      signal,
+    });
+    const data = (await res.json().catch(() => ({}))) as { text?: string; error?: string };
+    if (!res.ok || data.error) throw new Error(data.error || `HTTP ${res.status}`);
+    if (requestId) {
+      await pollStatus();
+      if (latestStatus) {
+        latestStatus = { ...latestStatus, state: 'completed' };
+        onStatus?.(latestStatus);
+      }
+    }
+    return data.text ?? '';
+  } catch (error) {
+    if (requestId) {
+      await pollStatus();
+      const now = Date.now();
+      latestStatus = latestStatus
+        ? { ...latestStatus, state: signal?.aborted ? 'stopped' : 'failed' }
+        : { state: signal?.aborted ? 'stopped' : 'failed', cli: currentCli(), command: 'Commande CLI non terminée', startedAt: now, lastOutputAt: now, stdoutBytes: 0, stderrBytes: 0 };
+      onStatus?.(latestStatus);
+    }
+    throw error;
+  } finally {
+    if (pollTimer !== undefined) window.clearInterval(pollTimer);
+    statusAbort.abort();
+  }
 }
 
 export interface BridgeStatus {

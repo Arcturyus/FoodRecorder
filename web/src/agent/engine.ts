@@ -1,9 +1,9 @@
 import Anthropic from '@anthropic-ai/sdk';
 import type { ChatTurn } from '../extraction/cloud';
-import { callBridge, currentCli, currentCliModel } from '../extraction/bridge';
+import { callBridge, currentCli, currentCliModel, type CliExecutionStatus } from '../extraction/bridge';
 import { providerInfo } from '../extraction/providers';
 import { cloudConfigOf, todayStr, useStore } from '../store/store';
-import type { AgentLimits, AgentToolCall, AgentToolResult, AgentUsage } from './protocol';
+import type { AgentLimits, AgentLiveOperation, AgentToolCall, AgentToolResult, AgentUsage } from './protocol';
 import { ALL_TOOLS } from './tools';
 
 export interface ScratchStep { call: AgentToolCall; result: AgentToolResult }
@@ -78,12 +78,38 @@ async function openAITurn(turns: ChatTurn[], scratch: ScratchStep[], limits: Age
 
 function extractObject(text: string): Record<string, unknown> { const a = text.indexOf('{'), b = text.lastIndexOf('}'); if (a < 0 || b <= a) throw new Error('Le CLI n’a pas renvoyé de JSON lisible.'); return JSON.parse(text.slice(a, b + 1)); }
 
-async function cliTurn(turns: ChatTurn[], scratch: ScratchStep[], limits: AgentLimits, signal?: AbortSignal): Promise<EngineReply> {
+function liveCliOperation(status: CliExecutionStatus, context: AgentLiveOperation): AgentLiveOperation {
+  return {
+    ...context,
+    state: status.state,
+    command: status.command,
+    pid: status.pid,
+    startedAt: status.startedAt,
+    lastOutputAt: status.lastOutputAt,
+    stdoutBytes: status.stdoutBytes,
+    stderrBytes: status.stderrBytes,
+  };
+}
+
+async function cliTurn(turns: ChatTurn[], scratch: ScratchStep[], limits: AgentLimits, signal?: AbortSignal, onLiveOperation?: (operation: AgentLiveOperation) => void): Promise<EngineReply> {
   const start = performance.now();
   const tools = ALL_TOOLS.map((t) => `- ${t.name}: ${t.description}\n${JSON.stringify(t.jsonSchema)}`).join('\n');
   const prompt = [`${SYSTEM}\nRéponds uniquement par {"outil":"nom","args":{...}} ou {"reponse":"..."}. Réponse finale concise, plafond demandé : ${limits.maxOutputTokens} tokens.\n${tools}`, ...turns.map((t) => `\n${t.role}: ${t.content}`), ...scratch.map((s) => `\noutil ${s.call.name} ${JSON.stringify(s.call.args)}\nrésultat: ${s.result.content}`)].join('\n');
-  const raw = await callBridge({ prompt, label: 'agent', timeoutMs: 180_000, signal });
   const cli = currentCli();
+  const model = currentCliModel() ?? 'modèle par défaut';
+  const previousTool = scratch.at(-1)?.call.name;
+  const context: AgentLiveOperation = {
+    kind: 'model',
+    label: `${cli === 'codex' ? 'Codex' : 'Claude Code'} CLI · ${model}`,
+    detail: previousTool
+      ? `Analyse du résultat de « ${previousTool} » et choix du prochain outil ou de la réponse.`
+      : 'Analyse de la demande et choix du premier outil ou de la réponse.',
+    promptChars: prompt.length,
+    estimatedPromptTokens: Math.ceil(prompt.length / 4),
+    state: 'starting',
+  };
+  onLiveOperation?.(context);
+  const raw = await callBridge({ prompt, label: 'agent', timeoutMs: 180_000, signal, onStatus: (status) => onLiveOperation?.(liveCliOperation(status, context)) });
   const usage: AgentUsage = { provider: cli, model: currentCliModel() ?? `${cli} (défaut CLI)`, transport: 'cli-json', inputTokens: Math.ceil(prompt.length / 4), outputTokens: Math.ceil(raw.length / 4), latencyMs: Math.round(performance.now() - start), estimated: true, stopReason: 'cli_complete' };
   let obj: Record<string, unknown>;
   try {
@@ -97,10 +123,24 @@ async function cliTurn(turns: ChatTurn[], scratch: ScratchStep[], limits: AgentL
   throw new Error('Le CLI n’a fourni ni réponse ni appel d’outil.');
 }
 
-export async function askAgentEngine(turns: ChatTurn[], scratch: ScratchStep[], limits: AgentLimits, signal?: AbortSignal): Promise<EngineReply> {
+export async function askAgentEngine(turns: ChatTurn[], scratch: ScratchStep[], limits: AgentLimits, signal?: AbortSignal, onLiveOperation?: (operation: AgentLiveOperation) => void): Promise<EngineReply> {
   const state = useStore.getState();
-  if (state.extractionMode === 'claudecode') return cliTurn(turns, scratch, limits, signal);
+  if (state.extractionMode === 'claudecode') {
+    const operation: AgentLiveOperation = { kind: 'model', label: `${currentCli()} CLI`, detail: 'Préparation de la commande', state: 'starting' };
+    onLiveOperation?.(operation);
+    return cliTurn(turns, scratch, limits, signal, onLiveOperation);
+  }
   if (state.extractionMode !== 'cloud') throw new Error('Le chat agent demande le mode Cloud ou Pont CLI — voir Réglages.');
   const cfg = cloudConfigOf(state); if (!cfg.apiKey) throw new Error('Clé API manquante — voir Réglages.');
-  return cfg.provider === 'anthropic' ? anthropicTurn(turns, scratch, limits, signal) : openAITurn(turns, scratch, limits, signal);
+  const info = providerInfo(cfg.provider);
+  const operation: AgentLiveOperation = { kind: 'model', label: `${info.label} · ${cfg.model}`, detail: 'Requête API en cours', state: 'running' };
+  onLiveOperation?.(operation);
+  try {
+    const reply = await (cfg.provider === 'anthropic' ? anthropicTurn(turns, scratch, limits, signal) : openAITurn(turns, scratch, limits, signal));
+    onLiveOperation?.({ ...operation, detail: 'Réponse API reçue', state: 'completed' });
+    return reply;
+  } catch (error) {
+    onLiveOperation?.({ ...operation, detail: error instanceof Error ? error.message : String(error), state: signal?.aborted ? 'stopped' : 'failed' });
+    throw error;
+  }
 }

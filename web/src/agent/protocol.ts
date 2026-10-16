@@ -95,13 +95,29 @@ export interface AgentProgress {
   toolCalls: number;
   usage: AgentUsage;
   elapsedMs: number;
+  currentOperation?: AgentLiveOperation;
+}
+
+export interface AgentLiveOperation {
+  kind: 'model' | 'tool';
+  label: string;
+  detail?: string;
+  state?: 'starting' | 'running' | 'stopping' | 'completed' | 'failed' | 'stopped';
+  command?: string;
+  promptChars?: number;
+  estimatedPromptTokens?: number;
+  pid?: number;
+  startedAt?: number;
+  lastOutputAt?: number;
+  stdoutBytes?: number;
+  stderrBytes?: number;
 }
 
 export type AgentApprovalMode = 'confirm-writes' | 'approve-task-writes' | 'auto-accept-writes';
 
 export const DEFAULT_AGENT_LIMITS: AgentLimits = {
-  maxToolCallsPerMessage: 30,
-  maxAgentTurns: 16,
-  maxOutputTokens: 3000,
-  maxToolResultChars: 40_000,
+  maxToolCallsPerMessage: 20,
+  maxAgentTurns: 15,
+  maxOutputTokens: 100_000,
+  maxToolResultChars: 180_000,
 };

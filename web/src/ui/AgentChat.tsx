@@ -1,6 +1,6 @@
 import { Fragment, useEffect, useMemo, useRef, useState } from 'react';
 import type { ChatTurn } from '../extraction/cloud';
-import { DEFAULT_AGENT_LIMITS, type AgentActionPlan, type AgentApprovalMode, type AgentLimits, type AgentProgress, type AgentUsage } from '../agent/protocol';
+import { DEFAULT_AGENT_LIMITS, type AgentActionPlan, type AgentApprovalMode, type AgentLimits, type AgentLiveOperation, type AgentProgress, type AgentUsage } from '../agent/protocol';
 import { runAgent, type AgentRunEvent } from '../agent/loop';
 import { useStore } from '../store/store';
 import { MicRecorder } from '../stt/recorder';
@@ -34,6 +34,21 @@ function loadJson<T>(key: string, fallback: T): T {
   } catch {
     return fallback;
   }
+}
+
+function loadAgentLimits(): AgentLimits {
+  const saved = loadJson<Partial<AgentLimits> | null>(LIMITS_KEY, null);
+  if (!saved || typeof saved !== 'object') return DEFAULT_AGENT_LIMITS;
+
+  const previousDefaults: AgentLimits[] = [
+    { maxToolCallsPerMessage: 30, maxAgentTurns: 16, maxOutputTokens: 3000, maxToolResultChars: 40_000 },
+    { maxToolCallsPerMessage: 15, maxAgentTurns: 12, maxOutputTokens: 10_000, maxToolResultChars: 18_000 },
+  ];
+  const next = { ...DEFAULT_AGENT_LIMITS, ...saved };
+  (Object.keys(DEFAULT_AGENT_LIMITS) as (keyof AgentLimits)[]).forEach((key) => {
+    if (previousDefaults.some((previous) => saved[key] === previous[key])) next[key] = DEFAULT_AGENT_LIMITS[key];
+  });
+  return next;
 }
 
 function Inline({ text }: { text: string }) {
@@ -91,10 +106,14 @@ function progressLabel(progress: AgentProgress | null, elapsedMs: number, limits
   return `${phase} · tour ${progress.turn}/${limits.maxAgentTurns} · ${progress.toolCalls}/${limits.maxToolCallsPerMessage} outils · ${tokens} tokens comptabilisés · ${(elapsedMs / 1000).toFixed(0)} s`;
 }
 
+function operationStateLabel(state: AgentLiveOperation['state']): string {
+  return state === 'running' ? 'en cours' : state === 'starting' ? 'démarrage' : state === 'stopping' ? 'arrêt' : state === 'completed' ? 'terminé' : state === 'failed' ? 'erreur' : state === 'stopped' ? 'arrêté' : 'actif';
+}
+
 export function AgentChat() {
   const [draft, setDraft] = useState('');
   const [messages, setMessages] = useState<UiMessage[]>(() => loadJson(CHAT_KEY, []));
-  const [limits, setLimits] = useState<AgentLimits>(() => loadJson(LIMITS_KEY, DEFAULT_AGENT_LIMITS));
+  const [limits, setLimits] = useState<AgentLimits>(loadAgentLimits);
   const [showLimits, setShowLimits] = useState(false);
   const [showActivity, setShowActivity] = useState(false);
   const [approvalMode, setApprovalMode] = useState<AgentApprovalMode>('confirm-writes');
@@ -228,7 +247,7 @@ export function AgentChat() {
       if ((e as Error).name !== 'AbortError') setError((e as Error).message);
       setMessages((old) => old.filter((m) => m.id !== assistantId || m.text || m.tools?.length));
     } finally {
-      setBusy(false); setPending(null); setLiveProgress(null); approvalRef.current = null; abortRef.current = null;
+      setBusy(false); setPending(null); approvalRef.current = null; abortRef.current = null;
     }
   }
 
@@ -257,10 +276,10 @@ export function AgentChat() {
           {showLimits && <div className="agent-limit-grid">
             <LimitField label="Tools/message" value={limits.maxToolCallsPerMessage} min={1} max={100} onChange={(v) => setLimits({ ...limits, maxToolCallsPerMessage: v })} />
             <LimitField label="Tours" value={limits.maxAgentTurns} min={1} max={40} onChange={(v) => setLimits({ ...limits, maxAgentTurns: v })} />
-            <LimitField label="Tokens sortie/appel" value={limits.maxOutputTokens} min={256} max={32000} onChange={(v) => setLimits({ ...limits, maxOutputTokens: v })} />
+            <LimitField label="Tokens sortie/appel" value={limits.maxOutputTokens} min={256} max={100000} onChange={(v) => setLimits({ ...limits, maxOutputTokens: v })} />
             <LimitField label="Résultat tool (car.)" value={limits.maxToolResultChars} min={1000} max={250000} onChange={(v) => setLimits({ ...limits, maxToolResultChars: v })} />
             <button className="ghost small" onClick={() => setLimits(DEFAULT_AGENT_LIMITS)}>Valeurs par défaut</button>
-            <small>Tokens sortie = plafond par appel modèle, pas pour toute la tâche. Des limites hautes coûtent plus cher et peuvent dépasser la capacité du fournisseur. Pendant le travail, le compteur est actualisé après chaque appel ; un fournisseur ou une CLI ne donne pas les tokens exacts au milieu d’un appel.</small>
+            <small>Tokens sortie = plafond par appel modèle, pas pour toute la tâche. En mode CLI, c’est une consigne, pas un plafond garanti par l’API. Un plafond supérieur à la capacité du fournisseur peut faire échouer l’appel ; s’il est utilisé, il peut coûter plus cher et rallonger la réponse. Les résultats d’outil volumineux alourdissent les tours suivants et peuvent dépasser le contexte du modèle. Pendant le travail, le compteur est actualisé après chaque appel ; un fournisseur ou une CLI ne donne pas les tokens exacts au milieu d’un appel.</small>
           </div>}
         </div>
         <main className="agent-thread">
@@ -293,6 +312,24 @@ export function AgentChat() {
             <div className="row"><button onClick={() => { approvalRef.current?.(true); approvalRef.current = null; setPending(null); }}>{approvalMode === 'approve-task-writes' ? 'Confirmer et autoriser la tâche' : 'Confirmer'}</button><button className="ghost" onClick={() => { approvalRef.current?.(false); approvalRef.current = null; setPending(null); }}>Refuser</button></div>
           </div>}
           {busy && !pending && <div className="agent-thinking" role="status"><strong>L’agent travaille…</strong><small>{progressLabel(liveProgress, liveElapsedMs, limits)}</small><small>Le total de tokens avance par appel terminé, pas en streaming.</small></div>}
+          {liveProgress?.currentOperation && <details className="agent-live-details">
+            <summary>{liveProgress.currentOperation.command ? 'Voir la ligne de commande' : 'Voir l’opération en cours'} · {liveProgress.currentOperation.label} · {operationStateLabel(liveProgress.currentOperation.state)}</summary>
+            <div className="agent-live-details-body">
+              {liveProgress.currentOperation.command
+                ? <><strong>Commande CLI lancée</strong><pre>{liveProgress.currentOperation.command}</pre><small>Le prompt est transmis via stdin et n’apparaît pas dans cette commande.</small></>
+                : <small>{liveProgress.currentOperation.kind === 'tool' ? 'Outil local exécuté dans FoodRecorder.' : 'Appel API au modèle sélectionné, sans commande système locale.'}</small>}
+              {liveProgress.currentOperation.detail && <small>{liveProgress.currentOperation.detail}</small>}
+              {liveProgress.currentOperation.promptChars !== undefined && <small>Prompt : {liveProgress.currentOperation.promptChars.toLocaleString('fr-FR')} caractères · environ {liveProgress.currentOperation.estimatedPromptTokens?.toLocaleString('fr-FR')} tokens estimés ; ce n’est pas le décompte exact du fournisseur.</small>}
+              <small>
+                {liveProgress.currentOperation.pid ? `PID ${liveProgress.currentOperation.pid} · ` : ''}
+                {liveProgress.currentOperation.startedAt ? `${Math.max(0, Math.round((Date.now() - liveProgress.currentOperation.startedAt) / 1000))} s écoulées` : ''}
+                {liveProgress.currentOperation.command && liveProgress.currentOperation.lastOutputAt
+                  ? ` · activité CLI il y a ${Math.max(0, Math.round((Date.now() - liveProgress.currentOperation.lastOutputAt) / 1000))} s · flux stdout ${liveProgress.currentOperation.stdoutBytes ?? 0} o · stderr ${liveProgress.currentOperation.stderrBytes ?? 0} o`
+                  : ''}
+              </small>
+              {liveProgress.currentOperation.command && <small>Les volumes stdout/stderr indiquent une activité technique, pas le texte de la réponse.</small>}
+            </div>
+          </details>}
           {error && <div className="agent-error">{error}</div>}
           <div ref={endRef} />
         </main>
@@ -302,7 +339,7 @@ export function AgentChat() {
             <button className={`agent-dictate ${recording ? 'rec' : 'ghost'}`} onClick={toggleDictation} disabled={busy || transcribing} aria-pressed={recording} aria-label={recording ? 'Arrêter la dictée' : 'Dicter le message'}>
               {recording ? '⏹ Arrêter' : transcribing ? 'Transcription…' : '🎙 Dicter'}
             </button>
-            {busy ? <button className="danger" onClick={() => { approvalRef.current?.(false); abortRef.current?.abort(); }}>Arrêter</button> : <button onClick={send} disabled={!draft.trim() || recording || transcribing}>Envoyer</button>}
+            {busy ? <button className="danger" aria-label="Arrêter l’agent" onClick={() => { approvalRef.current?.(false); abortRef.current?.abort(); }}>Arrêter l’agent</button> : <button onClick={send} disabled={!draft.trim() || recording || transcribing}>Envoyer</button>}
             <button className="ghost small" disabled={busy || recording || transcribing} onClick={() => { setMessages([]); setError(''); setDictationStatus(''); }}>Nouveau fil</button>
           </div>
           {dictationStatus && <small className="agent-dictation-status" role="status">{dictationStatus}</small>}

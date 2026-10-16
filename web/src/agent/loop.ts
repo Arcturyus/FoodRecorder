@@ -1,6 +1,6 @@
 import type { ChatTurn } from '../extraction/cloud';
 import { askAgentEngine, type ScratchStep } from './engine';
-import type { AgentActionPlan, AgentApprovalMode, AgentLimits, AgentProgress, AgentToolCall, AgentUsage } from './protocol';
+import type { AgentActionPlan, AgentApprovalMode, AgentLimits, AgentLiveOperation, AgentProgress, AgentToolCall, AgentUsage } from './protocol';
 import { findTool } from './tools';
 import { executeAction, recordRefusal } from './actions';
 
@@ -58,14 +58,18 @@ export async function runAgent(
   const modelCalls: AgentUsage[] = [];
   let taskWritesApproved = approvalMode === 'auto-accept-writes';
   const startedAt = Date.now();
-  const progress = (phase: AgentProgress['phase'], turn: number) => onProgress?.({ phase, turn, toolCalls, usage: { ...usage }, elapsedMs: Date.now() - startedAt });
+  let currentOperation: AgentLiveOperation | undefined;
+  const progress = (phase: AgentProgress['phase'], turn: number, operation: AgentLiveOperation | null | undefined = currentOperation) => {
+    currentOperation = operation ?? undefined;
+    onProgress?.({ phase, turn, toolCalls, usage: { ...usage }, elapsedMs: Date.now() - startedAt, currentOperation });
+  };
 
   for (let turn = 1; turn <= limits.maxAgentTurns; turn++) {
-    progress('model', turn);
-    const reply = await askAgentEngine(turns, scratchpad, limits, signal);
+    progress('model', turn, { kind: 'model', label: 'Préparation de l’appel modèle', state: 'starting' });
+    const reply = await askAgentEngine(turns, scratchpad, limits, signal, (operation) => progress('model', turn, operation));
     modelCalls.push(reply.usage);
     usage = addUsage(usage, reply.usage);
-    progress('tools', turn);
+    progress('tools', turn, currentOperation?.state === 'completed' ? currentOperation : { kind: 'model', label: 'Réponse du modèle reçue', state: 'completed' });
     if (reply.kind === 'recoverable-error') {
       const call: AgentToolCall = { id: crypto.randomUUID(), name: 'réponse_modèle', args: {} };
       const summary = `ERREUR réponse du modèle : ${reply.error}`;
@@ -85,7 +89,7 @@ export async function runAgent(
     }
     for (const call of reply.calls) {
       toolCalls++;
-      progress('tools', turn);
+      progress('tools', turn, { kind: 'tool', label: call.name, detail: 'Démarrage de l’outil local', state: 'running' });
       const tool = findTool(call.name);
       onEvent({ type: 'tool-start', call });
       if (!tool) {
@@ -115,11 +119,11 @@ export async function runAgent(
         const actionPlan = await tool.prepare(parsed.data);
         let approved = taskWritesApproved;
         if (!approved) {
-          progress('approval', turn);
+          progress('approval', turn, { kind: 'tool', label: tool.name, detail: 'En attente de confirmation', state: 'running' });
           onEvent({ type: 'action-pending', call, plan: actionPlan, summary: `${actionPlan.preview} ${actionPlan.impact}` });
           if (!requestApproval) throw new Error('Cette action demande une confirmation dans l’interface.');
           approved = await requestApproval(actionPlan);
-          progress('tools', turn);
+          progress('tools', turn, { kind: 'tool', label: tool.name, detail: approved ? 'Confirmation reçue' : 'Confirmation terminée', state: approved ? 'running' : 'completed' });
           if (approved && approvalMode === 'approve-task-writes') taskWritesApproved = true;
         }
         if (!approved) {
@@ -138,10 +142,12 @@ export async function runAgent(
       const content = compact(result, limits.maxToolResultChars);
       scratchpad.push({ call, result: { callId: call.id, name: tool.name, ok: true, content } });
       onEvent({ type: 'tool-result', call, summary: content, ok: true });
+      progress('tools', turn, { kind: 'tool', label: tool.name, detail: 'Outil terminé', state: 'completed' });
     } catch (error) {
       const summary = `ERREUR ${tool.name}: ${error instanceof Error ? error.message : String(error)}`;
       scratchpad.push({ call, result: { callId: call.id, name: tool.name, ok: false, content: summary } });
       onEvent({ type: 'tool-result', call, summary, ok: false });
+      progress('tools', turn, { kind: 'tool', label: tool.name, detail: summary, state: 'failed' });
       }
     }
   }

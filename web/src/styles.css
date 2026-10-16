@@ -74,6 +74,10 @@
 .agent-diagnostics pre { max-height: 180px; overflow: auto; padding: 8px; border: 1px solid var(--border); border-radius: 8px; background: var(--bg); color: var(--muted); white-space: pre-wrap; }
 .agent-thinking { display: grid; gap: 3px; color: var(--accent); padding: 8px; }
 .agent-thinking small { color: var(--muted); }
+.agent-live-details { margin: 6px 8px 10px; padding: 8px 10px; border: 1px solid var(--border); border-radius: 9px; background: var(--panel-2); font-size: 12px; }
+.agent-live-details summary { cursor: pointer; color: var(--text); font-weight: 650; }
+.agent-live-details-body { display: grid; gap: 5px; margin-top: 8px; color: var(--muted); }
+.agent-live-details-body pre { max-height: 140px; overflow: auto; margin: 0; padding: 8px; border: 1px solid var(--border); border-radius: 7px; background: var(--bg); color: var(--text); white-space: pre-wrap; overflow-wrap: anywhere; }
 .agent-error { padding: 9px; border: 1px solid #7f1d1d; border-radius: 9px; background: #2b1518; }
 .agent-compose { display: flex; flex-wrap: wrap; gap: 8px; padding: 12px; border-top: 1px solid var(--border); background: var(--panel-2); }
 .agent-compose textarea { flex: 1 1 100%; resize: none; min-height: 52px; }

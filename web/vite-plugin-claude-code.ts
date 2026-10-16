@@ -1,6 +1,6 @@
 import type { Plugin } from 'vite';
 import type { IncomingMessage } from 'node:http';
-import { spawn } from 'node:child_process';
+import { spawn, type ChildProcess } from 'node:child_process';
 import { mkdir, mkdtemp, readFile, rmdir, unlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
@@ -66,6 +66,21 @@ interface StreamMessage {
 /** CLI local que le pont sait piloter. */
 type Cli = 'claude' | 'codex';
 
+interface CliProcessStatus {
+  state: 'starting' | 'running' | 'stopping' | 'completed' | 'failed' | 'stopped';
+  cli: Cli;
+  command: string;
+  pid?: number;
+  startedAt: number;
+  lastOutputAt: number;
+  stdoutBytes: number;
+  stderrBytes: number;
+}
+
+function displayCommand(cli: Cli, args: string[]): string {
+  return [cli, ...args].map((part) => /[\s"]/u.test(part) ? `"${part.replace(/"/g, '\\"')}"` : part).join(' ');
+}
+
 const CLI_LABEL: Record<Cli, string> = { claude: 'Claude Code', codex: 'Codex' };
 
 /**
@@ -77,7 +92,28 @@ function spawnCli(cli: Cli, args: string[]) {
   const env = cli === 'codex' && !process.env.HOME && process.env.USERPROFILE
     ? { ...process.env, HOME: process.env.USERPROFILE }
     : undefined;
-  return spawn(cli, args, { shell: true, ...(env ? { env } : {}) });
+  return spawn(cli, args, { shell: true, detached: process.platform !== 'win32', ...(env ? { env } : {}) });
+}
+
+function killProcessTree(child: ChildProcess): void {
+  if (!child.pid) {
+    child.kill();
+    return;
+  }
+  if (process.platform === 'win32') {
+    const killer = spawn('taskkill.exe', ['/PID', String(child.pid), '/T', '/F'], {
+      stdio: 'ignore',
+      windowsHide: true,
+    });
+    killer.once('error', () => child.kill());
+    killer.once('exit', (code) => { if (code !== 0) child.kill(); });
+    return;
+  }
+  try {
+    process.kill(-child.pid, 'SIGTERM');
+  } catch {
+    child.kill('SIGTERM');
+  }
 }
 
 interface BridgeModel {
@@ -125,6 +161,8 @@ function runCli(
   imagePath?: string | null,
   outputLastPath?: string | null,
   ephemeral = false,
+  signal?: AbortSignal,
+  onStatus?: (status: CliProcessStatus) => void,
 ): Promise<CliRun> {
   return new Promise((resolve, reject) => {
     // Deux CLI, deux protocoles :
@@ -139,25 +177,69 @@ function runCli(
       cli === 'codex'
         ? ['exec', ...(ephemeral ? ['--ephemeral'] : []), '--sandbox', 'read-only', '--color', 'never', ...(outputLastPath ? ['--output-last-message', outputLastPath] : []), ...(model ? ['-m', model] : []), ...(imagePath ? ['-i', imagePath] : []), '-']
         : ['-p', ...(ephemeral ? ['--no-session-persistence'] : []), '--output-format', 'stream-json', '--verbose', ...(model ? ['--model', model] : [])];
+    const startedAt = Date.now();
+    let lastOutputAt = startedAt;
+    let stdoutBytes = 0;
+    let stderrBytes = 0;
     // shell:true pour résoudre « claude(.cmd) » / « codex(.cmd) » via le PATH sous Windows.
     const child = spawnCli(cli, args);
+    const publishStatus = (state: CliProcessStatus['state']) => {
+      onStatus?.({ state, cli, command: displayCommand(cli, args), pid: child.pid, startedAt, lastOutputAt, stdoutBytes, stderrBytes });
+    };
+    publishStatus('running');
 
     const limite = Math.min(Math.max(timeoutMs ?? CLI_TIMEOUT_MS, CLI_TIMEOUT_MS), CLI_TIMEOUT_MAX_MS);
     let stdout = '';
     let stderr = '';
-    const timer = setTimeout(() => {
-      child.kill();
-      reject(new Error(`Délai dépassé (${Math.round(limite / 1000)} s) : le CLI ${CLI_LABEL[cli]} n’a pas répondu.`));
-    }, limite);
-
-    child.stdout.on('data', (d) => (stdout += d));
-    child.stderr.on('data', (d) => (stderr += d));
-    child.on('error', (e) => {
+    let settled = false;
+    let childClosed = false;
+    let stopReason: Error | null = null;
+    const cleanup = () => {
       clearTimeout(timer);
+      signal?.removeEventListener('abort', onAbort);
+    };
+    const stop = (reason: Error) => {
+      if (settled || childClosed || stopReason) return;
+      stopReason = reason;
+      publishStatus('stopping');
+      killProcessTree(child);
+    };
+    const onAbort = () => stop(new Error('Appel CLI interrompu.'));
+    const timer = setTimeout(() => {
+      stop(new Error(`Délai dépassé (${Math.round(limite / 1000)} s) : le CLI ${CLI_LABEL[cli]} n’a pas répondu.`));
+    }, limite);
+    if (signal?.aborted) onAbort();
+    else signal?.addEventListener('abort', onAbort, { once: true });
+
+    child.stdout.on('data', (d) => {
+      stdout += d;
+      stdoutBytes += Buffer.byteLength(d);
+      lastOutputAt = Date.now();
+      publishStatus('running');
+    });
+    child.stderr.on('data', (d) => {
+      stderr += d;
+      stderrBytes += Buffer.byteLength(d);
+      lastOutputAt = Date.now();
+      publishStatus('running');
+    });
+    child.on('error', (e) => {
+      if (settled) return;
+      settled = true;
+      publishStatus('failed');
+      cleanup();
       reject(new Error(`Impossible de lancer « ${cli} » : ${e.message}. CLI installé et dans le PATH ?`));
     });
     child.on('close', async (code) => {
-      clearTimeout(timer);
+      childClosed = true;
+      cleanup();
+      if (settled) return;
+      if (stopReason) {
+        settled = true;
+        publishStatus(stopReason.message === 'Appel CLI interrompu.' ? 'stopped' : 'failed');
+        reject(stopReason);
+        return;
+      }
       // Codex peut imprimer sa progression sur stdout selon son lanceur Windows.
       // `--output-last-message` est donc la seule source fiable du texte final.
       let codexFinal = '';
@@ -175,13 +257,19 @@ function runCli(
       // contient la réponse. La jeter ferait retomber la saisie sur le parseur
       // à règles alors que l'IA avait bien travaillé.
       if (run.text.trim()) {
+        settled = true;
+        publishStatus('completed');
         resolve(run);
         return;
       }
       if (code !== 0) {
+        settled = true;
+        publishStatus('failed');
         reject(new Error(stderr.trim() || `Le CLI ${CLI_LABEL[cli]} a quitté (code ${code}).`));
         return;
       }
+      settled = true;
+      publishStatus('completed');
       resolve(run);
     });
 
@@ -405,6 +493,16 @@ export function claudeCodeBridge(): Plugin {
     name: 'claude-code-bridge',
     configureServer(server) {
       const dir = responseDir(server.config.root);
+      const cliStatuses = new Map<string, CliProcessStatus>();
+      const rememberCliStatus = (requestId: string | undefined, status: CliProcessStatus) => {
+        if (!requestId) return;
+        cliStatuses.set(requestId, status);
+        while (cliStatuses.size > 100) {
+          const oldest = cliStatuses.keys().next().value as string | undefined;
+          if (!oldest || oldest === requestId) break;
+          cliStatuses.delete(oldest);
+        }
+      };
       // Les appels archivés manuellement sont retrouvables dans response/.
       server.config.logger.info(`[claude-code] archives des appels conservés → ${dir}`);
 
@@ -413,11 +511,19 @@ export function claudeCodeBridge(): Plugin {
         try {
           if (req.method === 'GET') {
             const query = new URL(req.url ?? '/', 'http://localhost').searchParams;
+            if (query.has('status')) {
+              res.end(JSON.stringify(cliStatuses.get(query.get('status') ?? '') ?? null));
+              return;
+            }
             const cli: Cli = query.get('cli') === 'codex' ? 'codex' : 'claude';
             res.end(JSON.stringify(query.get('models') === '1' ? await listCliModels(cli) : await checkCli(cli)));
             return;
           }
           if (req.method === 'POST') {
+            const requestAbort = new AbortController();
+            res.once('close', () => {
+              if (!res.writableEnded) requestAbort.abort();
+            });
             const body = JSON.parse((await readBody(req)) || '{}') as {
               prompt?: unknown;
               cli?: unknown;
@@ -425,6 +531,7 @@ export function claudeCodeBridge(): Plugin {
               label?: unknown;
               timeoutMs?: unknown;
               archive?: unknown;
+              requestId?: unknown;
               image?: { data?: unknown; mediaType?: unknown };
             };
             const prompt = typeof body.prompt === 'string' ? body.prompt : '';
@@ -445,6 +552,11 @@ export function claudeCodeBridge(): Plugin {
               return;
             }
             const cli: Cli = body.cli === 'codex' ? 'codex' : 'claude';
+            const requestId = typeof body.requestId === 'string' && /^[\w-]{1,80}$/.test(body.requestId) ? body.requestId : undefined;
+            if (requestId) {
+              const now = Date.now();
+              rememberCliStatus(requestId, { state: 'starting', cli, command: `${cli} · préparation`, startedAt: now, lastOutputAt: now, stdoutBytes: 0, stderrBytes: 0 });
+            }
             if (shouldArchive) await mkdir(dir, { recursive: true });
             const temporaryDirectory = shouldArchive ? null : await mkdtemp(join(tmpdir(), 'foodrecorder-cli-'));
             const requestDir = temporaryDirectory ?? dir;
@@ -482,9 +594,13 @@ export function claudeCodeBridge(): Plugin {
                   imagePath,
                   cli === 'codex' ? outputLastPath : null,
                   !shouldArchive,
+                  requestAbort.signal,
+                  (status) => rememberCliStatus(requestId, status),
                 );
               } catch (e) {
                 error = (e as Error).message;
+                const previous = requestId ? cliStatuses.get(requestId) : undefined;
+                if (previous && previous.state !== 'stopped' && previous.state !== 'failed') rememberCliStatus(requestId, { ...previous, state: requestAbort.signal.aborted ? 'stopped' : 'failed' });
               }
 
               if (shouldArchive) {
