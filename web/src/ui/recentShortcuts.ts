@@ -15,7 +15,7 @@ export function frequentFoodShortcuts(entries: JournalEntry[], foods: Food[], da
   return foodFrequencies(entries, shortcutRange(date))
     .filter((usage) => usage.foodId && byId.has(usage.foodId) && usage.jours >= 2)
     .sort((a, b) => b.jours - a.jours || b.occurrences - a.occurrences || b.derniere.localeCompare(a.derniere) || a.nom.localeCompare(b.nom, 'fr'))
-    .slice(0, 4).map((usage) => ({ food: byId.get(usage.foodId!)!, days: usage.jours }));
+    .map((usage) => ({ food: byId.get(usage.foodId!)!, days: usage.jours }));
 }
 
 export interface RepeatedMeal {
@@ -54,5 +54,5 @@ export function repeatedMealShortcuts(entries: JournalEntry[], foods: Food[], da
   }
   return [...groups.values()].filter((group) => group.days >= 2)
     .sort((a, b) => b.days - a.days || b.latest.localeCompare(a.latest) || a.nom.localeCompare(b.nom, 'fr'))
-    .slice(0, 4).map(({ dates: _dates, ...group }) => group);
+    .map(({ dates: _dates, ...group }) => group);
 }

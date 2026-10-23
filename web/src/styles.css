@@ -1177,10 +1177,27 @@ button.heat-cell:hover { box-shadow: 0 0 0 1.5px var(--accent); }
 .favorite-star { width: 15px; height: 15px; fill: #e6b65f; flex: none; }
 .quick-meal-heading, .favorite-editor-heading { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
 .quick-meal-heading h2 { margin: 0; }
+.meal-shortcuts { touch-action: pan-y; }
+.frequent-lane, .meal-shortcut-tabs { touch-action: auto; }
 .quick-manage { display: inline-flex; align-items: center; justify-content: center; gap: 5px; padding: 5px 7px; min-height: 32px; background: transparent; border-color: transparent; color: var(--muted); font-size: 12px; }
-.meal-shortcut-tabs { display: flex; gap: 14px; margin-top: 4px; border-bottom: 1px solid var(--border); }
+.meal-shortcut-tabs { display: flex; gap: 14px; margin-top: 4px; border-bottom: 1px solid var(--border); overflow-x: auto; }
 .meal-shortcut-tabs button { display: inline-flex; align-items: center; gap: 5px; padding: 8px 0; background: transparent; border: 0; border-bottom: 2px solid transparent; border-radius: 0; color: var(--muted); font-size: 12px; }
 .meal-shortcut-tabs button[aria-pressed='true'] { color: var(--text); border-bottom-color: var(--accent); }
+.meal-shortcut-tabs button { flex: none; white-space: nowrap; }
+.favorite-scroll { grid-auto-rows: 52px; height: 110px; overflow-y: auto; overscroll-behavior-y: contain; scrollbar-width: thin; }
+.favorite-card { gap: 0; border: 1px solid var(--border); border-radius: 10px; background: var(--panel-2); }
+.favorite-card.on { border-color: var(--accent); }
+.favorite-card > .fav-add { border: 0; background: transparent; border-radius: 10px 0 0 10px; }
+.favorite-card > .fav-add { gap: 5px; padding: 6px 7px; font-size: 12px; }
+.favorite-card .favorite-star { width: 12px; height: 12px; }
+.favorite-edit-button { display: grid; place-items: center; width: 40px; min-height: 44px; flex: none; padding: 0; background: transparent; border: 0; border-left: 1px solid var(--border); border-radius: 0 10px 10px 0; color: var(--muted); }
+.favorite-edit-button:hover { color: var(--text); background: var(--panel); }
+.frequent-groups { margin-top: 8px; }
+.frequent-label { font-size: 11px; color: var(--muted); margin: 6px 0 4px; }
+.frequent-lane { display: grid; grid-auto-flow: column; grid-auto-columns: minmax(150px, 24%); grid-template-rows: 52px; gap: 6px; overflow-x: auto; scrollbar-width: thin; padding-bottom: 3px; }
+.frequent-lane { scroll-snap-type: x proximity; }
+.frequent-lane > .fav-chip { scroll-snap-align: start; }
+.frequent-empty { grid-column: 1 / -1; align-self: center; color: var(--muted); min-width: 230px; }
 .meal-shortcut-tabs .favorite-star { width: 13px; height: 13px; }
 .shortcut-period, .shortcut-days { font-size: 10px; color: var(--muted); flex: none; }
 .shortcut-period { opacity: .8; }
@@ -1200,6 +1217,9 @@ button.heat-cell:hover { box-shadow: 0 0 0 1.5px var(--accent); }
 
 @media (max-width: 640px) {
   .fav-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .favorite-scroll { height: 168px; }
+  .frequent-lane { grid-auto-columns: calc((100% - 6px) / 2); }
+  .frequent-lane-foods { grid-template-rows: repeat(2, 52px); }
   .favorite-editor .item-row-edit { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) auto; }
   .favorite-editor .item-row-edit-food { grid-column: 1 / -1; min-width: 0; }
 }

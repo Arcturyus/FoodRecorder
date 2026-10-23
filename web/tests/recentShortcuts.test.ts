@@ -16,6 +16,15 @@ function entry(day: string, ids = ['banane', 'pomme'], createdAt = 1): JournalEn
 }
 
 describe('fifteen-day shortcuts', () => {
+  it('keeps more than four foods and combinations available for scrolling', () => {
+    const bank = Array.from({ length: 7 }, (_, i) => ({ ...banana, id: `food-${i}` }));
+    const entries = ['2026-10-22', date].flatMap((day) => bank.map((food, i) => {
+      const meal = entry(day, [food.id, bank[(i + 1) % bank.length].id], i * 4_000_000);
+      return meal;
+    }));
+    expect(frequentFoodShortcuts(entries, bank, date)).toHaveLength(7);
+    expect(repeatedMealShortcuts(entries, bank, date)).toHaveLength(7);
+  });
   it('includes exactly fifteen calendar days, across month boundaries', () => {
     expect(shortcutRange(date)).toEqual({ start: '2026-10-09', end: date });
     expect(shortcutRange('2026-03-05')).toEqual({ start: '2026-02-19', end: '2026-03-05' });
