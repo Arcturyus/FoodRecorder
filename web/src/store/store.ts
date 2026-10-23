@@ -480,6 +480,8 @@ interface AppState {
   addFavoriteMealItem: (favId: string, item: FavoriteMealItem) => void;
   /** Ajoute un repas favori au journal du jour ciblé (défaut aujourd'hui). */
   applyFavoriteMeal: (id: string, date?: string) => string | null;
+  /** Réutilise les aliments d'un repas récurrent, sans créer de favori persistant. */
+  addMealItems: (nom: string, items: FavoriteMealItem[], date?: string) => string | null;
 
   addCustomFood: (food: Omit<Food, 'id' | 'custom'>) => void;
   removeCustomFood: (id: string) => void;
@@ -947,10 +949,15 @@ export const useStore = create<AppState>()(
       applyFavoriteMeal: (id, date) => {
         const fav = get().favoriteMeals.find((f) => f.id === id);
         if (!fav || fav.items.length === 0) return null;
+        return get().addMealItems(`⭐ ${fav.nom}`, fav.items, date);
+      },
+
+      addMealItems: (nom, mealItems, date) => {
+        if (!mealItems.length || mealItems.some((item) => !Number.isFinite(item.quantite) || item.quantite <= 0)) return null;
         const foods = get().customFoods;
         // Re-résolution à l'application : les valeurs nutritionnelles restent à jour
         // même si l'aliment a été modifié depuis l'enregistrement du favori.
-        const items: JournalItem[] = fav.items.map((fi) => {
+        const items: JournalItem[] = mealItems.map((fi) => {
           const food = fi.foodId ? foods.find((f) => f.id === fi.foodId) ?? null : null;
           if (food) {
             const grams = toGrams({ aliment: food.nom, quantite: fi.quantite, unite: fi.unite, estimation: fi.estimation }, food);
@@ -976,7 +983,7 @@ export const useStore = create<AppState>()(
           id: uid(),
           date: date ?? todayStr(),
           createdAt: Date.now(),
-          transcript: `⭐ ${fav.nom}`,
+          transcript: nom,
           source: 'manuel',
           items,
         };

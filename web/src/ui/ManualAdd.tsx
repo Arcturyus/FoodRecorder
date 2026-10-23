@@ -1,10 +1,13 @@
-import { useMemo, useState } from 'react';
-import { useStore, useEffectiveFoods } from '../store/store';
+import { useMemo, useRef, useState } from 'react';
+import { useStore, useEffectiveFoods, todayStr } from '../store/store';
 import { UNITS } from '../nutrition/types';
 import type { Food, Unit } from '../nutrition/types';
 import { FOODS, SUPPLEMENT_DOSE_DEFAULT } from '../nutrition/foods';
 import { normalizeForMatch, isSupplementQuery } from '../nutrition/normalize';
 import { toGrams, scaleNutrients } from '../nutrition/compute';
+import { suggestQuantity, type QuantitySuggestion } from '../nutrition/quantitySuggestion';
+import { parseQuickFoodQuery, quickQuantity } from '../nutrition/quickFoodQuery';
+import { frequentFoodShortcuts } from './recentShortcuts';
 import { fmt, UNIT_LABELS } from './format';
 import { NumberField } from './NumberField';
 import { useBankUsage, derniereFoisLabel } from './useBankUsage';
@@ -42,6 +45,9 @@ export function ManualAdd({
   onAdded?: () => void;
 } = {}) {
   const all = useEffectiveFoods();
+  const entries = useStore((s) => s.entries);
+  const targetDate = date ?? todayStr();
+  const searchRef = useRef<HTMLInputElement>(null);
   const usage = useBankUsage();
   const addFoodEntry = useStore((s) => s.addFoodEntry);
   const addFoodToEntry = useStore((s) => s.addFoodToEntry);
@@ -51,6 +57,9 @@ export function ManualAdd({
   const [quantite, setQuantite] = useState('100');
   const [unite, setUnite] = useState<Unit>('g');
   const [flash, setFlash] = useState('');
+  const [suggestion, setSuggestion] = useState<QuantitySuggestion | null>(null);
+  const [typedQuantity, setTypedQuantity] = useState(false);
+  const [uncertainQuantity, setUncertainQuantity] = useState(false);
   /** Second clic demandé quand la quantité saisie est démesurée (cf. `ABSURDE_KCAL`). */
   const [confirmBig, setConfirmBig] = useState(false);
 
@@ -61,6 +70,14 @@ export function ManualAdd({
     return f.categorie === 'supplement' && isSupplementQuery(q);
   };
 
+  // Preserve the original search for real food names containing numbers (e.g. 0%).
+  const parsedQuery = useMemo(() => {
+    const raw = normalizeForMatch(query);
+    return raw && [...all, ...FOODS].some((food) => match(food, raw))
+      ? { foodQuery: query } : parseQuickFoodQuery(query);
+  }, [query, all]);
+  const frequent = useMemo(() => frequentFoodShortcuts(entries, all, targetDate), [entries, all, targetDate]);
+
   /**
    * Ma banque d'abord, triée par consommation la plus récente : ce qu'on ajoute à
    * la main, c'est presque toujours quelque chose qu'on mange déjà. L'ordre
@@ -68,13 +85,13 @@ export function ManualAdd({
    * le yaourt de tous les matins.
    */
   const results = useMemo(() => {
-    const q = normalizeForMatch(query);
+    const q = normalizeForMatch(parsedQuery.foodQuery);
     if (!q) return [];
     return all
       .filter((f) => match(f, q))
       .sort((a, b) => (usage.get(b.id)?.derniere ?? '').localeCompare(usage.get(a.id)?.derniere ?? ''))
       .slice(0, MAX_RESULTS);
-  }, [query, all, usage]);
+  }, [parsedQuery.foodQuery, all, usage]);
 
   /**
    * Repli sur le catalogue de référence : un aliment jamais mangé n'est pas dans
@@ -82,18 +99,30 @@ export function ManualAdd({
    * l'IA. Le choisir le fera entrer dans la banque (cf. `addFoodEntry`).
    */
   const catalogResults = useMemo(() => {
-    const q = normalizeForMatch(query);
+    const q = normalizeForMatch(parsedQuery.foodQuery);
     if (!q) return [];
     const dansMaBanque = new Set(all.map((f) => f.id));
     return FOODS.filter((f) => !dansMaBanque.has(f.id) && match(f, q)).slice(0, MAX_RESULTS);
-  }, [query, all]);
+  }, [parsedQuery.foodQuery, all]);
 
   function pick(food: Food) {
     setSelected(food);
     setQuery(food.nom);
-    // Complément mono-élément : dose directe en mg/µg de l'élément (comme l'étiquette).
+    const remembered = suggestQuantity(useStore.getState().entries, food.id, targetDate);
+    const explicit = quickQuantity(parsedQuery, food, remembered);
+    setTypedQuantity(!!explicit);
+    setUncertainQuantity(!!parsedQuery.uncertain || (parsedQuery.quantity != null && !explicit));
+    setSuggestion(explicit ? null : remembered);
+    setConfirmBig(false);
+    // Sans historique fiable, conserver les valeurs pratiques du catalogue.
     const dose = SUPPLEMENT_DOSE_DEFAULT[food.id];
-    if (dose) {
+    if (explicit) {
+      setUnite(explicit.unite);
+      setQuantite(String(explicit.quantite));
+    } else if (remembered) {
+      setUnite(remembered.unite);
+      setQuantite(String(remembered.quantite));
+    } else if (dose) {
       setUnite(dose.unite);
       setQuantite(String(dose.quantite));
     } else if (food.pieceGrams) {
@@ -113,7 +142,7 @@ export function ManualAdd({
   const [confirmedKey, setConfirmedKey] = useState('');
   const grams = selected && qNum > 0 ? toGrams({ aliment: selected.nom, quantite: qNum, unite, estimation: false }, selected) : 0;
   const kcal = selected && grams > 0 ? scaleNutrients(selected.n, grams).kcal : 0;
-  const canAdd = selected !== null && qNum > 0;
+  const canAdd = selected !== null && Number.isFinite(qNum) && qNum > 0;
   /**
    * Une saisie au-delà de ce seuil est presque toujours une confusion d'unité
    * (« 99 999 » tapé en pensant grammes sur une unité « pièce ») : un seul clic
@@ -125,7 +154,7 @@ export function ManualAdd({
   const pending = absurde && confirmBig && confirmedKey === qKey;
 
   function add() {
-    if (!selected || !(qNum > 0)) return;
+    if (!selected || !Number.isFinite(qNum) || !(qNum > 0)) return;
     // Premier clic sur une quantité démesurée : on demande confirmation.
     if (absurde && !pending) {
       setConfirmBig(true);
@@ -141,6 +170,7 @@ export function ManualAdd({
     setQuery('');
     setQuantite('100');
     setUnite('g');
+    searchRef.current?.focus();
     onAdded?.();
   }
 
@@ -148,8 +178,9 @@ export function ManualAdd({
     <div className={entryId ? 'manual-add-inline' : 'panel'}>
       {title !== null && <h2>{title ?? 'Ajout manuel rapide'}</h2>}
       <input
+        ref={searchRef}
         style={{ width: '100%' }}
-        placeholder={entryId ? 'Ajouter un aliment (ex. « une pomme »)' : 'Chercher un aliment (ex. « banane », « poulet »)…'}
+        placeholder={entryId ? 'Ajouter un aliment (ex. « banane 2 »)' : 'Chercher : banane 2, riz 150 g…'}
         value={query}
         autoFocus={autoFocus}
         onChange={(e) => {
@@ -157,6 +188,19 @@ export function ManualAdd({
           setSelected(null);
         }}
       />
+
+      {selected === null && !query.trim() && frequent.length > 0 && (
+        <div className="quick-foods">
+          <div className="small" style={{ color: 'var(--muted)' }}>Souvent mangés · 15 derniers jours</div>
+          <div className="shortcut-grid">
+            {frequent.map(({ food, days }) => (
+              <button key={food.id} className="shortcut-food" aria-label={`Choisir ${food.nom} (fréquent)`} onClick={() => pick(food)}>
+                <span className="shortcut-name">{food.nom}</span><small>{days} jours</small>
+              </button>
+            ))}
+          </div>
+        </div>
+      )}
 
       {selected === null && results.length > 0 && (
         <div style={{ marginTop: 8 }}>
@@ -234,6 +278,23 @@ export function ManualAdd({
       )}
 
       {selected && (
+        <>
+        {typedQuantity && <div className="small" style={{ marginTop: 8, color: 'var(--muted)' }}>Quantité reprise de votre saisie · vous pouvez modifier.</div>}
+        {uncertainQuantity && <div className="small" style={{ marginTop: 8, color: 'var(--muted)' }}>Quantité ou unité ambiguë : préremplissage conservé. Vérifiez les champs ci-dessous.</div>}
+        {suggestion && (
+          <div className="small" style={{ marginTop: 8, color: 'var(--muted)' }}>
+            {suggestion.reason === 'habit' ? 'Quantité habituelle' : 'Dernière prise'} : {fmt(suggestion.quantite, 2)} {UNIT_LABELS[suggestion.unite]} · vous pouvez modifier.
+            {suggestion.reason === 'habit' && (
+              <button className="ghost small" style={{ marginLeft: 8 }} onClick={() => {
+                setQuantite(String(suggestion.latest.quantite));
+                setUnite(suggestion.latest.unite);
+                setSuggestion({ ...suggestion.latest, latest: suggestion.latest, reason: 'latest' });
+              }}>
+                Reprendre la dernière prise : {fmt(suggestion.latest.quantite, 2)} {UNIT_LABELS[suggestion.latest.unite]}
+              </button>
+            )}
+          </div>
+        )}
         <div className="row" style={{ marginTop: 12, alignItems: 'flex-end' }}>
           <label className="field" style={{ flex: '0 0 118px' }}>
             Quantité
@@ -265,6 +326,7 @@ export function ManualAdd({
             {pending ? 'Confirmer' : 'Ajouter'}
           </button>
         </div>
+        </>
       )}
 
       {absurde && (

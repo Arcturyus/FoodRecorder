@@ -142,8 +142,8 @@ export function EntryCard({
           <button className="ghost small" data-tip="Enregistrer comme repas favori réutilisable" onClick={saveAsFavorite}>
             ☆ Favori
           </button>
-          <button className="primary small" onClick={() => setAddingFood(true)}>
-            Ajouter un aliment
+          <button className="primary small" onClick={() => setAddingFood((value) => !value)}>
+            {addingFood ? "Terminer l'ajout" : 'Ajouter un aliment'}
           </button>
           <button className="ghost small" onClick={() => setEditing((e) => !e)}>
             {editing ? 'Terminer' : 'Options'}
@@ -158,7 +158,7 @@ export function EntryCard({
       {entry.items.map((it) => (
         <ItemRow key={it.id} entryId={entry.id} item={it} canDeleteItem={entry.items.length > 1} />
       ))}
-      {addingFood && <ManualAdd entryId={entry.id} title={null} autoFocus onAdded={() => setAddingFood(false)} />}
+      {addingFood && <ManualAdd entryId={entry.id} title={null} autoFocus date={entry.date} />}
       {editing && (
         <div className="row" style={{ marginTop: 10, alignItems: 'flex-end' }}>
           <label className="field">

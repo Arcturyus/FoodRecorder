@@ -1,14 +1,15 @@
 import { useMemo, useState } from 'react';
 import type { FavoriteMeal, FavoriteMealItem } from '../store/store';
-import { useStore, useEffectiveFoods } from '../store/store';
+import { useStore, useEffectiveFoods, todayStr } from '../store/store';
 import { UNITS } from '../nutrition/types';
 import type { Food, Unit } from '../nutrition/types';
 import { normalizeForMatch } from '../nutrition/normalize';
 import { fmt, UNIT_LABELS } from './format';
 import { NumberField } from './NumberField';
+import { repeatedMealShortcuts } from './recentShortcuts';
 
 /** Favoris affichés d'emblée ; au-delà, un bouton « + N autres » déplie le reste. */
-const FAV_SHOWN = 6;
+const FAV_SHOWN = 4;
 
 /** Détail des aliments d'un favori — en info-bulle, plus sur la ligne (place). */
 function favoriteTip(f: FavoriteMeal): string {
@@ -31,15 +32,22 @@ function favoriteTip(f: FavoriteMeal): string {
  */
 export function FavoriteMeals({ date }: { date?: string } = {}) {
   const favorites = useStore((s) => s.favoriteMeals);
+  const entries = useStore((s) => s.entries);
+  const foods = useEffectiveFoods();
+  const targetDate = date ?? todayStr();
+  const repeated = useMemo(() => repeatedMealShortcuts(entries, foods, targetDate), [entries, foods, targetDate]);
   const applyFavoriteMeal = useStore((s) => s.applyFavoriteMeal);
+  const addMealItems = useStore((s) => s.addMealItems);
   const removeFavoriteMeal = useStore((s) => s.removeFavoriteMeal);
   const renameFavoriteMeal = useStore((s) => s.renameFavoriteMeal);
   const [flash, setFlash] = useState('');
   const [showAll, setShowAll] = useState(false);
   const [editing, setEditing] = useState(false);
   const [editingItemsId, setEditingItemsId] = useState<string | null>(null);
+  const [mealTab, setMealTab] = useState<'favorites' | 'repeated' | null>(null);
+  const activeTab = favorites.length === 0 ? 'repeated' : repeated.length === 0 ? 'favorites' : mealTab ?? 'favorites';
 
-  if (favorites.length === 0) return null;
+  if (favorites.length === 0 && repeated.length === 0) return null;
 
   const shown = showAll ? favorites : favorites.slice(0, FAV_SHOWN);
   const hidden = favorites.length - shown.length;
@@ -64,15 +72,38 @@ export function FavoriteMeals({ date }: { date?: string } = {}) {
   }
 
   return (
-    <div className="panel">
+    <div className="panel meal-shortcuts">
       <div className="row" style={{ justifyContent: 'space-between', alignItems: 'baseline', gap: 8 }}>
-        <h2 style={{ margin: 0 }}>Repas favoris</h2>
+        <h2 style={{ margin: 0 }}>Repas rapides</h2>
+        {activeTab === 'favorites' && favorites.length > 0 && (
         <button className="ghost small" onClick={toggleEditing}>
           {editing ? 'Terminer' : 'Modifier'}
         </button>
+        )}
       </div>
 
-      <div className="fav-grid">
+      <div className="meal-shortcut-tabs" role="group" aria-label="Suggestions de repas">
+        {favorites.length > 0 && <button className={`ghost small${activeTab === 'favorites' ? ' on' : ''}`} aria-pressed={activeTab === 'favorites'} onClick={() => setMealTab('favorites')}>Favoris</button>}
+        {repeated.length > 0 && <button className={`ghost small${activeTab === 'repeated' ? ' on' : ''}`} aria-pressed={activeTab === 'repeated'} onClick={() => { setMealTab('repeated'); setEditing(false); setEditingItemsId(null); }}>Récurrents · 15 j</button>}
+      </div>
+
+      {activeTab === 'repeated' && <>
+        <div className="fav-grid">
+          {repeated.map((meal) => (
+            <div className="fav-chip" key={meal.key}>
+              <button className="fav-add" aria-label={`Ajouter le repas récurrent : ${meal.nom}`} data-tip={favoriteTip({ ...meal, id: meal.key })} onClick={() => {
+                if (addMealItems(`Repas récurrent : ${meal.nom}`, meal.items, date)) setFlash(`Ajouté : ${meal.nom}.`);
+              }}>
+                <span className="meal-shortcut-copy"><span className="fav-name">{meal.nom}</span><small>{meal.days} jours sur 15</small></span>
+              </button>
+            </div>
+          ))}
+        </div>
+        <div className="small" style={{ color: 'var(--muted)', marginTop: 6 }}>Mêmes aliments et quantités au moins deux jours. Un clic ajoute le repas.</div>
+      </>}
+
+      {activeTab === 'favorites' && <>
+      <div className={`fav-grid${editing ? ' fav-editing' : ''}`}>
         {shown.map((f) => (
           <div className="fav-chip" key={f.id}>
             <button
@@ -117,8 +148,9 @@ export function FavoriteMeals({ date }: { date?: string } = {}) {
       <div className="hint">
         {editing
           ? "Cliquez un favori pour modifier ses aliments (quantité, unité, remplacement)."
-          : `Un clic ajoute le repas ${date ? 'à ce jour' : "à aujourd'hui"} (valeurs recalculées avec la banque à jour) ; le détail des aliments est au survol. À la voix : dictez simplement le nom du favori (ex. « petit-déj habituel »).`}
+          : `Un clic ajoute le repas ${date ? 'à ce jour' : "à aujourd'hui"}. À la voix, dictez le nom du favori.`}
       </div>
+      </>}
       {flash && <div className="status">{flash}</div>}
 
       {editingItemsOf && <FavoriteItemsEditor fav={editingItemsOf} onClose={() => setEditingItemsId(null)} />}
