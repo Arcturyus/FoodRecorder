@@ -6,169 +6,119 @@ import type { Food, Unit } from '../nutrition/types';
 import { normalizeForMatch } from '../nutrition/normalize';
 import { fmt, UNIT_LABELS } from './format';
 import { NumberField } from './NumberField';
-import { repeatedMealShortcuts } from './recentShortcuts';
+import { frequentFoodShortcuts, repeatedMealShortcuts } from './recentShortcuts';
 
-/** Favoris affichés d'emblée ; au-delà, un bouton « + N autres » déplie le reste. */
 const FAV_SHOWN = 4;
-
-/** Détail des aliments d'un favori — en info-bulle, plus sur la ligne (place). */
-function favoriteTip(f: FavoriteMeal): string {
-  const items = f.items.map((it) => `${it.nomAffiche} ${fmt(it.quantite, 2)} ${UNIT_LABELS[it.unite]}`).join(' · ');
-  return `${f.nom} — ${items}`;
+function StarIcon() {
+  return <svg className="favorite-star" viewBox="0 0 24 24" aria-hidden="true"><path d="m12 3 2.8 5.7 6.2.9-4.5 4.4 1.1 6.2-5.6-3-5.6 3 1.1-6.2L3 9.6l6.2-.9Z" /></svg>;
+}
+function PencilIcon() {
+  return <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" strokeWidth="1.6" aria-hidden="true"><path d="m15 5 4 4M4 20l4-1L20 7a2.8 2.8 0 0 0-4-4L4 15Z" /></svg>;
+}
+function favoriteTip(f: Pick<FavoriteMeal, 'nom' | 'items'>): string {
+  return f.items.map((it) => `${fmt(it.quantite, 2)} ${UNIT_LABELS[it.unite]} de ${it.nomAffiche}`).join(' · ');
 }
 
-/**
- * Repas favoris / récurrents : un repas type enregistré (« petit-déj habituel »)
- * s'ajoute au journal en un clic (ou à la voix : dictez simplement son nom).
- * `date` : jour ciblé (défaut aujourd'hui) — utilisable aussi depuis l'historique.
- *
- * Présentation en grille de pastilles (nom seul, détail au survol) : avec une
- * ligne par favori, le bloc mangeait tout l'écran dès qu'il y en avait quelques-uns
- * — d'autant que les noms proposés reprenaient la dictée entière. Renommer et
- * supprimer passent par un mode « Modifier », pour ne pas encombrer chaque pastille ;
- * dans ce mode, cliquer sur la pastille elle-même ouvre l'édition de son CONTENU
- * (aliments/quantités) au lieu de l'ajouter au jour — la seule façon jusqu'ici de
- * corriger un favori était de le supprimer et de le recréer.
- */
-export function FavoriteMeals({ date }: { date?: string } = {}) {
+export function FavoriteMeals({ date, onChooseFood }: { date?: string; onChooseFood: (food: Food) => void }) {
   const favorites = useStore((s) => s.favoriteMeals);
   const entries = useStore((s) => s.entries);
   const foods = useEffectiveFoods();
   const targetDate = date ?? todayStr();
   const repeated = useMemo(() => repeatedMealShortcuts(entries, foods, targetDate), [entries, foods, targetDate]);
+  const frequent = useMemo(() => frequentFoodShortcuts(entries, foods, targetDate), [entries, foods, targetDate]);
   const applyFavoriteMeal = useStore((s) => s.applyFavoriteMeal);
   const addMealItems = useStore((s) => s.addMealItems);
+  const saveFavoriteMeal = useStore((s) => s.saveFavoriteMeal);
   const removeFavoriteMeal = useStore((s) => s.removeFavoriteMeal);
-  const renameFavoriteMeal = useStore((s) => s.renameFavoriteMeal);
   const [flash, setFlash] = useState('');
   const [showAll, setShowAll] = useState(false);
   const [editing, setEditing] = useState(false);
   const [editingItemsId, setEditingItemsId] = useState<string | null>(null);
-  const [mealTab, setMealTab] = useState<'favorites' | 'repeated' | null>(null);
-  const activeTab = favorites.length === 0 ? 'repeated' : repeated.length === 0 ? 'favorites' : mealTab ?? 'favorites';
-
-  if (favorites.length === 0 && repeated.length === 0) return null;
-
-  const shown = showAll ? favorites : favorites.slice(0, FAV_SHOWN);
-  const hidden = favorites.length - shown.length;
-  const editingItemsOf = favorites.find((f) => f.id === editingItemsId) ?? null;
-
-  function add(id: string, nom: string) {
-    const entryId = applyFavoriteMeal(id, date);
-    if (entryId) {
-      const when = date ? ` au ${new Date(`${date}T00:00:00`).toLocaleDateString('fr-FR')}` : '';
-      setFlash(`⭐ « ${nom} » ajouté${when}.`);
-    }
+  const [mealTab, setMealTab] = useState<'favorites' | 'frequent' | null>(null);
+  const hasFrequent = frequent.length + repeated.length > 0;
+  const activeTab = mealTab ?? (favorites.length ? 'favorites' : 'frequent');
+  const suggestions = [
+    ...repeated.map((meal) => ({ ...meal, food: null as Food | null })),
+    ...frequent.map(({ food, days }) => ({ key: food.id, nom: food.nom, items: [] as FavoriteMealItem[], days, food })),
+  ];
+  const count = activeTab === 'favorites' ? favorites.length : suggestions.length;
+  const shown = showAll ? count : FAV_SHOWN;
+  if (!favorites.length && !hasFrequent) return null;
+  function switchTab(tab: 'favorites' | 'frequent') {
+    setMealTab(tab); setShowAll(false); setEditing(false); setEditingItemsId(null); setFlash('');
   }
-
-  function rename(f: FavoriteMeal) {
-    const nom = window.prompt('Nom du repas favori (court, c’est lui qui s’affiche) :', f.nom);
-    if (nom && nom.trim()) renameFavoriteMeal(f.id, nom);
-  }
-
-  function toggleEditing() {
-    setEditing((e) => !e);
-    setEditingItemsId(null);
-  }
-
   return (
     <div className="panel meal-shortcuts">
-      <div className="row" style={{ justifyContent: 'space-between', alignItems: 'baseline', gap: 8 }}>
-        <h2 style={{ margin: 0 }}>Repas rapides</h2>
-        {activeTab === 'favorites' && favorites.length > 0 && (
-        <button className="ghost small" onClick={toggleEditing}>
-          {editing ? 'Terminer' : 'Modifier'}
-        </button>
-        )}
+      <div className="quick-meal-heading">
+        <h2>Repas rapides</h2>
+        {activeTab === 'favorites' && favorites.length > 0 && <button className="quick-manage" aria-pressed={editing} onClick={() => { setEditing(!editing); setEditingItemsId(null); }}>
+          {editing ? 'Terminer' : <><PencilIcon /> Gérer</>}
+        </button>}
       </div>
-
       <div className="meal-shortcut-tabs" role="group" aria-label="Suggestions de repas">
-        {favorites.length > 0 && <button className={`ghost small${activeTab === 'favorites' ? ' on' : ''}`} aria-pressed={activeTab === 'favorites'} onClick={() => setMealTab('favorites')}>Favoris</button>}
-        {repeated.length > 0 && <button className={`ghost small${activeTab === 'repeated' ? ' on' : ''}`} aria-pressed={activeTab === 'repeated'} onClick={() => { setMealTab('repeated'); setEditing(false); setEditingItemsId(null); }}>Récurrents · 15 j</button>}
+        <button aria-pressed={activeTab === 'favorites'} onClick={() => switchTab('favorites')}><StarIcon /> Favoris</button>
+        {hasFrequent && <button aria-pressed={activeTab === 'frequent'} onClick={() => switchTab('frequent')}>Souvent mangés <span className="shortcut-period">15 j</span></button>}
       </div>
-
-      {activeTab === 'repeated' && <>
-        <div className="fav-grid">
-          {repeated.map((meal) => (
-            <div className="fav-chip" key={meal.key}>
-              <button className="fav-add" aria-label={`Ajouter le repas récurrent : ${meal.nom}`} data-tip={favoriteTip({ ...meal, id: meal.key })} onClick={() => {
-                if (addMealItems(`Repas récurrent : ${meal.nom}`, meal.items, date)) setFlash(`Ajouté : ${meal.nom}.`);
-              }}>
-                <span className="meal-shortcut-copy"><span className="fav-name">{meal.nom}</span><small>{meal.days} jours sur 15</small></span>
-              </button>
-            </div>
-          ))}
-        </div>
-        <div className="small" style={{ color: 'var(--muted)', marginTop: 6 }}>Mêmes aliments et quantités au moins deux jours. Un clic ajoute le repas.</div>
-      </>}
-
       {activeTab === 'favorites' && <>
-      <div className={`fav-grid${editing ? ' fav-editing' : ''}`}>
-        {shown.map((f) => (
-          <div className="fav-chip" key={f.id}>
-            <button
-              className={`fav-add${editingItemsId === f.id ? ' on' : ''}`}
-              data-tip={editing ? 'Modifier les aliments de ce favori' : favoriteTip(f)}
-              onClick={() =>
-                editing ? setEditingItemsId((id) => (id === f.id ? null : f.id)) : add(f.id, f.nom)
-              }
-            >
-              <span aria-hidden>⭐</span>
-              <span className="fav-name">{f.nom}</span>
-            </button>
-            {editing && (
-              <>
-                <button className="fav-act" data-tip="Renommer" aria-label={`Renommer ${f.nom}`} onClick={() => rename(f)}>
-                  ✎
-                </button>
-                <button
-                  className="fav-act danger"
-                  data-tip="Supprimer ce favori"
-                  aria-label={`Supprimer ${f.nom}`}
-                  onClick={() => window.confirm(`Supprimer le repas favori « ${f.nom} » ?`) && removeFavoriteMeal(f.id)}
-                >
-                  ✕
-                </button>
-              </>
-            )}
-          </div>
-        ))}
-        {hidden > 0 && (
-          <button className="fav-chip fav-more" onClick={() => setShowAll(true)}>
-            + {hidden} autre{hidden > 1 ? 's' : ''}
-          </button>
-        )}
-        {showAll && favorites.length > FAV_SHOWN && (
-          <button className="fav-chip fav-more" onClick={() => setShowAll(false)}>
-            Réduire
-          </button>
-        )}
-      </div>
-
-      <div className="hint">
-        {editing
-          ? "Cliquez un favori pour modifier ses aliments (quantité, unité, remplacement)."
-          : `Un clic ajoute le repas ${date ? 'à ce jour' : "à aujourd'hui"}. À la voix, dictez le nom du favori.`}
-      </div>
+        {!favorites.length && <p className="small">Enregistrez un repas avec « ☆ Favori » ou l’étoile des suggestions.</p>}
+        <div className="fav-grid">
+          {favorites.slice(0, shown).map((fav) => <div className={`fav-chip${editingItemsId === fav.id ? ' fav-expanded' : ''}`} key={fav.id}>
+            {editingItemsId !== fav.id && <button className="fav-add" data-tip={favoriteTip(fav)} aria-label={`${editing ? 'Modifier' : 'Ajouter'} ${fav.nom}`} onClick={() => {
+              if (editing) setEditingItemsId(editingItemsId === fav.id ? null : fav.id);
+              else if (applyFavoriteMeal(fav.id, date)) setFlash(`Ajouté : ${fav.nom}.`);
+            }}>
+              <StarIcon /><span className="fav-name">{fav.nom}</span>{editing && <PencilIcon />}
+            </button>}
+            {editingItemsId === fav.id && <FavoriteItemsEditor key={fav.id} fav={fav} onClose={() => setEditingItemsId(null)} onDelete={() => {
+              if (window.confirm(`Supprimer le repas favori « ${fav.nom} » ?`)) { removeFavoriteMeal(fav.id); setEditingItemsId(null); }
+            }} />}
+          </div>)}
+        </div>
       </>}
-      {flash && <div className="status">{flash}</div>}
-
-      {editingItemsOf && <FavoriteItemsEditor fav={editingItemsOf} onClose={() => setEditingItemsId(null)} />}
+      {activeTab === 'frequent' && <div className="fav-grid">
+        {suggestions.slice(0, shown).map((item) => {
+          const alreadySaved = favorites.some((fav) => fav.items.length === item.items.length && [...fav.items].map((i) => `${i.foodId}|${i.quantite}|${i.unite}`).sort().join(';') === item.items.map((i) => `${i.foodId}|${i.quantite}|${i.unite}`).sort().join(';'));
+          return <div className="fav-chip frequent-chip" key={item.key}>
+            <button className="fav-add" data-tip={item.food ? `${item.days} jours sur 15 · Choisir la quantité` : favoriteTip(item)} aria-label={item.food ? `Choisir ${item.nom} (fréquent)` : `Ajouter le repas récurrent : ${item.nom}`} onClick={() => {
+              if (item.food) onChooseFood(item.food);
+              else if (addMealItems(`Repas récurrent : ${item.nom}`, item.items, date)) setFlash(`Ajouté : ${item.nom}.`);
+            }}><span className="fav-name">{item.nom}</span><span className="shortcut-days" data-tip={`${item.days} jours sur 15`}>{item.days} j</span></button>
+            {!item.food && <button className={`save-shortcut${alreadySaved ? ' saved' : ''}`} disabled={alreadySaved} aria-label={alreadySaved ? `${item.nom} déjà en favoris` : `Enregistrer ${item.nom} en favoris`} onClick={() => { saveFavoriteMeal(item.nom, item.items); setFlash('Repas enregistré dans les favoris.'); }}><StarIcon /></button>}
+          </div>;
+        })}
+      </div>}
+      {count > FAV_SHOWN && <button className="shortcut-more" onClick={() => setShowAll(!showAll)}>{showAll ? 'Réduire' : `Voir les ${count - FAV_SHOWN} autres`}</button>}
+      {editing && !editingItemsId && <div className="small shortcut-help">Choisissez un favori pour modifier son nom et ses aliments.</div>}
+      {flash && <div className="status" role="status">{flash}</div>}
     </div>
   );
 }
 
 /** Édition du contenu d'un favori : aliments, quantités, unités — ajout et retrait compris. */
-function FavoriteItemsEditor({ fav, onClose }: { fav: FavoriteMeal; onClose: () => void }) {
+function FavoriteItemsEditor({ fav, onClose, onDelete }: { fav: FavoriteMeal; onClose: () => void; onDelete: () => void }) {
+  const rename = useStore((s) => s.renameFavoriteMeal);
+  const [renaming, setRenaming] = useState(false);
+  const [name, setName] = useState(fav.nom);
+  function saveName() {
+    if (name.trim()) rename(fav.id, name.trim());
+    else setName(fav.nom);
+    setRenaming(false);
+  }
   const foods = useEffectiveFoods();
   const updateFavoriteMealItem = useStore((s) => s.updateFavoriteMealItem);
   const removeFavoriteMealItem = useStore((s) => s.removeFavoriteMealItem);
   const addFavoriteMealItem = useStore((s) => s.addFavoriteMealItem);
 
   return (
-    <div className="panel" style={{ borderLeft: '3px solid var(--accent)', marginTop: 10 }}>
-      <div className="row" style={{ justifyContent: 'space-between', alignItems: 'baseline' }}>
-        <h3 style={{ margin: 0 }}>⭐ {fav.nom} — contenu</h3>
+    <div className="favorite-editor">
+      <div className="favorite-editor-heading">
+        <div className="favorite-title-edit">
+          <StarIcon />
+          {renaming ? <input aria-label="Nom du favori" value={name} autoFocus onChange={(e) => setName(e.target.value)} onBlur={saveName} onKeyDown={(e) => {
+            if (e.key === 'Enter') saveName();
+            if (e.key === 'Escape') { setName(fav.nom); setRenaming(false); }
+          }} /> : <><strong>{fav.nom}</strong><button className="quick-manage" aria-label={`Renommer ${fav.nom}`} onClick={() => { setName(fav.nom); setRenaming(true); }}><PencilIcon /></button></>}
+        </div>
         <button className="ghost small" onClick={onClose}>
           Fermer
         </button>
@@ -187,6 +137,7 @@ function FavoriteItemsEditor({ fav, onClose }: { fav: FavoriteMeal; onClose: () 
       ))}
 
       <AddFavoriteItem foods={foods} onAdd={(item) => addFavoriteMealItem(fav.id, item)} />
+      <button className="favorite-remove" onClick={onDelete}>Supprimer ce favori</button>
     </div>
   );
 }
@@ -287,7 +238,7 @@ function AddFavoriteItem({ foods, onAdd }: { foods: Food[]; onAdd: (item: Favori
     <div style={{ marginTop: 10 }}>
       <input
         style={{ width: '100%' }}
-        placeholder="Ajouter un aliment au favori (ex. « banane »)…"
+        placeholder="Ajouter un aliment…"
         value={query}
         onChange={(e) => {
           setQuery(e.target.value);

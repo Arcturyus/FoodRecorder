@@ -3,6 +3,7 @@ import { useStore, useEffectiveFoods, dayTotals, todayStr } from '../store/store
 import { costOfDay } from '../nutrition/price';
 import type { JournalItem } from '../store/store';
 import { EMPTY_NUTRIENTS } from '../nutrition/types';
+import type { Food } from '../nutrition/types';
 import { dayKcalUncertainty } from '../nutrition/uncertainty';
 import { sunVitDForDate } from '../sun/vitaminD';
 import { Capture } from './Capture';
@@ -28,6 +29,7 @@ import { UI_STORE, useUiPref } from './uiPrefs';
  * aujourd'hui — bilan des nutriments compris.
  */
 export function DayView({ date }: { date: string }) {
+  const [requestedFood, setRequestedFood] = useState<Food | null>(null);
   const entries = useStore((s) => s.entries);
   const sunExposures = useStore((s) => s.sunExposures);
   const foods = useEffectiveFoods();
@@ -110,8 +112,8 @@ export function DayView({ date }: { date: string }) {
         date={isToday ? undefined : date}
         title={isToday ? undefined : `Dicter, taper ou photographier un repas${quand}`}
       />
-      <FavoriteMeals date={isToday ? undefined : date} />
-      <ManualAdd date={isToday ? undefined : date} title={isToday ? undefined : `Ajouter un aliment${quand}`} />
+      <FavoriteMeals date={isToday ? undefined : date} onChooseFood={setRequestedFood} />
+      <ManualAdd requestedFood={requestedFood} onRequestedFoodHandled={() => setRequestedFood(null)} date={isToday ? undefined : date} title={isToday ? undefined : `Ajouter un aliment${quand}`} />
       <Totals totals={totals} items={items} incertitude={kcalUnc} cost={cost} date={date} />
       {dayEntries.length === 0 ? (
         <div className="panel">

@@ -1,4 +1,4 @@
-import { useMemo, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { useStore, useEffectiveFoods, todayStr } from '../store/store';
 import { UNITS } from '../nutrition/types';
 import type { Food, Unit } from '../nutrition/types';
@@ -7,7 +7,6 @@ import { normalizeForMatch, isSupplementQuery } from '../nutrition/normalize';
 import { toGrams, scaleNutrients } from '../nutrition/compute';
 import { suggestQuantity, type QuantitySuggestion } from '../nutrition/quantitySuggestion';
 import { parseQuickFoodQuery, quickQuantity } from '../nutrition/quickFoodQuery';
-import { frequentFoodShortcuts } from './recentShortcuts';
 import { fmt, UNIT_LABELS } from './format';
 import { NumberField } from './NumberField';
 import { useBankUsage, derniereFoisLabel } from './useBankUsage';
@@ -35,6 +34,8 @@ export function ManualAdd({
   entryId,
   autoFocus = false,
   onAdded,
+  requestedFood,
+  onRequestedFoodHandled,
 }: {
   date?: string;
   /** `null` masque le titre pour l'utilisation dans un repas existant. */
@@ -43,9 +44,10 @@ export function ManualAdd({
   entryId?: string;
   autoFocus?: boolean;
   onAdded?: () => void;
+  requestedFood?: Food | null;
+  onRequestedFoodHandled?: () => void;
 } = {}) {
   const all = useEffectiveFoods();
-  const entries = useStore((s) => s.entries);
   const targetDate = date ?? todayStr();
   const searchRef = useRef<HTMLInputElement>(null);
   const usage = useBankUsage();
@@ -76,7 +78,12 @@ export function ManualAdd({
     return raw && [...all, ...FOODS].some((food) => match(food, raw))
       ? { foodQuery: query } : parseQuickFoodQuery(query);
   }, [query, all]);
-  const frequent = useMemo(() => frequentFoodShortcuts(entries, all, targetDate), [entries, all, targetDate]);
+  useEffect(() => {
+    if (!requestedFood) return;
+    pick(requestedFood, true);
+    onRequestedFoodHandled?.();
+    searchRef.current?.scrollIntoView({ block: 'center', behavior: 'smooth' });
+  }, [requestedFood]);
 
   /**
    * Ma banque d'abord, triée par consommation la plus récente : ce qu'on ajoute à
@@ -105,13 +112,13 @@ export function ManualAdd({
     return FOODS.filter((f) => !dansMaBanque.has(f.id) && match(f, q)).slice(0, MAX_RESULTS);
   }, [parsedQuery.foodQuery, all]);
 
-  function pick(food: Food) {
+  function pick(food: Food, fromShortcut = false) {
     setSelected(food);
     setQuery(food.nom);
     const remembered = suggestQuantity(useStore.getState().entries, food.id, targetDate);
-    const explicit = quickQuantity(parsedQuery, food, remembered);
+    const explicit = fromShortcut ? null : quickQuantity(parsedQuery, food, remembered);
     setTypedQuantity(!!explicit);
-    setUncertainQuantity(!!parsedQuery.uncertain || (parsedQuery.quantity != null && !explicit));
+    setUncertainQuantity(!fromShortcut && (!!parsedQuery.uncertain || (parsedQuery.quantity != null && !explicit)));
     setSuggestion(explicit ? null : remembered);
     setConfirmBig(false);
     // Sans historique fiable, conserver les valeurs pratiques du catalogue.
@@ -188,19 +195,6 @@ export function ManualAdd({
           setSelected(null);
         }}
       />
-
-      {selected === null && !query.trim() && frequent.length > 0 && (
-        <div className="quick-foods">
-          <div className="small" style={{ color: 'var(--muted)' }}>Souvent mangés · 15 derniers jours</div>
-          <div className="shortcut-grid">
-            {frequent.map(({ food, days }) => (
-              <button key={food.id} className="shortcut-food" aria-label={`Choisir ${food.nom} (fréquent)`} onClick={() => pick(food)}>
-                <span className="shortcut-name">{food.nom}</span><small>{days} jours</small>
-              </button>
-            ))}
-          </div>
-        </div>
-      )}
 
       {selected === null && results.length > 0 && (
         <div style={{ marginTop: 8 }}>
