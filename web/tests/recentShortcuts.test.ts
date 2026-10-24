@@ -51,12 +51,43 @@ describe('fifteen-day shortcuts', () => {
     expect(repeatedMealShortcuts(entries, foods, date)).toEqual([]);
     expect(repeatedMealShortcuts([entry('2026-10-08'), entry('2026-10-24'), entry(date)], foods, date)).toEqual([]);
   });
-  it('keeps dose changes and uncertain or incomplete meals out of suggestions', () => {
-    for (const patch of [{ quantite: 1 }, { estimation: true }, { douteux: true }, { foodId: null }, { customN: EMPTY_NUTRIENTS }, { quantite: NaN }]) {
+  it('recognizes changing doses and units and reuses the latest values', () => {
+    const latest = entry(date);
+    Object.assign(latest.items[0], { quantite: 150, unite: 'g', estimation: true });
+    const result = repeatedMealShortcuts([latest, entry('2026-10-22')], foods, date);
+    expect(result).toHaveLength(1);
+    expect(result[0].items[0]).toMatchObject({ foodId: 'banane', quantite: 150, unite: 'g', estimation: true });
+  });
+  it('keeps unsafe items out of reusable combinations', () => {
+    for (const patch of [{ douteux: true }, { foodId: null }, { customN: EMPTY_NUTRIENTS }, { quantite: NaN }]) {
       const altered = entry(date);
       Object.assign(altered.items[0], patch);
       expect(repeatedMealShortcuts([entry('2026-10-22'), altered], foods, date)).toEqual([]);
     }
+  });
+  it('finds a recurring core despite different extras and does not copy those extras', () => {
+    const bank = [...foods, { ...banana, id: 'extra-a' }, { ...banana, id: 'extra-b' }];
+    const result = repeatedMealShortcuts([entry('2026-10-22', ['banane', 'pomme', 'extra-a']), entry(date, ['pomme', 'banane', 'extra-b'])], bank, date);
+    expect(result).toHaveLength(1);
+    expect(result[0].days).toBe(2);
+    expect(result[0].items.map((item) => item.foodId)).toEqual(['pomme', 'banane']);
+  });
+  it('suppresses redundant subsets, but retains a core seen on more days', () => {
+    const bank = [...foods, { ...banana, id: 'extra' }];
+    const entries = [entry('2026-10-21', ['banane', 'pomme', 'extra']), entry('2026-10-22', ['banane', 'pomme', 'extra'])];
+    expect(repeatedMealShortcuts(entries, bank, date).map((s) => s.items.length)).toEqual([3]);
+    entries.push(entry(date));
+    const results = repeatedMealShortcuts(entries, bank, date);
+    expect(results.map((s) => [s.days, s.items.length])).toEqual([[3, 2], [2, 3]]);
+  });
+  it('finds intersections requiring more than two meals', () => {
+    const bank = [...foods, ...['c', 'd', 'e'].map((id) => ({ ...banana, id }))];
+    const entries = [entry('2026-10-21', ['banane', 'pomme', 'c', 'd']), entry('2026-10-22', ['banane', 'pomme', 'c', 'e']), entry(date, ['banane', 'pomme', 'd', 'e'])];
+    expect(repeatedMealShortcuts(entries, bank, date)[0]).toMatchObject({ days: 3 });
+    expect(repeatedMealShortcuts(entries, bank, date)[0].items.map((i) => i.foodId)).toEqual(['banane', 'pomme']);
+  });
+  it('does not form a combination from two occurrences of a single food', () => {
+    expect(repeatedMealShortcuts([entry('2026-10-22', ['banane', 'banane']), entry(date, ['banane', 'banane'])], foods, date)).toEqual([]);
   });
 });
 

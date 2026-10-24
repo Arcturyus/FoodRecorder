@@ -93,8 +93,9 @@ export function FavoriteMeals({ date, onChooseFood }: { date?: string; onChooseF
             {!item.food && <button className={`save-shortcut${alreadySaved ? ' saved' : ''}`} disabled={alreadySaved} aria-label={alreadySaved ? `${item.nom} déjà en favoris` : `Enregistrer ${item.nom} en favoris`} onClick={() => { saveFavoriteMeal(item.nom, item.items); setFlash('Repas enregistré dans les favoris.'); }}><StarIcon /></button>}
           </div>;
         })}
-          {group.items.length === 0 && <span className="small frequent-empty">Pas encore de {group.type === 'foods' ? 'répétition d’aliment' : 'combinaison répétée'} sur 15 jours.</span>}
+          {group.items.length === 0 && <span className="small frequent-empty">{group.type === 'foods' ? 'Pas encore d’aliment répété sur 15 jours.' : 'Aucun groupe d’au moins deux aliments retrouvé ensemble sur deux jours.'}</span>}
           </div>
+          {group.type === 'meals' && group.items.length > 0 && <div className="small shortcut-help">Aliments souvent pris ensemble, même avec des extras. Quantités de la dernière prise.</div>}
         </div>)}
       </div>}
       {flash && <div className="status" role="status">{flash}</div>}
