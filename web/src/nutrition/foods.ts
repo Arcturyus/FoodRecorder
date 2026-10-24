@@ -353,7 +353,7 @@ export const FOODS: Food[] = [
   f('coca', 'Coca-Cola', 'boisson', ['soda', 'coca cola', 'canette de coca'], { kcal: 42, glucides: 10.6, sodium: 10 }, { piece: 330, unitGrams: { verre: 250 } }),
   f('coca-zero', 'Coca-Cola Zero', 'boisson', ['coca zero', 'coca light', 'coca cola zero', 'coca cola light', 'canette de coca zero'], { kcal: 0.4, glucides: 0.1, sodium: 5 }, { piece: 330, unitGrams: { verre: 250 } }),
   f('limonade', 'Limonade', 'boisson', ['limonades', 'canette de limonade'], { kcal: 40, glucides: 10.5, sodium: 5 }, { piece: 330, unitGrams: { verre: 250 } }),
-  f('biere', 'Bière', 'boisson', ['pinte', 'demi de biere', 'bieres', 'pinte de biere'], { kcal: 43, proteines: 0.5, glucides: 3.5, alcool: 3.9, potassium: 27, vitB9: 6, vitB2: 0.03, vitB3: 0.6, vitB6: 0.05 }, { unitGrams: { verre: 250, piece: 330 } }),
+  f('biere', 'Bière', 'boisson', ['pinte', 'demi de biere', 'bieres', 'pinte de biere'], { kcal: 43, proteines: 0.5, glucides: 3.5, alcool: 3.57, potassium: 27, vitB9: 6, vitB2: 0.03, vitB3: 0.6, vitB6: 0.05 }, { unitGrams: { verre: 250, piece: 330 } }),
   f('vin-rouge', 'Vin rouge', 'boisson', ['vin', 'verre de vin'], { kcal: 83, glucides: 2.6, alcool: 10, potassium: 127, fer: 0.7, vitB2: 0.03, vitB3: 0.14, vitB6: 0.03 }, { unitGrams: { verre: 120 } }),
 
   // ============ PLATS ============
