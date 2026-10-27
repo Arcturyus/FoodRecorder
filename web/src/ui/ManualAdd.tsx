@@ -194,6 +194,13 @@ export function ManualAdd({
           setQuery(e.target.value);
           setSelected(null);
         }}
+        onKeyDown={(e) => {
+          if (e.key !== 'Enter' || e.nativeEvent.isComposing || selected) return;
+          const first = results[0] ?? catalogResults[0];
+          if (!first) return;
+          e.preventDefault();
+          pick(first);
+        }}
       />
 
       {selected === null && results.length > 0 && (
