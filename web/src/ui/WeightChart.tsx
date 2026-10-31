@@ -256,7 +256,7 @@ export function WeightChart({ onEditEntry }: { onEditEntry?: (id: string) => voi
   /** Masse musculaire : kg par défaut (% × poids), bascule vers le % mesuré. */
   const [muscleUnit, setMuscleUnit] = useState<'kg' | '%'>('kg');
   /** Métabolismes : courbes basales affichées. */
-  const [metaboShow, setMetaboShow] = useState({ hb: true, msj: true, machine: true, total: true });
+  const [metaboShow, setMetaboShow] = useState({ hb: true, msj: true, machine: true, total: false });
 
   const earliest = useMemo(() => {
     if (entries.length === 0) return undefined;
