@@ -126,6 +126,28 @@ export function estimate(rows: Day[], options: Options) {
   return { points: fitted, n, duration, first: first.date, last: last.date, meanT, meanY, sxx, sxy, slope, intercept, maintenance, se, iidSe, z, margin, low: maintenance - margin, high: maintenance + margin, residualSd: Math.sqrt(sse / (n - 2)), sse, meat, variance, cumulative, meanIntake: cumulative / duration, naive, estimatedDays, excluded: selected.filter(r => r.weight !== null).length - n }
 }
 
+/** Rolling observed maintenance, anchored on each standard weigh-in. */
+export function rollingMaintenance(rows: Day[]) {
+  const points: { date: string; value: number; first: string; last: string; duration: number; n: number; estimatedDays: number; breakBefore: boolean }[] = [];
+  let interrupted = false;
+  for (const end of rows.filter(r => r.weight !== null && r.standard)) {
+    const start = new Date((end.day - 30) * 86400000).toISOString().slice(0, 10);
+    const options: Options = { start, end: end.date, standardOnly: true, rho: 7700, lag: 7, confidence: 95, intakeBias: 0 };
+    const selected = rows.filter(r => r.day >= end.day - 30 && r.day <= end.day && r.weight !== null && r.standard);
+    if (selected.length < 4 || end.day - selected[0].day < 21) { interrupted = true; continue; }
+    const gaps = intakeGaps(rows, options);
+    if (gaps.length > 1 || gaps.some(g => g.suggested === null)) { interrupted = true; continue; }
+    const estimatedIntakes = Object.fromEntries(gaps.map(g => [g.date, g.suggested!]));
+    const result = estimate(rows, { ...options, estimatedIntakes });
+    if (!Number.isFinite(result.maintenance) || result.maintenance <= 0) { interrupted = true; continue; }
+    const previous = points[points.length - 1];
+    points.push({ date: end.date, value: result.maintenance, first: result.first, last: result.last, duration: result.duration, n: result.n,
+      estimatedDays: result.estimatedDays.length, breakBefore: interrupted || !!previous && end.day - dayNumber(previous.date) > 30 });
+    interrupted = false;
+  }
+  return points;
+}
+
 /** Illustrative scenario, not a confidence interval: vary all imputed days
  * together while retaining every actual intake and weight observation.
  */

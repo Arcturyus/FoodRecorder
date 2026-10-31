@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { dayNumber, defaultPeriod, estimate, intakeGaps, intakeSensitivity, maintenanceDays, type Day, type Options } from '../src/nutrition/maintenance';
+import { dayNumber, defaultPeriod, estimate, intakeGaps, intakeSensitivity, maintenanceDays, rollingMaintenance, type Day, type Options } from '../src/nutrition/maintenance';
 import { computeEnergyFor, computeTargets, DEFAULT_PROFILE, type ObservedMaintenance } from '../src/nutrition/targets';
 import type { JournalEntry } from '../src/store/store';
 import type { WeightEntry } from '../src/weight/types';
@@ -15,6 +15,28 @@ function fixture(): Day[] {
   });
 }
 describe('observed maintenance integration', () => {
+  it('builds a rolling estimate from the existing model, retaining its actual observation dates', () => {
+    const points = rollingMaintenance(fixture());
+    expect(points).toHaveLength(1);
+    expect(points[0]).toMatchObject({ date: '2026-01-31', first: '2026-01-01', last: '2026-01-31', duration: 30, n: 5, estimatedDays: 0 });
+    expect(points[0].value).toBeCloseTo(2200);
+  });
+  it('estimates at most one missing intake without changing the input', () => {
+    const rows = fixture(); rows[8].intake = null;
+    const before = structuredClone(rows);
+    expect(rollingMaintenance(rows)[0].estimatedDays).toBe(1);
+    expect(rows).toEqual(before);
+    rows[9].intake = null;
+    expect(rollingMaintenance(rows)).toEqual([]);
+  });
+  it('requires standard weights spanning at least 21 days and does not need final-day intake', () => {
+    const rows = fixture(); rows[30].intake = null;
+    expect(rollingMaintenance(rows)).toHaveLength(1);
+    rows[0].standard = false;
+    expect(rollingMaintenance(rows)).toHaveLength(1);
+    rows[4].standard = false;
+    expect(rollingMaintenance(rows)).toEqual([]);
+  });
   it('recovers a known expenditure with variable intake and irregular weights', () => {
     const result = estimate(fixture(), options);
     expect(result.maintenance).toBeCloseTo(2200, 7);

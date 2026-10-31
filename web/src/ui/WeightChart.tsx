@@ -17,6 +17,7 @@ import type { PeriodState, Granularity } from './PeriodSelector';
 import { fmt } from './format';
 import { NumberField } from './NumberField';
 import { Section } from './Section';
+import { maintenanceDays, rollingMaintenance } from '../nutrition/maintenance';
 
 const C = {
   accent: '#5b8cff',
@@ -76,6 +77,8 @@ interface SeriesPoint {
   e?: WeightEntry;
   /** Point creux/grisé : mesure moins comparable (non à jeun / habillé). */
   hollow?: boolean;
+  breakBefore?: boolean;
+  details?: string[];
 }
 
 interface Series {
@@ -212,7 +215,7 @@ const MODE_CHIPS: { key: ChartMode; label: string; title?: string }[] = [
   { key: 'eau', label: 'Eau' },
   { key: 'masseMusculaire', label: 'Masse musculaire', title: 'kg par défaut (% × poids), bascule kg / % sous le graphe' },
   { key: 'imc', label: 'IMC', title: 'Indice de masse corporelle calculé (poids / taille²)' },
-  { key: 'metabolismes', label: 'Métabolismes', title: 'Harris-Benedict, Mifflin-St Jeor et balance — basal ou × multiplicateur d’activité' },
+  { key: 'metabolismes', label: 'Métabolismes', title: 'Métabolismes de base et dépense totale estimée' },
   { key: 'autres', label: 'Autres', title: 'Métriques secondaires : masse osseuse + graisse viscérale' },
 ];
 
@@ -253,7 +256,7 @@ export function WeightChart({ onEditEntry }: { onEditEntry?: (id: string) => voi
   /** Masse musculaire : kg par défaut (% × poids), bascule vers le % mesuré. */
   const [muscleUnit, setMuscleUnit] = useState<'kg' | '%'>('kg');
   /** Métabolismes : courbes basales affichées. */
-  const [metaboShow, setMetaboShow] = useState({ hb: true, msj: true, machine: true });
+  const [metaboShow, setMetaboShow] = useState({ hb: true, msj: true, machine: true, total: true });
 
   const earliest = useMemo(() => {
     if (entries.length === 0) return undefined;
@@ -334,11 +337,14 @@ export function WeightChart({ onEditEntry }: { onEditEntry?: (id: string) => voi
     [mode, showProtein, journal, range, mutedDays, gran],
   );
 
-  /**
-   * Séries du mode « Métabolismes » : HB / MSJ / balance (cases à cocher),
-   * toutes basales. L'activité détaillée vit dans le profil, pas dans une
-   * constante propre aux pesées.
-   */
+  /** La maintenance utilise toutes les données historiques, y compris avant la plage affichée. */
+  const maintenancePoints = useMemo(() => {
+    if (mode !== 'metabolismes' || !metaboShow.total) return [];
+    const rows = maintenanceDays(journal, entries, mutedDays, true, todayStr());
+    return rollingMaintenance(rows).filter(p => p.date >= range.start && p.date <= range.end);
+  }, [mode, metaboShow.total, journal, entries, mutedDays, range]);
+
+  /** Séries basales et estimation observée de la dépense totale. */
   const metaboSeries: Series[] = useMemo(() => {
     if (mode !== 'metabolismes') return [];
     const hb: SeriesPoint[] = [];
@@ -355,8 +361,29 @@ export function WeightChart({ onEditEntry }: { onEditEntry?: (id: string) => voi
     if (metaboShow.hb) out.push({ label: 'Harris-Benedict', color: C.accent, points: aggregateByGranularity(hb, gran), drawPoints: true });
     if (metaboShow.msj) out.push({ label: 'Mifflin-St Jeor', color: C.accent2, points: aggregateByGranularity(msj, gran), drawPoints: true });
     if (metaboShow.machine) out.push({ label: 'Balance', color: C.warn, points: aggregateByGranularity(machine, gran), drawPoints: true });
+    if (metaboShow.total) {
+      const segments: SeriesPoint[][] = [];
+      for (const p of maintenancePoints) {
+        if (!segments.length || p.breakBefore) segments.push([]);
+        segments[segments.length - 1].push({ t: dayMs(p.date), value: p.value,
+          details: [`Pesées du ${p.first} au ${p.last} · ${p.duration} jours · ${p.n} pesées`,
+            p.estimatedDays ? '1 journée de calories estimée' : 'Aucune journée de calories estimée'] });
+      }
+      const total = segments.flatMap((segment, index) => {
+        if (gran === 'jour') return segment.map((p, i) => ({ ...p, breakBefore: index > 0 && i === 0 }));
+        const byDate = new Map(segment.map(p => [todayStr(new Date(p.t)), p]));
+        return groupDates([...byDate.keys()], gran).map((group, i) => {
+          const pts = group.dates.map(date => byDate.get(date)!);
+          return { t: dayMs(group.date), value: pts.reduce((sum, p) => sum + p.value, 0) / pts.length,
+            breakBefore: index > 0 && i === 0,
+            details: [`Moyenne de ${pts.length} estimation(s) sur 30 jours glissants`,
+              `${pts.filter(p => p.details?.[1].startsWith('1 journée')).length} estimation(s) avec une journée de calories estimée`] };
+        });
+      });
+      out.push({ label: 'Dépense totale estimée', color: C.violet, points: total, drawPoints: true, dashed: true, unit: 'kcal/j' });
+    }
     return out;
-  }, [mode, inRange, computedByEntry, metaboShow, gran]);
+  }, [mode, inRange, computedByEntry, metaboShow, maintenancePoints, gran]);
 
   /** Séries du mode « Autres » : masse osseuse (axe gauche) + graisse viscérale (axe droit). */
   const autresSeries: Series[] = useMemo(() => {
@@ -627,6 +654,7 @@ export function WeightChart({ onEditEntry }: { onEditEntry?: (id: string) => voi
               ['hb', 'Harris-Benedict'],
               ['msj', 'Mifflin-St Jeor'],
               ['machine', 'Balance'],
+              ['total', 'Dépense totale estimée'],
             ] as const
           ).map(([k, label]) => (
             <label key={k} className="small" style={{ display: 'flex', alignItems: 'center', gap: 6, cursor: 'pointer' }}>
@@ -672,6 +700,12 @@ export function WeightChart({ onEditEntry }: { onEditEntry?: (id: string) => voi
         onZoom={(r) => setPeriod({ preset: 'custom', custom: r })}
         onPointClick={onEditEntry}
       />
+
+      {mode === 'metabolismes' && <div className="hint" style={{ marginTop: 8 }}>
+        Harris-Benedict, Mifflin-St Jeor et la balance estiment le métabolisme de base ; la dépense totale estimée représente l'ensemble de vos dépenses.
+        Elle est calculée à partir des calories et des pesées à jeun et nu sur les 30 derniers jours. Il faut au moins 4 pesées couvrant 21 jours ; une journée de calories manquante peut être estimée.
+        {metaboShow.total && maintenancePoints.length === 0 && ' Aucune estimation disponible sur la période affichée.'}
+      </div>}
 
       <div className="hint" style={{ marginTop: 4 }}>
         Glisser sur le graphe pour zoomer sur une plage
@@ -975,7 +1009,11 @@ function MultiLineChart({
                 />
               )}
               <path
-                d={lineGen(s.points)!}
+                d={s.points.reduce<SeriesPoint[][]>((parts, point) => {
+                  if (!parts.length || point.breakBefore) parts.push([]);
+                  parts[parts.length - 1].push(point);
+                  return parts;
+                }, []).map(part => lineGen(part)).join(' ')}
                 fill="none"
                 stroke={s.color}
                 strokeWidth={s.rawPoints ? 2.5 : si === 0 ? 2 : 1.8}
@@ -1069,6 +1107,7 @@ function MultiLineChart({
           <br />
           <span style={{ color: hoveredSeries.color }}>{hoveredSeries.label}</span> :{' '}
           {fmt(hovered.value, 1)} {hoveredSeries.unit ?? unit}
+          {hovered.details?.map(detail => <span key={detail}><br /><span style={{ color: C.muted }}>{detail}</span></span>)}
           {hovered.e && !isComparable(hovered.e) && (
             <>
               <br />
